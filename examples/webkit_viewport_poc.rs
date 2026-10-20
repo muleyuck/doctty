@@ -18,7 +18,11 @@ mod experiment {
         io::{self, BufRead, BufReader, IsTerminal, Write},
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
-        sync::mpsc::{self, Receiver, Sender, TryRecvError},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+            mpsc::{self, Receiver, Sender, TryRecvError},
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -266,14 +270,34 @@ mod experiment {
     }
 
     enum WorkerCommand {
-        Snapshot { origin: f64, image_id: u32 },
+        Snapshot {
+            origin: f64,
+            image_id: u32,
+            requested_at: f64,
+        },
         Select,
     }
 
     enum WorkerEvent {
         Snapshot(ImageCache),
+        Skipped,
         Selection(String),
         Error(String),
+    }
+
+    // A finished tile may be too old to be useful after a long trackpad
+    // gesture. Keep directional prefetches if they still cover the viewport;
+    // skip only snapshots made obsolete by substantial user movement.
+    fn snapshot_is_obsolete(
+        requested_at: f64,
+        current_position: f64,
+        snapshot_y: f64,
+        viewport_height: u32,
+    ) -> bool {
+        let h = f64::from(viewport_height);
+        (current_position - requested_at).abs() > h
+            && (current_position < snapshot_y - 0.5
+                || current_position + h > snapshot_y + 2.0 * h + 0.5)
     }
 
     // WebKit operations and PNG uploading run off the event loop. The worker
@@ -282,18 +306,41 @@ mod experiment {
         mut swift: SwiftProcess,
         png_path: PathBuf,
         viewport_width: u32,
+        viewport_height: u32,
+        latest_tiled_position: Option<Arc<AtomicU64>>,
     ) -> (Sender<WorkerCommand>, Receiver<WorkerEvent>) {
         let (requests, incoming) = mpsc::channel::<WorkerCommand>();
         let (outgoing, responses) = mpsc::channel::<WorkerEvent>();
         thread::spawn(move || {
             while let Ok(command) = incoming.recv() {
                 let reply = match command {
-                    WorkerCommand::Snapshot { origin, image_id } => {
-                        let result = (|| -> Result<ImageCache> {
+                    WorkerCommand::Snapshot {
+                        origin,
+                        image_id,
+                        requested_at,
+                    } => {
+                        let result = (|| -> Result<Option<ImageCache>> {
                             let response =
                                 swift.request(&json!({"type": "snapshot", "y": origin}))?;
                             if response["kind"] != "snapshot" {
                                 bail!("unexpected WebKit snapshot reply: {response}");
+                            }
+                            let actual_y = response["actualY"].as_f64().unwrap_or(origin);
+                            let obsolete = || {
+                                latest_tiled_position.as_ref().is_some_and(|latest| {
+                                    snapshot_is_obsolete(
+                                        requested_at,
+                                        f64::from_bits(latest.load(Ordering::Relaxed)),
+                                        actual_y,
+                                        viewport_height,
+                                    )
+                                })
+                            };
+                            // A long scroll can make a capture obsolete while
+                            // WebKit is rendering it. Avoid needless PNG reads
+                            // and Kitty transfers if the viewport has moved on.
+                            if obsolete() {
+                                return Ok(None);
                             }
                             let png = fs::read(&png_path).context("missing prefetched PNG")?;
                             let decoder = PngDecoder::new(io::Cursor::new(&png))?;
@@ -302,15 +349,20 @@ mod experiment {
                             if scale <= 0.0 {
                                 bail!("invalid prefetched PNG width");
                             }
+                            // The user can move again during file IO/decoding.
+                            // Recheck just before the expensive Kitty upload.
+                            if obsolete() {
+                                return Ok(None);
+                            }
                             // Never place the image before the complete transmission.
                             let upload_started = Instant::now();
                             let mut stdout = io::stdout().lock();
                             upload_png(&mut stdout, image_id, &png)?;
                             stdout.flush()?;
                             let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
-                            Ok(ImageCache {
+                            Ok(Some(ImageCache {
                                 image_id,
-                                source_y: response["actualY"].as_f64().unwrap_or(origin),
+                                source_y: actual_y,
                                 image_width,
                                 image_height,
                                 pixels_per_point: scale,
@@ -318,10 +370,11 @@ mod experiment {
                                 last_snapshot_ms: response["elapsedMs"].as_f64().unwrap_or(0.0),
                                 last_upload_ms: upload_ms,
                                 png_bytes: png.len(),
-                            })
+                            }))
                         })();
                         match result {
-                            Ok(cache) => WorkerEvent::Snapshot(cache),
+                            Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
+                            Ok(None) => WorkerEvent::Skipped,
                             Err(error) => WorkerEvent::Error(error.to_string()),
                         }
                     }
@@ -727,11 +780,19 @@ mod experiment {
         initial: ImageCache,
     ) -> Result<()> {
         let mut document_height = initial.document_height;
-        let (requests, responses) = spawn_worker(swift, png_path, viewport_width);
+        let latest_position = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
+        let (requests, responses) = spawn_worker(
+            swift,
+            png_path,
+            viewport_width,
+            viewport_height,
+            Some(Arc::clone(&latest_position)),
+        );
         let mut cached = vec![initial];
         let mut position = 0.0;
         let mut direction = ScrollDirection::Forward;
         let mut pending: Option<u32> = None;
+        let mut skipped_uploads = 0usize;
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -750,6 +811,10 @@ mod experiment {
                         } else {
                             cached.push(next);
                         }
+                    }
+                    Ok(WorkerEvent::Skipped) => {
+                        pending = None;
+                        skipped_uploads += 1;
                     }
                     Ok(WorkerEvent::Selection(text)) => {
                         if !text.is_empty() {
@@ -772,8 +837,9 @@ mod experiment {
                 let fingerprint = (tile.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
                     let status = format!(
-                        "TILED cached={} waits={} max={:.0}ms",
+                        "TILED cached={} skipped={} waits={} max={:.0}ms",
                         cached.len(),
+                        skipped_uploads,
                         wait.episodes,
                         wait.worst(now).as_secs_f64() * 1000.0
                     );
@@ -834,7 +900,11 @@ mod experiment {
                     }
                     if cached.len() < MAX_TILE_CACHE {
                         if let Some(image_id) = tile_image_id(&cached) {
-                            requests.send(WorkerCommand::Snapshot { origin, image_id })?;
+                            requests.send(WorkerCommand::Snapshot {
+                                origin,
+                                image_id,
+                                requested_at: position,
+                            })?;
                             pending = Some(image_id);
                         }
                     }
@@ -862,6 +932,9 @@ mod experiment {
                     InputAction::Select => requests.send(WorkerCommand::Select)?,
                     InputAction::Continue => {}
                 }
+                // Publish every accepted movement, including reversals, before
+                // returning to the drawing loop.
+                latest_position.store(position.to_bits(), Ordering::Relaxed);
             }
         }
         drop(requests);
@@ -944,7 +1017,7 @@ mod experiment {
             return run_tiled(swift, output, cols, rows, width, height, active);
         }
         let mut document_height = initial_height;
-        let (requests, responses) = spawn_worker(swift, output, width);
+        let (requests, responses) = spawn_worker(swift, output, width, height, None);
         let mut pending = false;
         let mut prefetched: Option<ImageCache> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
@@ -960,6 +1033,10 @@ mod experiment {
                     Ok(WorkerEvent::Snapshot(next)) => {
                         pending = false;
                         prefetched = Some(next);
+                    }
+                    Ok(WorkerEvent::Skipped) => {
+                        // Only the opt-in tiled worker can skip uploads.
+                        pending = false;
                     }
                     Ok(WorkerEvent::Selection(text)) => {
                         if !text.is_empty() {
@@ -1031,7 +1108,11 @@ mod experiment {
                     } else {
                         FIRST_IMAGE_ID
                     };
-                    requests.send(WorkerCommand::Snapshot { origin, image_id })?;
+                    requests.send(WorkerCommand::Snapshot {
+                        origin,
+                        image_id,
+                        requested_at: position,
+                    })?;
                     pending = true;
                 }
             }
@@ -1109,6 +1190,21 @@ mod experiment {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn obsolete_snapshots_skip_only_after_large_position_changes() {
+            // Existing lookahead is useful even if its tile does not yet
+            // cover the viewport at the moment it was requested.
+            assert!(!snapshot_is_obsolete(0.0, 0.0, 1000.0, 1000));
+            assert!(!snapshot_is_obsolete(0.0, 1000.0, 1000.0, 1000));
+            assert!(!snapshot_is_obsolete(0.0, 2000.0, 1000.0, 1000));
+            // A long forward or backward gesture makes an in-flight capture
+            // irrelevant before its potentially costly PNG upload.
+            assert!(snapshot_is_obsolete(0.0, 5000.0, 1000.0, 1000));
+            assert!(snapshot_is_obsolete(3000.0, 0.0, 3000.0, 1000));
+            // Moving rapidly within an overlapping snapshot stays valid.
+            assert!(!snapshot_is_obsolete(0.0, 1750.0, 1000.0, 1000));
         }
 
         #[test]
