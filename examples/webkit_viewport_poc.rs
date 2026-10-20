@@ -42,6 +42,7 @@ mod experiment {
         source_y: f64,
         image_width: u32,
         image_height: u32,
+        pixels_per_point: f64,
         document_height: f64,
         last_snapshot_ms: f64,
         png_bytes: usize,
@@ -51,7 +52,23 @@ mod experiment {
         fn covers(&self, position: f64, viewport_height: u32) -> bool {
             position >= self.source_y - 0.5
                 && position + f64::from(viewport_height)
-                    <= self.source_y + f64::from(self.image_height) + 0.5
+                    <= self.source_y + f64::from(self.image_height) / self.pixels_per_point + 0.5
+        }
+
+        fn viewport_height_px(&self, viewport_height: u32) -> u32 {
+            (f64::from(viewport_height) * self.pixels_per_point)
+                .round()
+                .max(1.0) as u32
+        }
+
+        fn source_offset_px(&self, position: f64, viewport_height: u32) -> u32 {
+            ((position - self.source_y) * self.pixels_per_point)
+                .round()
+                .max(0.0)
+                .min(f64::from(
+                    self.image_height
+                        .saturating_sub(self.viewport_height_px(viewport_height)),
+                )) as u32
         }
     }
 
@@ -237,7 +254,8 @@ mod experiment {
             let png = fs::read(png_path).context("missing viewport PNG")?;
             let decoder = PngDecoder::new(io::Cursor::new(&png))?;
             let (image_width, image_height) = decoder.dimensions();
-            if image_width < viewport_width || image_height < viewport_height {
+            let scale = f64::from(image_width) / f64::from(viewport_width);
+            if scale <= 0.0 || f64::from(image_height) < f64::from(viewport_height) * scale {
                 bail!("cached image smaller than viewport: {image_width}x{image_height}");
             }
             let new_id = match cache.as_ref().map(|entry| entry.image_id) {
@@ -249,14 +267,12 @@ mod experiment {
                 source_y: result["actualY"].as_f64().unwrap_or(0.0),
                 image_width,
                 image_height,
+                pixels_per_point: scale,
                 document_height: result["height"].as_f64().unwrap_or(0.0),
                 last_snapshot_ms: result["elapsedMs"].as_f64().unwrap_or(0.0),
                 png_bytes: png.len(),
             };
-            let source_offset = (position - new_cache.source_y)
-                .max(0.0)
-                .min(f64::from(image_height.saturating_sub(viewport_height)))
-                .round() as u32;
+            let source_offset = new_cache.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Keep the previous image visible while uploading the next image.
             upload_png(&mut out, new_id, &png)?;
@@ -265,8 +281,8 @@ mod experiment {
                 new_id,
                 columns,
                 rows,
-                viewport_width,
-                viewport_height,
+                new_cache.image_width,
+                new_cache.viewport_height_px(viewport_height),
                 source_offset,
             )?;
             if let Some(previous) = cache.as_ref() {
@@ -278,10 +294,7 @@ mod experiment {
             }
             *cache = Some(new_cache);
         } else if let Some(entry) = cache.as_ref() {
-            let source_offset = (position - entry.source_y)
-                .max(0.0)
-                .min(f64::from(entry.image_height.saturating_sub(viewport_height)))
-                .round() as u32;
+            let source_offset = entry.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Stable image ID and placement ID: crop/scroll without re-uploading.
             place_image(
@@ -289,8 +302,8 @@ mod experiment {
                 entry.image_id,
                 columns,
                 rows,
-                entry.image_width.min(viewport_width),
-                viewport_height,
+                entry.image_width,
+                entry.viewport_height_px(viewport_height),
                 source_offset,
             )?;
         }
