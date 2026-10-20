@@ -372,10 +372,14 @@ mod experiment {
         viewport_width: u32,
         viewport_height: u32,
         latest_tiled_position: Option<Arc<AtomicU64>>,
-    ) -> (Sender<WorkerCommand>, Receiver<WorkerEvent>) {
+    ) -> (
+        Sender<WorkerCommand>,
+        Receiver<WorkerEvent>,
+        thread::JoinHandle<()>,
+    ) {
         let (requests, incoming) = mpsc::channel::<WorkerCommand>();
         let (outgoing, responses) = mpsc::channel::<WorkerEvent>();
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             while let Ok(command) = incoming.recv() {
                 let reply = match command {
                     WorkerCommand::Snapshot {
@@ -471,7 +475,7 @@ mod experiment {
             }
             // Closing the channel eventually drops SwiftProcess and kills the helper.
         });
-        (requests, responses)
+        (requests, responses, worker)
     }
 
     fn prefetch_origin(
@@ -1052,6 +1056,39 @@ mod experiment {
     // viewer. All costly WebKit captures and PNG transfers stay on the worker.
     // The event loop never waits for a snapshot. Images held by Kitty are
     // bounded to MAX_TILE_CACHE + one upload and freed on eviction/exit.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum ViewerExit {
+        Quit,
+        Resized(f64),
+    }
+
+    // Use relative document progress because a width change causes reflow.
+    fn reading_fraction(position: f64, height: f64, viewport_height: u32) -> f64 {
+        let max_scroll = (height - f64::from(viewport_height)).max(0.0);
+        if max_scroll <= 0.0 {
+            0.0
+        } else {
+            (position / max_scroll).clamp(0.0, 1.0)
+        }
+    }
+
+    fn resumed_position(fraction: f64, height: f64, viewport_height: u32) -> f64 {
+        fraction.clamp(0.0, 1.0) * (height - f64::from(viewport_height)).max(0.0)
+    }
+
+    fn clear_session_images() -> Result<()> {
+        let mut out = io::stdout().lock();
+        for id in FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID {
+            delete_image(&mut out, id)?;
+        }
+        for id in hybrid_image_preview::FIRST_PREVIEW_ID..=hybrid_image_preview::LAST_PREVIEW_ID {
+            delete_image(&mut out, id)?;
+        }
+        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+        out.flush()?;
+        Ok(())
+    }
+
     fn run_tiled(
         swift: SwiftProcess,
         png_path: PathBuf,
@@ -1060,34 +1097,35 @@ mod experiment {
         viewport_width: u32,
         viewport_height: u32,
         initial: ImageCache,
+        initial_position: f64,
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
-    ) -> Result<()> {
+    ) -> Result<ViewerExit> {
         let mut document_height = initial.document_height;
-        let latest_position = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
-        let (requests, responses) = spawn_worker(
+        let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
+        let (requests, responses, webkit_worker) = spawn_worker(
             swift,
             png_path,
             viewport_width,
             viewport_height,
             Some(Arc::clone(&latest_position)),
         );
-        let (preview_requests, preview_responses) = if let Some(scene) = image_scene {
-            let (sender, receiver) = hybrid_image_preview::spawn(
+        let (preview_requests, preview_responses, preview_worker) = if let Some(scene) = image_scene {
+            let (sender, receiver, worker) = hybrid_image_preview::spawn(
                 scene,
                 viewport_width,
                 viewport_height,
                 Arc::clone(&latest_position),
             );
-            (Some(sender), Some(receiver))
+            (Some(sender), Some(receiver), Some(worker))
         } else {
-            (None, None)
+            (None, None, None)
         };
         let mut preview_tiles: Vec<hybrid_image_preview::Tile> = Vec::new();
         let mut preview_pending = false;
         let mut placed_preview_id: Option<u32> = None;
         let mut cached = vec![initial];
-        let mut position = 0.0;
+        let mut position = initial_position;
         let mut direction = ScrollDirection::Forward;
         let mut pending: Option<u32> = None;
         let mut skipped_uploads = 0usize;
@@ -1101,6 +1139,7 @@ mod experiment {
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
 
+        let mut exit = ViewerExit::Quit;
         'viewer: loop {
             if let Some(ref receiver) = preview_responses {
                 loop {
@@ -1360,8 +1399,20 @@ mod experiment {
                 if index > 0 && !event::poll(Duration::ZERO)? {
                     break;
                 }
-                let Event::Key(key) = event::read()? else {
-                    continue;
+                let key = match event::read()? {
+                    Event::Resize(new_cols, new_rows) => {
+                        if (new_cols, new_rows) != (columns, rows.saturating_add(1)) {
+                            exit = ViewerExit::Resized(reading_fraction(
+                                position,
+                                document_height,
+                                viewport_height,
+                            ));
+                            break 'viewer;
+                        }
+                        continue;
+                    }
+                    Event::Key(key) => key,
+                    _ => continue,
                 };
                 let previous_position = position;
                 match apply_key(
@@ -1385,7 +1436,16 @@ mod experiment {
         }
         drop(requests);
         drop(preview_requests);
-        Ok(())
+        // Workers must finish terminal writes before old image IDs are reused.
+        if webkit_worker.join().is_err() {
+            bail!("WebKit worker panicked while stopping");
+        }
+        if let Some(worker) = preview_worker {
+            if worker.join().is_err() {
+                bail!("preview worker panicked while stopping");
+            }
+        }
+        Ok(exit)
     }
 
     fn graphics_probe() -> Result<()> {
