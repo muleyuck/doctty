@@ -18,7 +18,9 @@ mod experiment {
         io::{self, BufRead, BufReader, IsTerminal, Write},
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
-        time::Instant,
+        sync::mpsc::{self, Receiver, Sender, TryRecvError},
+        thread,
+        time::{Duration, Instant},
     };
 
     use anyhow::{Context, Result, bail};
@@ -37,6 +39,7 @@ mod experiment {
     const SECOND_IMAGE_ID: u32 = 93_002;
     const CHUNK_SIZE: usize = 4096;
 
+    #[derive(Clone, Debug)]
     struct ImageCache {
         image_id: u32,
         source_y: f64,
@@ -169,6 +172,138 @@ mod experiment {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+
+    enum WorkerCommand {
+        Snapshot { origin: f64, image_id: u32 },
+        Select,
+    }
+
+    enum WorkerEvent {
+        Snapshot(ImageCache),
+        Selection(String),
+        Error(String),
+    }
+
+    // WebKit operations and PNG uploading run off the event loop. The worker
+    // transmits images without placing them; only the UI thread changes placements.
+    fn spawn_worker(
+        mut swift: SwiftProcess,
+        png_path: PathBuf,
+        viewport_width: u32,
+    ) -> (Sender<WorkerCommand>, Receiver<WorkerEvent>) {
+        let (requests, incoming) = mpsc::channel::<WorkerCommand>();
+        let (outgoing, responses) = mpsc::channel::<WorkerEvent>();
+        thread::spawn(move || {
+            while let Ok(command) = incoming.recv() {
+                let reply = match command {
+                    WorkerCommand::Snapshot { origin, image_id } => {
+                        let result = (|| -> Result<ImageCache> {
+                            let response =
+                                swift.request(&json!({"type": "snapshot", "y": origin}))?;
+                            if response["kind"] != "snapshot" {
+                                bail!("unexpected WebKit snapshot reply: {response}");
+                            }
+                            let png = fs::read(&png_path).context("missing prefetched PNG")?;
+                            let decoder = PngDecoder::new(io::Cursor::new(&png))?;
+                            let (image_width, image_height) = decoder.dimensions();
+                            let scale = f64::from(image_width) / f64::from(viewport_width);
+                            if scale <= 0.0 {
+                                bail!("invalid prefetched PNG width");
+                            }
+                            // Never place the image before the complete transmission.
+                            let mut stdout = io::stdout().lock();
+                            upload_png(&mut stdout, image_id, &png)?;
+                            stdout.flush()?;
+                            Ok(ImageCache {
+                                image_id,
+                                source_y: response["actualY"].as_f64().unwrap_or(origin),
+                                image_width,
+                                image_height,
+                                pixels_per_point: scale,
+                                document_height: response["height"].as_f64().unwrap_or(0.0),
+                                last_snapshot_ms: response["elapsedMs"].as_f64().unwrap_or(0.0),
+                                png_bytes: png.len(),
+                            })
+                        })();
+                        match result {
+                            Ok(cache) => WorkerEvent::Snapshot(cache),
+                            Err(error) => WorkerEvent::Error(error.to_string()),
+                        }
+                    }
+                    WorkerCommand::Select => {
+                        match swift.request(&json!({"type": "select"})) {
+                            Ok(value) => WorkerEvent::Selection(
+                                value["text"].as_str().unwrap_or("").to_owned(),
+                            ),
+                            Err(error) => WorkerEvent::Error(error.to_string()),
+                        }
+                    }
+                };
+                if outgoing.send(reply).is_err() {
+                    break;
+                }
+            }
+            // Closing the channel eventually drops SwiftProcess and kills the helper.
+        });
+        (requests, responses)
+    }
+
+    fn prefetch_origin(active: &ImageCache, desired: f64, height: u32) -> Option<f64> {
+        let viewport = f64::from(height);
+        let cache_bottom =
+            active.source_y + f64::from(active.image_height) / active.pixels_per_point;
+        let max_origin = (active.document_height - viewport * 2.0).max(0.0);
+        let candidate = if !active.covers(desired, height) {
+            (desired - viewport * 0.5).clamp(0.0, max_origin)
+        } else if desired + viewport * 1.5 >= cache_bottom && active.source_y < max_origin {
+            (active.source_y + viewport).min(max_origin)
+        } else if desired < active.source_y + viewport * 0.35 && active.source_y > 0.0 {
+            (active.source_y - viewport).max(0.0)
+        } else {
+            return None;
+        };
+        ((candidate - active.source_y).abs() > 1.0).then_some(candidate)
+    }
+
+    fn display_cached(
+        cache: &ImageCache,
+        position: f64,
+        columns: u16,
+        rows: u16,
+        viewport_height: u32,
+        state: &str,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let mut out = io::stdout().lock();
+        // Re-place pixels already stored in the terminal: zero PNG encoding/transfer.
+        place_image(
+            &mut out,
+            cache.image_id,
+            columns,
+            rows,
+            cache.image_width,
+            cache.viewport_height_px(viewport_height),
+            cache.source_offset_px(position, viewport_height),
+        )?;
+        execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
+        let status = format!(
+            "j/k scroll  J/K page  y copy  q quit | {state} y={position:.0}/{:.0} snap={:.0}ms PNG={}B place={:.0}ms",
+            cache.document_height,
+            cache.last_snapshot_ms,
+            cache.png_bytes,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        write!(
+            out,
+            "{}",
+            status
+                .chars()
+                .take(usize::from(columns))
+                .collect::<String>()
+        )?;
+        out.flush()?;
+        Ok(())
     }
 
     fn html_input(path: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
@@ -396,14 +531,107 @@ mod experiment {
         let _session = TerminalSession::enter()?;
         let mut cache = None;
         let mut position = 0.0;
-        let mut document_height = render_scroll(
+        let initial_height = render_scroll(
             &mut swift, &output, position, cols, rows, width, height, &mut cache,
         )?;
+        let mut active = cache.context("initial snapshot did not create a cache")?;
+        let mut document_height = initial_height;
+        let (requests, responses) = spawn_worker(swift, output, width);
+        let mut pending = false;
+        let mut prefetched: Option<ImageCache> = None;
+
         loop {
+            // A completed prefetch is already uploaded to the terminal in the
+            // background; activating it requires only a placement and an old delete.
+            loop {
+                match responses.try_recv() {
+                    Ok(WorkerEvent::Snapshot(next)) => {
+                        pending = false;
+                        prefetched = Some(next);
+                    }
+                    Ok(WorkerEvent::Selection(text)) => {
+                        if !text.is_empty() {
+                            let mut out = io::stdout().lock();
+                            write!(out, "\x1b]52;c;{}\x07", STANDARD.encode(text))?;
+                            out.flush()?;
+                        }
+                    }
+                    Ok(WorkerEvent::Error(error)) => bail!("WebKit prefetch: {error}"),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => bail!("WebKit worker disconnected"),
+                }
+            }
+
+            // Only two terminal images are kept: active and one prefetched.
+            if let Some(next) = prefetched.take() {
+                let active_covers = active.covers(position, height);
+                let next_covers = next.covers(position, height);
+                let should_switch = next_covers
+                    && (!active_covers
+                        || (next.source_y > active.source_y
+                            && position >= active.source_y + f64::from(height) * 0.95)
+                        || (next.source_y < active.source_y
+                            && position <= active.source_y + f64::from(height) * 0.15));
+                if should_switch {
+                    let previous = active.image_id;
+                    active = next;
+                    document_height = active.document_height;
+                    let mut out = io::stdout().lock();
+                    // The incoming image is uploaded, but is not yet visible.
+                    place_image(
+                        &mut out,
+                        active.image_id,
+                        cols,
+                        rows,
+                        active.image_width,
+                        active.viewport_height_px(height),
+                        active.source_offset_px(position, height),
+                    )?;
+                    delete_image(&mut out, previous)?;
+                    out.flush()?;
+                } else if !active_covers && !next_covers {
+                    // Direction changed while prefetching: discard the stale image.
+                    let mut out = io::stdout().lock();
+                    delete_image(&mut out, next.image_id)?;
+                    out.flush()?;
+                } else {
+                    prefetched = Some(next);
+                }
+            }
+
+            if !pending && prefetched.is_none() {
+                if let Some(origin) = prefetch_origin(&active, position, height) {
+                    let image_id = if active.image_id == FIRST_IMAGE_ID {
+                        SECOND_IMAGE_ID
+                    } else {
+                        FIRST_IMAGE_ID
+                    };
+                    requests.send(WorkerCommand::Snapshot { origin, image_id })?;
+                    pending = true;
+                }
+            }
+
+            let state = if !active.covers(position, height) {
+                // Do not block the input loop. Preserve the old image while waiting.
+                "waiting for prefetch"
+            } else if prefetched.is_some() {
+                "prefetch READY"
+            } else if pending {
+                "prefetch RUNNING"
+            } else {
+                "cache HIT"
+            };
+            if active.covers(position, height) {
+                display_cached(&active, position, cols, rows, height, state)?;
+            }
+
+            if !event::poll(Duration::from_millis(12))? {
+                continue;
+            }
             let Event::Key(key) = event::read()? else {
                 continue;
             };
-            if key.kind != KeyEventKind::Press {
+            if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
                 continue;
             }
             let step = 16.0;
@@ -415,27 +643,17 @@ mod experiment {
                 KeyCode::Char('J') | KeyCode::PageDown => position + page,
                 KeyCode::Char('K') | KeyCode::PageUp => position - page,
                 KeyCode::Char('y') => {
-                    let selected = swift.request(&json!({"type": "select"}))?;
-                    let text = selected["text"].as_str().unwrap_or("");
-                    if !text.is_empty() {
-                        let mut out = io::stdout().lock();
-                        write!(out, "\x1b]52;c;{}\x07", STANDARD.encode(text))?;
-                        out.flush()?;
-                    }
+                    requests.send(WorkerCommand::Select)?;
                     continue;
                 }
                 _ => continue,
             };
             let max_pos = (document_height - f64::from(height)).max(0.0);
-            let clamped = next.clamp(0.0, max_pos);
-            if (clamped - position).abs() > 0.5 {
-                position = clamped;
-                document_height = render_scroll(
-                    &mut swift, &output, position, cols, rows, width, height, &mut cache,
-                )?;
-            }
+            position = next.clamp(0.0, max_pos);
         }
-        let _ = swift.request(&json!({"type": "quit"}));
+        // Dropping requests stops the worker and its Swift child after the
+        // current operation. TerminalSession cleans up both image IDs.
+        drop(requests);
         Ok(())
     }
 }
