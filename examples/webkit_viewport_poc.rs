@@ -89,6 +89,40 @@ mod experiment {
         InputAction::Continue
     }
 
+    // A cache miss temporarily freezes the visible image until prefetch completes.
+    // Track these intervals to distinguish snapshot delays from placement jitter.
+    #[derive(Default)]
+    struct CacheWaitStats {
+        since: Option<Instant>,
+        episodes: usize,
+        longest: Duration,
+    }
+
+    impl CacheWaitStats {
+        fn observe(&mut self, covered: bool, now: Instant) {
+            match (covered, self.since) {
+                (false, None) => {
+                    self.since = Some(now);
+                    self.episodes += 1;
+                }
+                (true, Some(started)) => {
+                    self.longest = self.longest.max(now.saturating_duration_since(started));
+                    self.since = None;
+                }
+                _ => {}
+            }
+        }
+
+        fn elapsed(&self, now: Instant) -> Duration {
+            self.since
+                .map_or(Duration::ZERO, |started| now.saturating_duration_since(started))
+        }
+
+        fn worst(&self, now: Instant) -> Duration {
+            self.longest.max(self.elapsed(now))
+        }
+    }
+
     #[derive(Clone, Debug)]
     struct ImageCache {
         image_id: u32,
@@ -383,6 +417,45 @@ mod experiment {
         Ok(())
     }
 
+    // Update the status line while the image is frozen; otherwise the existing
+    // status disappears exactly when a cache miss is causing visible stutter.
+    fn display_cache_wait(
+        cache: &ImageCache,
+        position: f64,
+        columns: u16,
+        rows: u16,
+        viewport_height: u32,
+        pending: bool,
+        stats: &CacheWaitStats,
+        now: Instant,
+    ) -> Result<()> {
+        let cache_end = cache.source_y
+            + (f64::from(cache.image_height) / cache.pixels_per_point
+                - f64::from(viewport_height))
+            .max(0.0);
+        let status = format!(
+            "WAIT {:.0}ms pending={pending} count={} max={:.0}ms y={position:.0} cache={:.0}..{cache_end:.0} snap={:.0}ms up={:.0}ms",
+            stats.elapsed(now).as_secs_f64() * 1000.0,
+            stats.episodes,
+            stats.worst(now).as_secs_f64() * 1000.0,
+            cache.source_y,
+            cache.last_snapshot_ms,
+            cache.last_upload_ms
+        );
+        let mut out = io::stdout().lock();
+        execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
+        write!(
+            out,
+            "{}",
+            status
+                .chars()
+                .take(usize::from(columns))
+                .collect::<String>()
+        )?;
+        out.flush()?;
+        Ok(())
+    }
+
     fn html_input(path: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
         if path
             .extension()
@@ -619,6 +692,8 @@ mod experiment {
         let mut prefetched: Option<ImageCache> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut direction = ScrollDirection::Forward;
+        let mut cache_wait = CacheWaitStats::default();
+        let mut last_wait_status_at: Option<Instant> = None;
 
         'viewer: loop {
             // A completed prefetch is already uploaded to the terminal in the
@@ -704,23 +779,38 @@ mod experiment {
                 }
             }
 
-            let state = if !active.covers(position, height) {
-                // Do not block the input loop. Preserve the old image while waiting.
-                "waiting for prefetch"
-            } else if prefetched.is_some() {
-                "prefetch READY"
-            } else if pending {
-                "prefetch RUNNING"
-            } else {
-                "cache HIT"
-            };
-            if active.covers(position, height) {
+            let now = Instant::now();
+            let covered = active.covers(position, height);
+            cache_wait.observe(covered, now);
+            if covered {
+                let state = if prefetched.is_some() {
+                    "prefetch READY"
+                } else if pending {
+                    "prefetch RUNNING"
+                } else {
+                    "cache HIT"
+                };
+                let status = format!(
+                    "{state} waits={} max={:.0}ms",
+                    cache_wait.episodes,
+                    cache_wait.worst(now).as_secs_f64() * 1000.0
+                );
                 // Do not send redundant placements every 12 ms when nothing moved.
                 let fingerprint = (active.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
-                    display_cached(&active, position, cols, rows, height, state)?;
+                    display_cached(&active, position, cols, rows, height, &status)?;
                     last_displayed = Some(fingerprint);
                 }
+                last_wait_status_at = None;
+            } else if last_wait_status_at
+                .is_none_or(|previous| now.saturating_duration_since(previous) >= Duration::from_millis(100))
+            {
+                // No Kitty placement here: keep the previous image visible.
+                // Throttle diagnostics so the HUD itself does not cause stutter.
+                display_cache_wait(
+                    &active, position, cols, rows, height, pending, &cache_wait, now,
+                )?;
+                last_wait_status_at = Some(now);
             }
 
             if !event::poll(Duration::from_millis(12))? {
@@ -755,6 +845,23 @@ mod experiment {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn cache_wait_counts_only_distinct_misses_and_records_duration() {
+            let mut stats = CacheWaitStats::default();
+            let start = Instant::now();
+            stats.observe(true, start);
+            stats.observe(false, start + Duration::from_millis(10));
+            stats.observe(false, start + Duration::from_millis(80));
+            assert_eq!(stats.episodes, 1);
+            assert_eq!(stats.elapsed(start + Duration::from_millis(90)), Duration::from_millis(80));
+            stats.observe(true, start + Duration::from_millis(110));
+            assert_eq!(stats.longest, Duration::from_millis(100));
+
+            stats.observe(false, start + Duration::from_millis(130));
+            assert_eq!(stats.episodes, 2);
+            assert_eq!(stats.worst(start + Duration::from_millis(250)), Duration::from_millis(120));
         }
 
         #[test]
