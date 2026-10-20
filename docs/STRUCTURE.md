@@ -16,10 +16,8 @@
 ├── .agents/
 ├── .cargo/
 ├── .github/
-├── bin/
 ├── docs/
 ├── examples/
-├── scripts/
 ├── src/
 ├── tests/
 ├── Cargo.toml
@@ -35,8 +33,6 @@
 | `docs/` | 製品・技術・構造ドキュメント、および初期設計メモ |
 | `.agents/memory/` | エージェント用の task memory と lessons |
 | `.github/workflows/` | CI workflow |
-| `bin/` | install / update 対象として git 管理する `doctty` binary |
-| `scripts/` | 配布用 install script |
 | `examples/` | rich Markdown fixture とサンプル画像 |
 | `src/` | 本体実装 |
 | `tests/` | unit / integration / e2e テスト |
@@ -239,10 +235,9 @@ tests/
 | `Cargo.lock` | 依存 lock |
 | `rust-toolchain.toml` | Rust version 固定 |
 | `.cargo/config.toml` | cargo alias |
-| `Makefile` | build / test / lint の短縮コマンドと CI 再現用 `build-tracked-bin` |
-| `bin/doctty` | install script と `doctty update` が参照する追跡 binary |
-| `scripts/install.sh` | GitHub `main` の `bin/doctty` を取得して install する |
-| `.github/workflows/ci.yml` | fmt / clippy / test を回し、`main` push 後は `bin/doctty` も自動生成して commit する CI |
+| `Makefile` | build / test / lint の短縮コマンドとローカル用 `bin/doctty` の生成 |
+| `bin/doctty` | `make build` で生成するGit管理外のローカル実行ファイル |
+| `.github/workflows/ci.yml` | fmt / clippy / test を読み取り権限で実行するCI |
 
 ## 7. 設計上の見どころ
 

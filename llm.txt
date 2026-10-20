@@ -10,17 +10,11 @@ Authoritative details: README.md, docs/MARKDOWN.md, docs/ARCHITECTURE.md, docs/T
 - Interactive mode: requires Ghostty or Kitty (terminal detection).
 - If stdout is not a TTY (pipe, redirect, CI), doctty prints plain text to stdout instead of opening the interactive viewer.
 
-## Install (fast path)
+## Installation (from source)
 
-Default install directory: $HOME/.local/bin (override with DOCTTY_INSTALL_DIR).
-
-  curl -fsSL https://raw.githubusercontent.com/muleyuck/doctty/main/scripts/install.sh | sh
-
-After install: ensure the install directory is on PATH (e.g. export PATH="$HOME/.local/bin:$PATH").
-
-Other options:
-- The install script downloads the CI-generated `main` branch `bin/doctty` artifact and places it on PATH.
-- From source (Rust 1.92+, edition 2024): `cargo install --path . --locked --force` or `make install-local` from a clone.
+Clone this repository and run `cargo install --path . --locked` (Rust 1.92+).
+For local development use `make build`, then `./bin/doctty README.md`.
+Versioned GitHub Releases and Homebrew distribution are planned. There is no installer script or self-update subcommand.
 
 ## Basic usage
 
@@ -31,7 +25,6 @@ Examples:
   doctty README.md
   doctty --theme dark --watch ./docs/guide.md
   doctty --no-mermaid notes.md
-  doctty update
   doctty --version
   doctty --help
 
@@ -44,12 +37,11 @@ Examples:
 
 ## Environment variables (common)
 
-- DOCTTY_INSTALL_DIR: install script target directory (default ~/.local/bin).
 - DOCTTY_MERMAID_CMD: optional explicit command for Mermaid CLI; otherwise mmdc or npx @mermaid-js/mermaid-cli may be used (see docs/TECH.md).
 
 ## Troubleshooting (short)
 
-- command not found: fix PATH to include the install bin directory.
+- command not found: ensure Cargo's bin directory (usually ~/.cargo/bin) is on PATH.
 - unsupported terminal in interactive mode: use Ghostty or Kitty.
 - plain text instead of viewer: stdin/stdout not both a TTY (expected for scripts).
 - Mermaid missing: install Mermaid CLI or set DOCTTY_MERMAID_CMD; or use --no-mermaid.
