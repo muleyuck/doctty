@@ -12,6 +12,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "hybrid_image_preview.rs"]
+mod hybrid_image_preview;
+
+#[cfg(target_os = "macos")]
 mod experiment {
     use std::{
         fs,
@@ -37,6 +41,7 @@ mod experiment {
     };
     use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
     use image::{ImageDecoder, codecs::png::PngDecoder};
+    use super::hybrid_image_preview;
     use serde_json::{Value, json};
 
     const FIRST_IMAGE_ID: u32 = 93_001;
@@ -242,6 +247,9 @@ mod experiment {
             let mut stdout = io::stdout().lock();
             // Free both of this PoC's fixed image IDs, even on early exit.
             for id in FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID {
+                let _ = delete_image(&mut stdout, id);
+            }
+            for id in hybrid_image_preview::FIRST_PREVIEW_ID..=hybrid_image_preview::LAST_PREVIEW_ID {
                 let _ = delete_image(&mut stdout, id);
             }
             let _ = stdout.flush();
@@ -809,6 +817,41 @@ mod experiment {
         Ok(result)
     }
 
+
+    fn parse_preview_scene(value: &Value) -> Result<hybrid_image_preview::Scene> {
+        let items = value["items"].as_array().context("missing outline items")?;
+        let mut scene = hybrid_image_preview::Scene {
+            background: value["background"].as_str().unwrap_or("#ffffff").to_owned(),
+            items: Vec::with_capacity(items.len().min(12_000)),
+        };
+        for item in items.iter().take(12_000) {
+            let (Some(y), Some(text)) = (item["y"].as_f64(), item["text"].as_str()) else {
+                continue;
+            };
+            if !y.is_finite() || y < 0.0 || text.is_empty() {
+                continue;
+            }
+            let number = |name: &str, fallback: f64| {
+                item[name].as_f64().filter(|n| n.is_finite()).unwrap_or(fallback)
+            };
+            scene.items.push(hybrid_image_preview::StyledItem {
+                y,
+                x: number("x", 8.0),
+                width: number("width", 300.0),
+                height: number("height", 30.0),
+                font_size: number("fontSize", 16.0),
+                line_height: number("lineHeight", 24.0),
+                weight: item["weight"].as_u64().unwrap_or(400).min(900) as u16,
+                color: item["color"].as_str().unwrap_or("#1f2328").to_owned(),
+                background: item["background"].as_str().unwrap_or("").to_owned(),
+                tag: item["tag"].as_str().unwrap_or("p").to_owned(),
+                text: text.to_owned(),
+            });
+        }
+        scene.items.sort_by(|a, b| a.y.total_cmp(&b.y));
+        Ok(scene)
+    }
+
     fn preview_lines(
         outline: &[OutlineItem],
         position: f64,
@@ -1015,6 +1058,7 @@ mod experiment {
         viewport_height: u32,
         initial: ImageCache,
         outline: Option<Vec<OutlineItem>>,
+        image_scene: Option<hybrid_image_preview::Scene>,
     ) -> Result<()> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
@@ -1025,6 +1069,20 @@ mod experiment {
             viewport_height,
             Some(Arc::clone(&latest_position)),
         );
+        let (preview_requests, preview_responses) = if let Some(scene) = image_scene {
+            let (sender, receiver) = hybrid_image_preview::spawn(
+                scene,
+                viewport_width,
+                viewport_height,
+                Arc::clone(&latest_position),
+            );
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
+        let mut preview_tiles: Vec<hybrid_image_preview::Tile> = Vec::new();
+        let mut preview_pending = false;
+        let mut placed_preview_id: Option<u32> = None;
         let mut cached = vec![initial];
         let mut position = 0.0;
         let mut direction = ScrollDirection::Forward;
@@ -1041,6 +1099,26 @@ mod experiment {
         let mut last_wait_status_at: Option<Instant> = None;
 
         'viewer: loop {
+            if let Some(ref receiver) = preview_responses {
+                loop {
+                    match receiver.try_recv() {
+                        Ok(hybrid_image_preview::Response::Ready(tile)) => {
+                            preview_pending = false;
+                            preview_tiles.push(tile);
+                        }
+                        Ok(hybrid_image_preview::Response::Skipped) => {
+                            preview_pending = false;
+                        }
+                        Ok(hybrid_image_preview::Response::Failed(error)) => {
+                            bail!("raster preview worker: {error}");
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            bail!("raster preview worker disconnected");
+                        }
+                    }
+                }
+            }
             loop {
                 match responses.try_recv() {
                     Ok(WorkerEvent::Snapshot(next)) => {
@@ -1113,9 +1191,12 @@ mod experiment {
                         rows,
                         viewport_height,
                         &status,
-                        last_displayed.map(|fingerprint| fingerprint.0),
-                        showing_preview,
+                        placed_preview_id.or_else(|| {
+                            last_displayed.map(|fingerprint| fingerprint.0)
+                        }),
+                        showing_preview && placed_preview_id.is_none(),
                     )?;
+                    placed_preview_id = None;
                     showing_preview = false;
                     last_preview_position = None;
                     last_preview_frame = None;
@@ -1123,17 +1204,38 @@ mod experiment {
                 }
                 last_wait_status_at = None;
             } else if mode == Some(HybridDisplayMode::Preview) {
-                if let Some(ref outline) = outline {
-                    let frame_due = last_preview_frame.is_none_or(|last| {
-                        now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME
-                    });
+                let frame_due = last_preview_frame.is_none_or(|last| {
+                    now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME
+                });
+                if preview_requests.is_some() {
+                    if let Some(tile) = hybrid_image_preview::select(
+                        &preview_tiles, position, viewport_height,
+                    ) {
+                        if last_preview_position != Some(position.to_bits()) && frame_due {
+                            let mut out = io::stdout().lock();
+                            place_image(
+                                &mut out, tile.id, columns, rows, tile.width,
+                                hybrid_image_preview::Tile::viewport_height_px(viewport_height),
+                                tile.source_y(position, viewport_height),
+                            )?;
+                            if let Some(old_id) = placed_preview_id
+                                .or_else(|| last_displayed.map(|v| v.0))
+                                .filter(|id| *id != tile.id)
+                            {
+                                hide_image_placement(&mut out, old_id)?;
+                            }
+                            out.flush()?;
+                            placed_preview_id = Some(tile.id);
+                            showing_preview = true;
+                            last_displayed = None;
+                            last_preview_position = Some(position.to_bits());
+                            last_preview_frame = Some(now);
+                        }
+                    }
+                } else if let Some(ref outline) = outline {
                     if last_preview_position != Some(position.to_bits()) && frame_due {
                         display_preview(
-                            outline,
-                            position,
-                            columns,
-                            rows,
-                            viewport_height,
+                            outline, position, columns, rows, viewport_height,
                             last_displayed.map(|fingerprint| fingerprint.0),
                         )?;
                         showing_preview = true;
@@ -1164,6 +1266,35 @@ mod experiment {
                     )?;
                 }
                 last_wait_status_at = Some(now);
+            }
+
+            if let Some(ref sender) = preview_requests {
+                if !preview_pending && mode == Some(HybridDisplayMode::Preview)
+                    && hybrid_image_preview::select(
+                        &preview_tiles, position, viewport_height,
+                    ).is_none()
+                {
+                    if preview_tiles.len() >= hybrid_image_preview::MAX_PREVIEW_CACHE {
+                        if let Some(old) = hybrid_image_preview::evict(
+                            &mut preview_tiles, position, viewport_height, placed_preview_id,
+                        ) {
+                            let mut out = io::stdout().lock();
+                            delete_image(&mut out, old.id)?;
+                            out.flush()?;
+                        }
+                    }
+                    if preview_tiles.len() < hybrid_image_preview::MAX_PREVIEW_CACHE {
+                        if let Some(image_id) = hybrid_image_preview::free_id(&preview_tiles) {
+                            let origin = hybrid_image_preview::tile_origin(
+                                position, viewport_height, document_height,
+                            );
+                            sender.send(hybrid_image_preview::Request {
+                                origin, image_id, requested_at: position,
+                            })?;
+                            preview_pending = true;
+                        }
+                    }
+                }
             }
 
             if pending.is_none() {
@@ -1237,6 +1368,7 @@ mod experiment {
             }
         }
         drop(requests);
+        drop(preview_requests);
         Ok(())
     }
 
@@ -1278,7 +1410,8 @@ mod experiment {
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let hybrid = first == "--hybrid";
+        let hybrid_image = first == "--hybrid-image";
+        let hybrid = first == "--hybrid" || hybrid_image;
         let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
             arguments.next().unwrap_or_else(|| "README.md".into())
@@ -1306,8 +1439,20 @@ mod experiment {
             bail!("expected WebKit readiness response: {ready}");
         }
 
-        let outline = if hybrid {
-            Some(parse_outline(&swift.request(&json!({"type": "outline"}))?)?)
+        let outline_response = if hybrid {
+            Some(swift.request(&json!({"type": "outline"}))?)
+        } else {
+            None
+        };
+        let outline = match outline_response {
+            Some(ref response) if !hybrid_image => Some(parse_outline(response)?),
+            Some(_) => Some(Vec::new()),
+            None => None,
+        };
+        let image_scene = if hybrid_image {
+            Some(parse_preview_scene(
+                outline_response.as_ref().context("missing DOM styles")?,
+            )?)
         } else {
             None
         };
@@ -1320,7 +1465,7 @@ mod experiment {
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
         if tiled {
-            return run_tiled(swift, output, cols, rows, width, height, active, outline);
+            return run_tiled(swift, output, cols, rows, width, height, active, outline, image_scene);
         }
         let mut document_height = initial_height;
         let (requests, responses) = spawn_worker(swift, output, width, height, None);
@@ -1582,6 +1727,23 @@ mod experiment {
                 recovery_tile_origin(&[cached_at(0.0)], 9000.0, 1000, 10_000.0),
                 Some(8000.0),
             );
+        }
+
+        #[test]
+        fn hybrid_image_scene_parses_styles() {
+            let response = json!({
+                "kind": "outline",
+                "background": "#0d1117",
+                "items": [{"y": 20, "x": 12, "width": 400, "height": 48,
+                    "fontSize": 28, "lineHeight": 32, "weight": 700,
+                    "color": "#f0f6fc", "tag": "h1", "text": "Test"}]
+            });
+            let scene = parse_preview_scene(&response)
+                .unwrap_or_else(|error| panic!("parse scene: {error}"));
+            assert_eq!(scene.background, "#0d1117");
+            assert_eq!(scene.items.len(), 1);
+            assert_eq!(scene.items[0].font_size, 28.0);
+            assert_eq!(scene.items[0].text, "Test");
         }
 
         #[test]
