@@ -1,10 +1,10 @@
-# PRD: `mdv`
+# PRD: `doctty`
 
 | Item | Value |
 | --- | --- |
 | Version | 1.0 |
 | Status | Active |
-| Product | `mdv` |
+| Product | `doctty` |
 | Type | Rust 製 CLI Markdown Viewer |
 | Repository Version | `0.1.1` |
 | Primary Interface | Terminal CLI |
@@ -12,7 +12,7 @@
 
 ## 1. 目的
 
-`mdv` は、Markdown 文書を browser や editor preview に切り替えず、terminal 内で高い可読性のまま読むための single-binary viewer である。
+`doctty` は、Markdown 文書を browser や editor preview に切り替えず、terminal 内で高い可読性のまま読むための single-binary viewer である。
 
 このリポジトリから確認できる現在の製品方針は次の 2 本柱に集約される。
 
@@ -27,7 +27,7 @@ terminal 常用者が Markdown を読むとき、次の摩擦が発生しやす�
 - 既存の terminal viewer では table、image、callout、Mermaid、syntax highlight の fidelity が落ちやすい
 - CI や pipe では rich viewer が使えず、最低限読める代替表現が必要になる
 
-`mdv` はこの摩擦を減らし、Markdown の閲覧体験を terminal workflow に戻すことを狙う。
+`doctty` はこの摩擦を減らし、Markdown の閲覧体験を terminal workflow に戻すことを狙う。
 
 ## 3. 対象ユーザー
 
@@ -47,7 +47,7 @@ terminal 常用者が Markdown を読むとき、次の摩擦が発生しやす�
 
 | # | Use Case | Current Outcome |
 | --- | --- | --- |
-| 1 | `mdv README.md` を実行してドキュメントを読む | 対話 TTY では graphic page 表示、非対話では plain-text 表示 |
+| 1 | `doctty README.md` を実行してドキュメントを読む | 対話 TTY では graphic page 表示、非対話では plain-text 表示 |
 | 2 | rich fixture のような画像付き設計書を確認する | ローカル画像を解決し、表示可能なら描画する |
 | 3 | Mermaid を含む仕様書を読む | renderer が使えれば表示、使えなければ unavailable 表示に degrade する |
 | 4 | 文書を編集しながら確認する | `--watch` で変更監視し再読み込みする |
@@ -128,7 +128,7 @@ terminal 常用者が Markdown を読むとき、次の摩擦が発生しやす�
 6. `--watch` でファイル更新を検知し、再読み込みできること
 7. `system` を既定に、`light` / `dark` を明示指定で切り替えられること
 8. 最低限の keyboard navigation を持つこと
-9. `update` で GitHub `main` の追跡対象 `bin/mdv` と現在の `mdv` 実行ファイルを比較し、差分があるときだけ上書きインストールできること
+9. `update` で GitHub `main` の追跡対象 `bin/doctty` と現在の `doctty` 実行ファイルを比較し、差分があるときだけ上書きインストールできること
 
 ### 6.2 Non-Functional Requirements
 
@@ -161,7 +161,7 @@ README の配布ターゲットは macOS / Linux だが、現行の interactive 
 コードベースから妥当と判断できる短期指標は以下。
 
 - rich fixture を使った integration / e2e テストが green であること
-- README、examples 配下の文書が `mdv` で読み切れること
+- README、examples 配下の文書が `doctty` で読み切れること
 - Mermaid や local image の失敗時に silent failure にならないこと
 - 対話モードと非対話モードで最低限の閲覧品質を維持できること
 

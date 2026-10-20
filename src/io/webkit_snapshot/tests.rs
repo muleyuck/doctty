@@ -33,9 +33,9 @@ fn snapshot_workspace_uses_temp_dir() {
 }
 
 #[test]
-fn cleanup_workspace_removes_empty_mdv_webkit_parent() {
+fn cleanup_workspace_removes_empty_doctty_webkit_parent() {
     let base = std::env::temp_dir().join(format!(
-        "mdv-webkit-cleanup-test-{}",
+        "doctty-webkit-cleanup-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -53,6 +53,6 @@ fn cleanup_workspace_removes_empty_mdv_webkit_parent() {
     cleanup_workspace(&workspace)
         .unwrap_or_else(|error| panic!("workspace cleanup should succeed: {error}"));
 
-    assert!(!parent.exists(), "empty .mdv-webkit parent should be removed");
+    assert!(!parent.exists(), "empty .doctty-webkit parent should be removed");
     let _ = std::fs::remove_dir_all(base);
 }

@@ -1,5 +1,5 @@
+use doctty::io::image_decoder::ImageDecoder;
 use image::{ImageBuffer, Rgba};
-use mdv::io::image_decoder::ImageDecoder;
 use tempfile::TempDir;
 
 #[test]

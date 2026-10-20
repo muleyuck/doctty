@@ -15,7 +15,7 @@ fn prints_rendered_document_when_stdout_is_not_a_tty() {
         panic!("fixture should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -39,7 +39,7 @@ fn prints_disabled_mermaid_placeholder_when_flag_is_set() {
         panic!("fixture should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };

@@ -17,13 +17,13 @@ pub(super) fn create_workspace(base_dir: &Path, read_access_root: &Path) -> Resu
             continue;
         }
 
-        let dir = candidate.join(".mdv-webkit").join(format!("{timestamp}"));
+        let dir = candidate.join(".doctty-webkit").join(format!("{timestamp}"));
         if fs::create_dir_all(&dir).is_ok() {
             return Ok(dir);
         }
     }
 
-    let dir = normalized_root.join(".mdv-webkit").join(format!("{timestamp}"));
+    let dir = normalized_root.join(".doctty-webkit").join(format!("{timestamp}"));
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -34,7 +34,7 @@ pub(super) fn cleanup_workspace(workspace: &Path) -> Result<()> {
     let Some(parent) = workspace.parent() else {
         return Ok(());
     };
-    if parent.file_name().and_then(|name| name.to_str()) != Some(".mdv-webkit") {
+    if parent.file_name().and_then(|name| name.to_str()) != Some(".doctty-webkit") {
         return Ok(());
     }
     if !parent.exists() {

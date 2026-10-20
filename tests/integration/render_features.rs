@@ -13,7 +13,7 @@ fn headless_render_covers_core_mvp_blocks() {
         panic!("fixture should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -38,7 +38,7 @@ fn headless_render_supports_repo_rich_fixture() {
     let fixture =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join("rich_markdown.md");
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -58,7 +58,7 @@ fn headless_render_supports_repo_rich_fixture() {
 
 #[test]
 fn headless_render_supports_stdin_with_dash_path() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -83,7 +83,7 @@ fn headless_render_keeps_math_expressions_visible() {
         panic!("fixture should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };

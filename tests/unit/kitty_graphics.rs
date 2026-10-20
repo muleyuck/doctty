@@ -1,4 +1,4 @@
-use mdv::io::kitty_graphics::{
+use doctty::io::kitty_graphics::{
     DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_png,
 };
 

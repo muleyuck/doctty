@@ -1,10 +1,10 @@
-# STRUCTURE: `mdv`
+# STRUCTURE: `doctty`
 
 | Item | Value |
 | --- | --- |
 | Version | 1.0 |
 | Status | Active |
-| Product | `mdv` |
+| Product | `doctty` |
 | Document Basis | Repository audit on 2026-03-29 |
 
 ## 1. ルート構成
@@ -35,7 +35,7 @@
 | `docs/` | 製品・技術・構造ドキュメント、および初期設計メモ |
 | `.agents/memory/` | エージェント用の task memory と lessons |
 | `.github/workflows/` | CI workflow |
-| `bin/` | install / update 対象として git 管理する `mdv` binary |
+| `bin/` | install / update 対象として git 管理する `doctty` binary |
 | `scripts/` | 配布用 install script |
 | `examples/` | rich Markdown fixture とサンプル画像 |
 | `src/` | 本体実装 |
@@ -72,7 +72,7 @@ src/
 | File | Role |
 | --- | --- |
 | `src/cli/mod.rs` | `parse()` と startup message 補助 |
-| `src/cli/args.rs` | `MdvArgs`、`Theme`、CLI schema |
+| `src/cli/args.rs` | `DocttyArgs`、`Theme`、CLI schema |
 
 ### 3.3 `src/app/`
 
@@ -240,9 +240,9 @@ tests/
 | `rust-toolchain.toml` | Rust version 固定 |
 | `.cargo/config.toml` | cargo alias |
 | `Makefile` | build / test / lint の短縮コマンドと CI 再現用 `build-tracked-bin` |
-| `bin/mdv` | install script と `mdv update` が参照する追跡 binary |
-| `scripts/install.sh` | GitHub `main` の `bin/mdv` を取得して install する |
-| `.github/workflows/ci.yml` | fmt / clippy / test を回し、`main` push 後は `bin/mdv` も自動生成して commit する CI |
+| `bin/doctty` | install script と `doctty update` が参照する追跡 binary |
+| `scripts/install.sh` | GitHub `main` の `bin/doctty` を取得して install する |
+| `.github/workflows/ci.yml` | fmt / clippy / test を回し、`main` push 後は `bin/doctty` も自動生成して commit する CI |
 
 ## 7. 設計上の見どころ
 

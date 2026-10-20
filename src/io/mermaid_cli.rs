@@ -24,7 +24,7 @@ pub struct MermaidCliRenderer {
 impl MermaidCliRenderer {
     #[must_use]
     pub fn from_env() -> Self {
-        if let Some(command) = std::env::var_os("MDV_MERMAID_CMD") {
+        if let Some(command) = std::env::var_os("DOCTTY_MERMAID_CMD") {
             return Self {
                 command: PathBuf::from(command),
                 base_args: Vec::new(),
@@ -207,7 +207,7 @@ fn mermaid_theme_name(theme: Theme) -> &'static str {
 fn create_workspace() -> Result<PathBuf> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let counter = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("mdv-mermaid-{timestamp}-{counter}"));
+    let dir = std::env::temp_dir().join(format!("doctty-mermaid-{timestamp}-{counter}"));
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -230,18 +230,18 @@ fn default_cache_root() -> PathBuf {
     if cfg!(target_os = "macos")
         && let Some(home) = std::env::var_os("HOME")
     {
-        return PathBuf::from(home).join("Library/Caches/mdv");
+        return PathBuf::from(home).join("Library/Caches/doctty");
     }
 
     if let Some(root) = std::env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(root).join("mdv");
+        return PathBuf::from(root).join("doctty");
     }
 
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".cache/mdv");
+        return PathBuf::from(home).join(".cache/doctty");
     }
 
-    std::env::temp_dir().join("mdv-cache")
+    std::env::temp_dir().join("doctty-cache")
 }
 
 fn stable_cache_key(parts: &[&str]) -> String {

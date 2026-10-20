@@ -101,7 +101,7 @@ const COMMON_OVERRIDES: &str = r#"
 body {
   margin: 0;
 }
-.mdv-page {
+.doctty-page {
   padding: 8px;
   display: flex;
   justify-content: center;
@@ -153,7 +153,7 @@ body {
 .markdown-body p > img:only-child {
   display: block;
 }
-.mdv-mermaid {
+.doctty-mermaid {
   margin: 16px 0;
   display: flex;
   justify-content: center;
@@ -162,8 +162,8 @@ body {
   margin-left: auto;
   margin-right: auto;
 }
-.mdv-mermaid img,
-.mdv-mermaid-diagram {
+.doctty-mermaid img,
+.doctty-mermaid-diagram {
   display: block;
   width: 100%;
   max-width: 100%;
@@ -171,7 +171,7 @@ body {
   margin: 0 auto;
   flex: 0 1 auto;
 }
-.mdv-mermaid-fallback {
+.doctty-mermaid-fallback {
   color: #57606a;
   font-weight: 600;
 }
@@ -211,7 +211,7 @@ const DARK_THEME_OVERRIDES: &str = r#"
 body {
   background: #0d1117;
 }
-.mdv-mermaid-fallback {
+.doctty-mermaid-fallback {
   color: #8b949e;
   font-weight: 600;
 }

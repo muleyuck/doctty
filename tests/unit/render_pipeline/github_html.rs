@@ -1,4 +1,4 @@
-use mdv::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
 
 #[test]
 fn github_html_wraps_markdown_in_dark_github_shell() {
@@ -23,7 +23,7 @@ fn github_html_replaces_mermaid_blocks_with_fallback_when_disabled() {
         build_github_html(source, std::path::Path::new("."), Theme::Dark, MermaidMode::Disabled)
             .unwrap_or_else(|error| panic!("html should render: {error}"));
 
-    assert!(html.contains("mdv-mermaid"));
+    assert!(html.contains("doctty-mermaid"));
     assert!(html.contains("Mermaid disabled"));
     assert!(!html.contains("<code class=\"language-mermaid\">"));
 }
@@ -179,7 +179,7 @@ fn github_html_preserves_mermaid_inside_list_structure() {
             .unwrap_or_else(|error| panic!("html should render: {error}"));
 
     assert!(html.contains("<li>"));
-    assert!(html.contains("mdv-mermaid"));
+    assert!(html.contains("doctty-mermaid"));
     assert!(html.contains("before"));
     assert!(html.contains("after"));
 }

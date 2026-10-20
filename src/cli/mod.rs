@@ -1,9 +1,9 @@
 mod args;
 
-pub use args::{MdvArgs, MdvCommand, Theme};
+pub use args::{DocttyArgs, DocttyCommand, Theme};
 
 #[must_use]
-pub fn parse() -> MdvArgs {
+pub fn parse() -> DocttyArgs {
     let raw_args: Vec<_> = std::env::args_os().collect();
 
     if requested_version_flag(&raw_args) {
@@ -11,17 +11,17 @@ pub fn parse() -> MdvArgs {
         std::process::exit(0);
     }
 
-    MdvArgs::parse_from(raw_args)
+    DocttyArgs::parse_from(raw_args)
 }
 
 #[must_use]
-pub fn startup_message(args: &MdvArgs) -> String {
-    if matches!(args.command.as_ref(), Some(MdvCommand::Update)) {
-        return "mdv: command=update".to_string();
+pub fn startup_message(args: &DocttyArgs) -> String {
+    if matches!(args.command.as_ref(), Some(DocttyCommand::Update)) {
+        return "doctty: command=update".to_string();
     }
 
     let path = args.path.as_deref().unwrap_or_else(|| std::path::Path::new("<missing>"));
-    let mut message = format!("mdv: path={}", path.display());
+    let mut message = format!("doctty: path={}", path.display());
 
     if args.watch {
         message.push_str(" watch=on");

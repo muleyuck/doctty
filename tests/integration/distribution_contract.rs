@@ -9,7 +9,7 @@ fn install_script_downloads_the_tracked_main_binary_with_feedback() {
     });
 
     assert!(
-        script.contains("raw.githubusercontent.com/${REPO}/main/bin/mdv"),
+        script.contains("raw.githubusercontent.com/${REPO}/main/bin/doctty"),
         "install script should download the tracked main binary"
     );
     assert!(script.contains("spinner"), "install script should provide loading feedback");
@@ -33,23 +33,23 @@ fn ci_workflow_refreshes_the_tracked_binary_on_main_pushes() {
     );
     assert!(
         jobs.contains_key(Value::String("refresh_tracked_binary".to_string())),
-        "ci workflow should refresh bin/mdv from CI on main pushes"
+        "ci workflow should refresh bin/doctty from CI on main pushes"
     );
     assert!(
         workflow.contains("github.actor != 'github-actions[bot]'"),
         "ci workflow should avoid infinite bot-triggered refresh loops"
     );
     assert!(
-        workflow.contains("git add bin/mdv"),
-        "ci workflow should commit refreshed bin/mdv back to main"
+        workflow.contains("git add bin/doctty"),
+        "ci workflow should commit refreshed bin/doctty back to main"
     );
     assert!(
         workflow.contains("git fetch origin main"),
-        "ci workflow should fetch the latest main branch before pushing refreshed bin/mdv"
+        "ci workflow should fetch the latest main branch before pushing refreshed bin/doctty"
     );
     assert!(
         workflow.contains("git rebase origin/main"),
-        "ci workflow should rebase onto the latest main branch before pushing refreshed bin/mdv"
+        "ci workflow should rebase onto the latest main branch before pushing refreshed bin/doctty"
     );
     assert!(
         branches.iter().any(|branch| branch.as_str() == Some("main")),
@@ -121,8 +121,8 @@ fn make_build_refreshes_the_local_bin_copy() {
         "make build should still compile the release binary and prepare the local bin directory"
     );
     assert!(
-        makefile.contains("cp target/release/mdv bin/mdv"),
-        "make build should refresh ./bin/mdv so the local runnable path is not stale"
+        makefile.contains("cp target/release/doctty bin/doctty"),
+        "make build should refresh ./bin/doctty so the local runnable path is not stale"
     );
 }
 

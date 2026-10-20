@@ -1,4 +1,4 @@
-use mdv::io::browser::browser_command_for;
+use doctty::io::browser::browser_command_for;
 
 #[test]
 fn chooses_open_on_macos() {

@@ -47,14 +47,14 @@ cp "{}" "$out"
         panic!("doc should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
 
     command
         .arg(&doc_path)
-        .env("MDV_MERMAID_CMD", &script)
+        .env("DOCTTY_MERMAID_CMD", &script)
         .assert()
         .success()
         .stdout(contains("[Image: pixel 1x1"))

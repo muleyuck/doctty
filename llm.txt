@@ -1,41 +1,41 @@
-# mdv — context for LLMs and coding agents
+# doctty — context for LLMs and coding agents
 
-This file summarizes how end users install and run `mdv` (Markdown viewer for Ghostty and Kitty).
+This file summarizes how end users install and run `doctty` (Markdown viewer for Ghostty and Kitty).
 Authoritative details: README.md, docs/MARKDOWN.md, docs/ARCHITECTURE.md, docs/TECH.md.
 
 ## What it is
 
-- Binary name: mdv
+- Binary name: doctty
 - Renders GitHub Flavored Markdown (GFM) in the terminal with rich layout, images, code highlighting, optional Mermaid.
 - Interactive mode: requires Ghostty or Kitty (terminal detection).
-- If stdout is not a TTY (pipe, redirect, CI), mdv prints plain text to stdout instead of opening the interactive viewer.
+- If stdout is not a TTY (pipe, redirect, CI), doctty prints plain text to stdout instead of opening the interactive viewer.
 
 ## Install (fast path)
 
-Default install directory: $HOME/.local/bin (override with MDV_INSTALL_DIR).
+Default install directory: $HOME/.local/bin (override with DOCTTY_INSTALL_DIR).
 
-  curl -fsSL https://raw.githubusercontent.com/posaune0423/mdv/main/scripts/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/muleyuck/doctty/main/scripts/install.sh | sh
 
 After install: ensure the install directory is on PATH (e.g. export PATH="$HOME/.local/bin:$PATH").
 
 Other options:
-- The install script downloads the CI-generated `main` branch `bin/mdv` artifact and places it on PATH.
+- The install script downloads the CI-generated `main` branch `bin/doctty` artifact and places it on PATH.
 - From source (Rust 1.92+, edition 2024): `cargo install --path . --locked --force` or `make install-local` from a clone.
 
 ## Basic usage
 
-  mdv <PATH_TO_MARKDOWN_FILE>
+  doctty <PATH_TO_MARKDOWN_FILE>
 
 Examples:
 
-  mdv README.md
-  mdv --theme dark --watch ./docs/guide.md
-  mdv --no-mermaid notes.md
-  mdv update
-  mdv --version
-  mdv --help
+  doctty README.md
+  doctty --theme dark --watch ./docs/guide.md
+  doctty --no-mermaid notes.md
+  doctty update
+  doctty --version
+  doctty --help
 
-## CLI flags (clap / MdvArgs)
+## CLI flags (clap / DocttyArgs)
 
 - path: required positional argument — Markdown file to open (PathBuf).
 - --watch: reload when the file changes on disk.
@@ -44,15 +44,15 @@ Examples:
 
 ## Environment variables (common)
 
-- MDV_INSTALL_DIR: install script target directory (default ~/.local/bin).
-- MDV_MERMAID_CMD: optional explicit command for Mermaid CLI; otherwise mmdc or npx @mermaid-js/mermaid-cli may be used (see docs/TECH.md).
+- DOCTTY_INSTALL_DIR: install script target directory (default ~/.local/bin).
+- DOCTTY_MERMAID_CMD: optional explicit command for Mermaid CLI; otherwise mmdc or npx @mermaid-js/mermaid-cli may be used (see docs/TECH.md).
 
 ## Troubleshooting (short)
 
 - command not found: fix PATH to include the install bin directory.
 - unsupported terminal in interactive mode: use Ghostty or Kitty.
 - plain text instead of viewer: stdin/stdout not both a TTY (expected for scripts).
-- Mermaid missing: install Mermaid CLI or set MDV_MERMAID_CMD; or use --no-mermaid.
+- Mermaid missing: install Mermaid CLI or set DOCTTY_MERMAID_CMD; or use --no-mermaid.
 
 ## License
 

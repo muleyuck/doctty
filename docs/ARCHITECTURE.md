@@ -6,7 +6,7 @@ High-level map of how a `.md` file becomes terminal output or stdout in this rep
 
 | Layer | Role (in this repo) |
 |-------|---------------------|
-| **`main` / `cli`** | Parse argv → `MdvArgs` |
+| **`main` / `cli`** | Parse argv → `DocttyArgs` |
 | **`app`** | Read file, parse Markdown once, branch interactive vs headless ([`src/app/mod.rs`](../src/app/mod.rs)) |
 | **`render::markdown`** | Comrak + GFM options → domain `Document` (`BlockKind` list) |
 | **`render::text`** | `Document` → plain string **or** wrapped `RenderedDocument` (lines + graphic placements) |
@@ -20,7 +20,7 @@ High-level map of how a `.md` file becomes terminal output or stdout in this rep
 ```mermaid
 flowchart TB
   subgraph Entry["Entry"]
-    A["mdv path/to/doc.md"] --> B["cli parse to MdvArgs"]
+    A["doctty path/to/doc.md"] --> B["cli parse to DocttyArgs"]
     B --> C["app::run"]
   end
 

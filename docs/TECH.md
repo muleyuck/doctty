@@ -1,22 +1,22 @@
-# TECH: `mdv`
+# TECH: `doctty`
 
 | Item | Value |
 | --- | --- |
 | Version | 1.0 |
 | Status | Active |
-| Product | `mdv` |
+| Product | `doctty` |
 | Language | Rust 2024 |
 | Toolchain | Rust `1.92.0` |
 | Document Basis | Repository audit on 2026-03-29 |
 
 ## 1. 技術概要
 
-`mdv` は Rust 製の single-binary CLI で、Markdown を一度 `Document` に正規化したうえで、2 つの出力経路に分岐する。
+`doctty` は Rust 製の single-binary CLI で、Markdown を一度 `Document` に正規化したうえで、2 つの出力経路に分岐する。
 
 - 対話モード: GitHub HTML 風に整形したページを PNG に snapshot し、Kitty graphics protocol で terminal に表示する
 - 非対話モード: `Document` から plain-text rendering を生成して stdout に出す
 
-エントリポイントはシンプルで、`src/main.rs` が `mdv::cli::parse()` と `mdv::app::run()` を呼ぶだけになっている。
+エントリポイントはシンプルで、`src/main.rs` が `doctty::cli::parse()` と `doctty::app::run()` を呼ぶだけになっている。
 
 ## 2. 主要依存
 
@@ -94,7 +94,7 @@
 
 | Module | 責務 |
 | --- | --- |
-| `cli` | `MdvArgs` 定義、theme enum、引数 parse |
+| `cli` | `DocttyArgs` 定義、theme enum、引数 parse |
 | `app` | 起動 orchestration、TTY 判定、render mode 分岐 |
 | `core` | `Document`、`BlockKind`、テーマ token、layout 補助、diff |
 | `render::markdown` | GFM parse と `Document` 正規化 |
@@ -116,7 +116,7 @@
 
 Mermaid は `MermaidCliRenderer::from_env()` で次の順に探索する。
 
-1. `MDV_MERMAID_CMD`
+1. `DOCTTY_MERMAID_CMD`
 2. `mmdc`
 3. `npx -y @mermaid-js/mermaid-cli`
 
@@ -179,10 +179,10 @@ Rust toolchain は `1.92.0` に固定されている。
 
 release automation は現在持たない。配布契約は次の 2 本だけである。
 
-- `scripts/install.sh` は GitHub `main` 上の追跡対象 `bin/mdv` を取得して install directory に配置する
-- `mdv update` は現在の実行ファイルと GitHub `main` の `bin/mdv` を byte-for-byte で比較し、差分があるときだけ置き換える
+- `scripts/install.sh` は GitHub `main` 上の追跡対象 `bin/doctty` を取得して install directory に配置する
+- `doctty update` は現在の実行ファイルと GitHub `main` の `bin/doctty` を byte-for-byte で比較し、差分があるときだけ置き換える
 
-repo の `bin/mdv` は install / update の実体であり、`main` への push 後に `ci.yml` の macOS job が自動生成して必要時のみ commit する。ローカルでは `make build-tracked-bin` で同じ packaging path を再現できるが、追跡 binary の更新責務は人手ではなく CI が持つ。
+repo の `bin/doctty` は install / update の実体であり、`main` への push 後に `ci.yml` の macOS job が自動生成して必要時のみ commit する。ローカルでは `make build-tracked-bin` で同じ packaging path を再現できるが、追跡 binary の更新責務は人手ではなく CI が持つ。
 
 ## 9. テスト戦略
 

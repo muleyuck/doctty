@@ -1,4 +1,4 @@
-use mdv::ui::terminal::is_supported_terminal;
+use doctty::ui::terminal::is_supported_terminal;
 
 #[test]
 fn accepts_ghostty_and_kitty() {

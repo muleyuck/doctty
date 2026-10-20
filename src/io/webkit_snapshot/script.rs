@@ -123,7 +123,7 @@ final class SnapshotRunner: NSObject, WKNavigationDelegate {
               contentLength: 0
             };
           });
-          const mermaids = Array.from(document.querySelectorAll(".mdv-mermaid-diagram")).map((diagram) => {
+          const mermaids = Array.from(document.querySelectorAll(".doctty-mermaid-diagram")).map((diagram) => {
             const rect = diagram.getBoundingClientRect();
             const viewBox = diagram.getAttribute("viewBox") || "";
             const viewBoxParts = viewBox.split(/[\\s,]+/).map((part) => Number(part));

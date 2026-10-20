@@ -3,7 +3,7 @@ use predicates::str::{contains, diff};
 
 #[test]
 fn help_mentions_core_flags() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -12,6 +12,7 @@ fn help_mentions_core_flags() {
         .arg("--help")
         .assert()
         .success()
+        .stdout(contains("Usage: doctty"))
         .stdout(contains("--watch"))
         .stdout(contains("--theme"))
         .stdout(contains("--no-mermaid"))
@@ -22,7 +23,7 @@ fn help_mentions_core_flags() {
 
 #[test]
 fn update_help_mentions_main_binary_replacement() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -32,12 +33,12 @@ fn update_help_mentions_main_binary_replacement() {
         .assert()
         .success()
         .stdout(contains("GitHub main"))
-        .stdout(contains("bin/mdv"));
+        .stdout(contains("bin/doctty"));
 }
 
 #[test]
 fn version_flag_prints_the_package_version() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -51,7 +52,7 @@ fn version_flag_prints_the_package_version() {
 
 #[test]
 fn version_flag_stays_numeric_only_when_combined_with_a_path() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
@@ -65,7 +66,7 @@ fn version_flag_stays_numeric_only_when_combined_with_a_path() {
 
 #[test]
 fn version_flag_stays_numeric_only_when_combined_with_a_subcommand() {
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };
