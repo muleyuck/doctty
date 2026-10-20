@@ -27,7 +27,7 @@ mod experiment {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use crossterm::{
         cursor,
-        event::{self, Event, KeyCode, KeyEventKind},
+        event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
         execute,
         terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     };
@@ -38,11 +38,53 @@ mod experiment {
     const FIRST_IMAGE_ID: u32 = 93_001;
     const SECOND_IMAGE_ID: u32 = 93_002;
     const CHUNK_SIZE: usize = 4096;
+    const MAX_INPUT_BATCH: usize = 32;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
         Forward,
         Backward,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum InputAction {
+        Continue,
+        Select,
+        Quit,
+    }
+
+    // Apply individual keys in order so clamping and direction changes retain
+    // their original semantics. The caller batches redraws, not navigation.
+    fn apply_key(
+        key: KeyEvent,
+        position: &mut f64,
+        direction: &mut ScrollDirection,
+        document_height: f64,
+        viewport_height: u32,
+    ) -> InputAction {
+        if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+            return InputAction::Continue;
+        }
+        let step = 16.0;
+        let page = f64::from(viewport_height) * 0.85;
+        let next = match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return InputAction::Quit,
+            KeyCode::Char('j') | KeyCode::Down => *position + step,
+            KeyCode::Char('k') | KeyCode::Up => *position - step,
+            KeyCode::Char('J') | KeyCode::PageDown => *position + page,
+            KeyCode::Char('K') | KeyCode::PageUp => *position - page,
+            KeyCode::Char('y') => return InputAction::Select,
+            _ => return InputAction::Continue,
+        };
+        let max_pos = (document_height - f64::from(viewport_height)).max(0.0);
+        let next_position = next.clamp(0.0, max_pos);
+        if next_position > *position {
+            *direction = ScrollDirection::Forward;
+        } else if next_position < *position {
+            *direction = ScrollDirection::Backward;
+        }
+        *position = next_position;
+        InputAction::Continue
     }
 
     #[derive(Clone, Debug)]
@@ -578,7 +620,7 @@ mod experiment {
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut direction = ScrollDirection::Forward;
 
-        loop {
+        'viewer: loop {
             // A completed prefetch is already uploaded to the terminal in the
             // background; activating it requires only a placement and an old delete.
             loop {
@@ -684,34 +726,21 @@ mod experiment {
             if !event::poll(Duration::from_millis(12))? {
                 continue;
             }
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
-                continue;
-            }
-            let step = 16.0;
-            let page = f64::from(height) * 0.85;
-            let next = match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Char('j') | KeyCode::Down => position + step,
-                KeyCode::Char('k') | KeyCode::Up => position - step,
-                KeyCode::Char('J') | KeyCode::PageDown => position + page,
-                KeyCode::Char('K') | KeyCode::PageUp => position - page,
-                KeyCode::Char('y') => {
-                    requests.send(WorkerCommand::Select)?;
-                    continue;
+            // Ghostty may enqueue several arrow-key events for one fast wheel
+            // gesture. Consume a bounded burst before the next image placement.
+            for index in 0..MAX_INPUT_BATCH {
+                if index > 0 && !event::poll(Duration::ZERO)? {
+                    break;
                 }
-                _ => continue,
-            };
-            let max_pos = (document_height - f64::from(height)).max(0.0);
-            let next_position = next.clamp(0.0, max_pos);
-            if next_position > position {
-                direction = ScrollDirection::Forward;
-            } else if next_position < position {
-                direction = ScrollDirection::Backward;
+                let Event::Key(key) = event::read()? else {
+                    continue;
+                };
+                match apply_key(key, &mut position, &mut direction, document_height, height) {
+                    InputAction::Quit => break 'viewer,
+                    InputAction::Select => requests.send(WorkerCommand::Select)?,
+                    InputAction::Continue => {}
+                }
             }
-            position = next_position;
         }
         // Dropping requests stops the worker and its Swift child after the
         // current operation. TerminalSession cleans up both image IDs.
@@ -722,6 +751,58 @@ mod experiment {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crossterm::event::KeyModifiers;
+
+        fn key(code: KeyCode) -> KeyEvent {
+            KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn batches_arrow_scroll_without_losing_distance() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            for code in [KeyCode::Down, KeyCode::Down, KeyCode::Down] {
+                assert_eq!(
+                    apply_key(key(code), &mut position, &mut direction, 10_000.0, 1000),
+                    InputAction::Continue
+                );
+            }
+            assert_eq!(position, 48.0);
+            assert_eq!(direction, ScrollDirection::Forward);
+        }
+
+        #[test]
+        fn preserves_clamping_and_direction_during_reversal() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            for code in [KeyCode::Up, KeyCode::Down, KeyCode::Up] {
+                let _ = apply_key(key(code), &mut position, &mut direction, 10_000.0, 1000);
+            }
+            assert_eq!(position, 0.0);
+            assert_eq!(direction, ScrollDirection::Backward);
+
+            let _ = apply_key(key(KeyCode::PageDown), &mut position, &mut direction, 1100.0, 1000);
+            assert_eq!(position, 100.0);
+            assert_eq!(direction, ScrollDirection::Forward);
+        }
+
+        #[test]
+        fn preserves_control_keys_and_ignores_key_releases() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            assert_eq!(
+                apply_key(key(KeyCode::Char('y')), &mut position, &mut direction, 2000.0, 1000),
+                InputAction::Select
+            );
+            assert_eq!(
+                apply_key(key(KeyCode::Char('q')), &mut position, &mut direction, 2000.0, 1000),
+                InputAction::Quit
+            );
+            let mut released = key(KeyCode::Down);
+            released.kind = KeyEventKind::Release;
+            let _ = apply_key(released, &mut position, &mut direction, 2000.0, 1000);
+            assert_eq!(position, 0.0);
+        }
 
         fn cached_at(source_y: f64) -> ImageCache {
             ImageCache {
