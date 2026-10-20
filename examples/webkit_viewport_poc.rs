@@ -118,8 +118,9 @@ mod experiment {
         }
 
         fn elapsed(&self, now: Instant) -> Duration {
-            self.since
-                .map_or(Duration::ZERO, |started| now.saturating_duration_since(started))
+            self.since.map_or(Duration::ZERO, |started| {
+                now.saturating_duration_since(started)
+            })
         }
 
         fn worst(&self, now: Instant) -> Duration {
@@ -364,8 +365,7 @@ mod experiment {
                     (active.source_y + viewport).min(max_origin)
                 }
                 ScrollDirection::Backward
-                    if desired <= cache_bottom - viewport
-                        && active.source_y > 0.0 =>
+                    if desired <= cache_bottom - viewport && active.source_y > 0.0 =>
                 {
                     (active.source_y - viewport).max(0.0)
                 }
@@ -443,9 +443,8 @@ mod experiment {
         now: Instant,
     ) -> Result<()> {
         let cache_end = cache.source_y
-            + (f64::from(cache.image_height) / cache.pixels_per_point
-                - f64::from(viewport_height))
-            .max(0.0);
+            + (f64::from(cache.image_height) / cache.pixels_per_point - f64::from(viewport_height))
+                .max(0.0);
         let status = format!(
             "WAIT {:.0}ms pending={pending} count={} max={:.0}ms y={position:.0} cache={:.0}..{cache_end:.0} snap={:.0}ms up={:.0}ms",
             stats.elapsed(now).as_secs_f64() * 1000.0,
@@ -703,8 +702,7 @@ mod experiment {
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
-                Some(entry.image_id) != displayed_image_id
-                    && !entry.covers(position, viewport_height)
+                Some(entry.image_id) != displayed_image_id && !entry.covers(position, viewport_height)
             })
             .max_by(|(_, a), (_, b)| {
                 (a.source_y - position)
@@ -745,9 +743,7 @@ mod experiment {
                         pending = None;
                         document_height = next.document_height;
                         // Skip images too far behind a quick direction reversal.
-                        if (next.source_y - position).abs()
-                            > f64::from(viewport_height) * 4.0
-                        {
+                        if (next.source_y - position).abs() > f64::from(viewport_height) * 4.0 {
                             let mut out = io::stdout().lock();
                             delete_image(&mut out, next.image_id)?;
                             out.flush()?;
@@ -1063,13 +1059,20 @@ mod experiment {
                     last_displayed = Some(fingerprint);
                 }
                 last_wait_status_at = None;
-            } else if last_wait_status_at
-                .is_none_or(|previous| now.saturating_duration_since(previous) >= Duration::from_millis(100))
-            {
+            } else if last_wait_status_at.is_none_or(|previous| {
+                now.saturating_duration_since(previous) >= Duration::from_millis(100)
+            }) {
                 // No Kitty placement here: keep the previous image visible.
                 // Throttle diagnostics so the HUD itself does not cause stutter.
                 display_cache_wait(
-                    &active, position, cols, rows, height, pending, &cache_wait, now,
+                    &active,
+                    position,
+                    cols,
+                    rows,
+                    height,
+                    pending,
+                    &cache_wait,
+                    now,
                 )?;
                 last_wait_status_at = Some(now);
             }
@@ -1145,13 +1148,7 @@ mod experiment {
                 Some(2000.0)
             );
             assert_eq!(
-                next_tile_origin(
-                    &[next],
-                    1000.0,
-                    1000,
-                    10_000.0,
-                    ScrollDirection::Backward
-                ),
+                next_tile_origin(&[next], 1000.0, 1000, 10_000.0, ScrollDirection::Backward),
                 Some(0.0)
             );
         }
@@ -1203,13 +1200,19 @@ mod experiment {
             stats.observe(false, start + Duration::from_millis(10));
             stats.observe(false, start + Duration::from_millis(80));
             assert_eq!(stats.episodes, 1);
-            assert_eq!(stats.elapsed(start + Duration::from_millis(90)), Duration::from_millis(80));
+            assert_eq!(
+                stats.elapsed(start + Duration::from_millis(90)),
+                Duration::from_millis(80)
+            );
             stats.observe(true, start + Duration::from_millis(110));
             assert_eq!(stats.longest, Duration::from_millis(100));
 
             stats.observe(false, start + Duration::from_millis(130));
             assert_eq!(stats.episodes, 2);
-            assert_eq!(stats.worst(start + Duration::from_millis(250)), Duration::from_millis(120));
+            assert_eq!(
+                stats.worst(start + Duration::from_millis(250)),
+                Duration::from_millis(120)
+            );
         }
 
         #[test]
