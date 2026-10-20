@@ -696,6 +696,7 @@ mod experiment {
         rows: u16,
         viewport_width: u32,
         viewport_height: u32,
+        document_height_hint: f64,
         cache: &mut Option<ImageCache>,
     ) -> Result<f64> {
         let started = Instant::now();
@@ -704,14 +705,12 @@ mod experiment {
             .is_some_and(|entry| entry.covers(position, viewport_height));
 
         if !cache_hit {
-            let document_height = cache.as_ref().map_or(0.0, |entry| entry.document_height);
-            let requested_y = if cache.is_some() {
-                (position - f64::from(viewport_height) / 2.0)
-                    .max(0.0)
-                    .min((document_height - 2.0 * f64::from(viewport_height)).max(0.0))
-            } else {
-                0.0
-            };
+            let document_height = cache
+                .as_ref()
+                .map_or(document_height_hint, |entry| entry.document_height);
+            let requested_y = (position - f64::from(viewport_height) / 2.0)
+                .max(0.0)
+                .min((document_height - 2.0 * f64::from(viewport_height)).max(0.0));
             let result = helper.request(&json!({"type": "snapshot", "y": requested_y}))?;
             if result["kind"] != "snapshot" {
                 bail!("unexpected WebKit response: {result}");
@@ -1448,6 +1447,82 @@ mod experiment {
         Ok(exit)
     }
 
+    // Recreate WebKit with the new CSS width after a resize. Unlike the
+    // scroll hot path, this intentionally favors correctness over latency.
+    fn run_resizable_tiled(
+        html: &Path,
+        source_dir: &Path,
+        hybrid: bool,
+        hybrid_image: bool,
+    ) -> Result<()> {
+        let work = tempfile::tempdir()?;
+        let output = work.path().join("viewport.png");
+        let _session = TerminalSession::enter()?;
+        let mut progress = 0.0;
+
+        loop {
+            let (columns, total_rows) = terminal::size()?;
+            let rows = total_rows.saturating_sub(1).max(1);
+            let width = u32::from(columns.max(1)).saturating_mul(8);
+            let height = u32::from(rows).saturating_mul(16);
+            let mut swift = SwiftProcess::start(html, source_dir, &output, width, height)?;
+            let ready = swift.response()?;
+            if ready["kind"] != "ready" {
+                bail!("expected WebKit readiness response: {ready}");
+            }
+            let document_height = ready["height"].as_f64().unwrap_or(0.0);
+            let initial_position = resumed_position(progress, document_height, height);
+            let outline_reply = if hybrid {
+                Some(swift.request(&json!({"type": "outline"}))?)
+            } else {
+                None
+            };
+            let outline = match outline_reply {
+                Some(ref value) if !hybrid_image => Some(parse_outline(value)?),
+                Some(_) => Some(Vec::new()),
+                None => None,
+            };
+            let scene = if hybrid_image {
+                Some(parse_preview_scene(
+                    outline_reply.as_ref().context("missing DOM outline")?,
+                )?)
+            } else {
+                None
+            };
+            let mut cached = None;
+            let _ = render_scroll(
+                &mut swift,
+                &output,
+                initial_position,
+                columns,
+                rows,
+                width,
+                height,
+                document_height,
+                &mut cached,
+            )?;
+            let active = cached.context("initial snapshot did not create a cache")?;
+            let result = run_tiled(
+                swift,
+                output.clone(),
+                columns,
+                rows,
+                width,
+                height,
+                active,
+                initial_position,
+                outline,
+                scene,
+            )?;
+            if let ViewerExit::Resized(next_progress) = result {
+                progress = next_progress;
+                clear_session_images()?;
+                continue;
+            }
+            return Ok(());
+        }
+    }
+
     fn graphics_probe() -> Result<()> {
         use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
@@ -1502,6 +1577,9 @@ mod experiment {
             .context("source file not found")?;
         let dir = document.parent().context("source directory not found")?;
         let (html, _temp_html) = html_input(&document)?;
+        if tiled {
+            return run_resizable_tiled(&html, dir, hybrid, hybrid_image);
+        }
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
         let (cols, total_rows) = terminal::size()?;
@@ -1515,46 +1593,23 @@ mod experiment {
             bail!("expected WebKit readiness response: {ready}");
         }
 
-        let outline_response = if hybrid {
-            Some(swift.request(&json!({"type": "outline"}))?)
-        } else {
-            None
-        };
-        let outline = match outline_response {
-            Some(ref response) if !hybrid_image => Some(parse_outline(response)?),
-            Some(_) => Some(Vec::new()),
-            None => None,
-        };
-        let image_scene = if hybrid_image {
-            Some(parse_preview_scene(
-                outline_response.as_ref().context("missing DOM styles")?,
-            )?)
-        } else {
-            None
-        };
-
         let _session = TerminalSession::enter()?;
         let mut cache = None;
         let mut position = 0.0;
         let initial_height = render_scroll(
-            &mut swift, &output, position, cols, rows, width, height, &mut cache,
+            &mut swift,
+            &output,
+            position,
+            cols,
+            rows,
+            width,
+            height,
+            ready["height"].as_f64().unwrap_or(0.0),
+            &mut cache,
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
-        if tiled {
-            return run_tiled(
-                swift,
-                output,
-                cols,
-                rows,
-                width,
-                height,
-                active,
-                outline,
-                image_scene,
-            );
-        }
         let mut document_height = initial_height;
-        let (requests, responses) = spawn_worker(swift, output, width, height, None);
+        let (requests, responses, _worker) = spawn_worker(swift, output, width, height, None);
         let mut pending = false;
         let mut prefetched: Option<ImageCache> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
@@ -1728,6 +1783,16 @@ mod experiment {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn resize_progress_preserves_top_middle_and_bottom() {
+            assert_eq!(reading_fraction(0.0, 12000.0, 1000), 0.0);
+            assert_eq!(reading_fraction(5500.0, 12000.0, 1000), 0.5);
+            assert_eq!(reading_fraction(11000.0, 12000.0, 1000), 1.0);
+            assert_eq!(resumed_position(0.5, 24000.0, 2000), 11000.0);
+            assert_eq!(resumed_position(1.0, 24000.0, 2000), 22000.0);
+            assert_eq!(resumed_position(1.0, 700.0, 1000), 0.0);
         }
 
         #[test]
