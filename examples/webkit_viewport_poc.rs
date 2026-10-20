@@ -1551,17 +1551,14 @@ mod experiment {
             );
             assert_eq!(
                 hybrid_display_mode(true, true, Duration::from_millis(300), HYBRID_SETTLE_AFTER,),
-
                 HybridDisplayMode::Image
             );
             assert_eq!(
                 hybrid_display_mode(false, false, Duration::from_millis(50), Duration::ZERO,),
-
                 HybridDisplayMode::Hold
             );
             assert_eq!(
                 hybrid_display_mode(false, false, HYBRID_PREVIEW_AFTER, Duration::ZERO,),
-
                 HybridDisplayMode::Preview
             );
         }
