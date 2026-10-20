@@ -558,19 +558,33 @@ mod experiment {
         pending: bool,
         stats: &CacheWaitStats,
         now: Instant,
+        timings: Option<&TileTimingStats>,
     ) -> Result<()> {
         let cache_end = cache.source_y
             + (f64::from(cache.image_height) / cache.pixels_per_point - f64::from(viewport_height))
                 .max(0.0);
-        let status = format!(
-            "WAIT {:.0}ms pending={pending} count={} max={:.0}ms y={position:.0} cache={:.0}..{cache_end:.0} snap={:.0}ms up={:.0}ms",
-            stats.elapsed(now).as_secs_f64() * 1000.0,
-            stats.episodes,
-            stats.worst(now).as_secs_f64() * 1000.0,
-            cache.source_y,
-            cache.last_snapshot_ms,
-            cache.last_upload_ms
-        );
+        let status = if let Some(timing) = timings {
+            // Show useful values at the beginning: narrow panes truncate HUD.
+            format!(
+                "WAIT snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
+                timing.max_snapshot_ms,
+                timing.max_capture_ms,
+                timing.max_encode_ms,
+                timing.max_write_ms,
+                timing.max_upload_ms,
+                stats.elapsed(now).as_secs_f64() * 1000.0
+            )
+        } else {
+            format!(
+                "WAIT {:.0}ms pending={pending} count={} max={:.0}ms y={position:.0} cache={:.0}..{cache_end:.0} snap={:.0}ms up={:.0}ms",
+                stats.elapsed(now).as_secs_f64() * 1000.0,
+                stats.episodes,
+                stats.worst(now).as_secs_f64() * 1000.0,
+                cache.source_y,
+                cache.last_snapshot_ms,
+                cache.last_upload_ms
+            )
+        };
         let mut out = io::stdout().lock();
         execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
         write!(
@@ -861,6 +875,7 @@ mod experiment {
         let mut pending: Option<u32> = None;
         let mut skipped_uploads = 0usize;
         let mut tile_timings = TileTimingStats::default();
+        tile_timings.observe_uploaded(&cached[0]);
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -881,10 +896,16 @@ mod experiment {
                             cached.push(next);
                         }
                     }
-                    Ok(WorkerEvent::Skipped { snapshot_ms }) => {
+                    Ok(WorkerEvent::Skipped {
+                        snapshot_ms,
+                        capture_ms,
+                        encode_ms,
+                        write_ms,
+                    }) => {
                         pending = None;
                         skipped_uploads += 1;
                         tile_timings.observe_snapshot(snapshot_ms);
+                        tile_timings.observe_stages(capture_ms, encode_ms, write_ms);
                     }
                     Ok(WorkerEvent::Selection(text)) => {
                         if !text.is_empty() {
@@ -907,13 +928,13 @@ mod experiment {
                 let fingerprint = (tile.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
                     let status = format!(
-                        "TILE wait={:.0}ms snapMax={:.0}ms upMax={:.0}ms skips={} waits={} cached={}",
-                        wait.worst(now).as_secs_f64() * 1000.0,
+                        "TILE snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
                         tile_timings.max_snapshot_ms,
+                        tile_timings.max_capture_ms,
+                        tile_timings.max_encode_ms,
+                        tile_timings.max_write_ms,
                         tile_timings.max_upload_ms,
-                        skipped_uploads,
-                        wait.episodes,
-                        cached.len()
+                        wait.worst(now).as_secs_f64() * 1000.0
                     );
                     display_cached(
                         tile,
@@ -945,6 +966,7 @@ mod experiment {
                         pending.is_some(),
                         &wait,
                         now,
+                        Some(&tile_timings),
                     )?;
                 }
                 last_wait_status_at = Some(now);
@@ -1226,6 +1248,7 @@ mod experiment {
                     pending,
                     &cache_wait,
                     now,
+                    None,
                 )?;
                 last_wait_status_at = Some(now);
             }
@@ -1270,6 +1293,9 @@ mod experiment {
             stats.observe_snapshot(420.0);
             let mut cache = cached_at(0.0);
             cache.last_snapshot_ms = 210.0;
+            cache.last_capture_ms = 100.0;
+            cache.last_encode_ms = 90.0;
+            cache.last_write_ms = 20.0;
             cache.last_upload_ms = 95.0;
             stats.observe_uploaded(&cache);
             assert_eq!(stats.max_snapshot_ms, 420.0);
@@ -1279,6 +1305,10 @@ mod experiment {
             stats.observe_uploaded(&cache);
             assert_eq!(stats.max_snapshot_ms, 510.0);
             assert_eq!(stats.max_upload_ms, 95.0);
+            stats.observe_stages(200.0, 180.0, 10.0);
+            assert_eq!(stats.max_capture_ms, 200.0);
+            assert_eq!(stats.max_encode_ms, 180.0);
+            assert_eq!(stats.max_write_ms, 20.0);
         }
 
         #[test]
