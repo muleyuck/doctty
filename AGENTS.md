@@ -7,8 +7,8 @@ Claude/Codex settings for model selection, delegation, and optional automation.
 ## Preserve these contracts
 
 - Preserve existing CLI flags, output modes, and terminal behavior unless explicitly changing them.
-- When renaming a CLI surface or changing installation/update behavior, follow its references
-  through Rust code, tests, scripts, documentation, and CI. Verify the relevant contracts.
+- When changing CLI or distribution behavior, trace its consumers across code, tests, scripts,
+  documentation, and CI (where applicable), then verify the affected contracts.
 - Treat release binaries as build artifacts; do not manually patch a compiled binary.
 - Keep the MIT LICENSE intact and preserve attribution to the upstream `posaune0423/mdv` project.
 
@@ -29,13 +29,15 @@ Do not preload all project docs or past task logs before a small edit.
   references, edit the affected surfaces, then run relevant existing checks.
   Do not manufacture a failing test for a rename that does not change behavior.
 - For new or changed behavior, add or adjust tests covering the contract and failure cases.
+- For rendering changes, check real TTY output, navigation, and startup behavior when available;
+  a successful unit test or process launch alone does not prove visual correctness.
 - Prefer targeted checks while developing; use broader checks for cross-cutting or risky changes.
 - Formatting: `cargo fmt --all -- --check`
 - Type checking: `cargo check --workspace --all-targets --all-features`
 - Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - Tests: `cargo test --workspace --all-targets --all-features`
-- Run `make ci` before PR handoff when the environment permits. For CLI/distribution changes,
-  also check the affected integration/contract tests and installation paths.
+- GitHub Actions is the full-suite PR gate; run `make ci` locally for broad/high-risk changes
+  when feasible. Existing Git hooks remain in effect. Check CLI/distribution contracts as applicable.
 - If a local command is blocked by a sandbox or filesystem restriction, diagnose it once,
   report the limitation, and use CI results when available. Do not claim a check passed
   when it did not run successfully.
@@ -43,9 +45,10 @@ Do not preload all project docs or past task logs before a small edit.
 ## Review and collaboration
 
 - Review for actionable correctness, compatibility, security, and test gaps.
-- Prefer one whole-change review; when fixes are made, verify the prior findings against
-  the new diff and required surrounding context instead of reviewing unchanged code again.
-  Re-open the full review only if the fix changes the design or risk boundary substantially.
+- Prefer one whole-change review. After fixes, review only the new diff, unresolved findings,
+  and necessary surrounding context. Repeat a full review only for a material design/risk change.
+  If blocking findings remain after two targeted fix/review attempts, report them and stop
+  rather than starting an unbounded review loop.
 - Planning documents, subagents, cross-model reviews, mutation tests, and model effort
   are optional execution methods, not mandatory steps for every contributor or edit.
 - Report what changed, what was verified, and any remaining limitations.
