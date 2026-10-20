@@ -38,7 +38,9 @@ mod experiment {
     const FIRST_IMAGE_ID: u32 = 93_001;
     const SECOND_IMAGE_ID: u32 = 93_002;
     const CHUNK_SIZE: usize = 4096;
-    const MAX_INPUT_BATCH: usize = 32;
+    // Keep each visible scroll step small (4 arrow keys x 16px = 64px).
+    // Larger batches reduce Kitty placements but look jumpy on fast trackpad input.
+    const MAX_INPUT_BATCH: usize = 4;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
@@ -315,14 +317,12 @@ mod experiment {
         } else {
             match direction {
                 ScrollDirection::Forward
-                    if desired + viewport * 1.8 >= cache_bottom
-                        && active.source_y < max_origin =>
+                    if desired + viewport * 1.8 >= cache_bottom && active.source_y < max_origin =>
                 {
                     (active.source_y + viewport).min(max_origin)
                 }
                 ScrollDirection::Backward
-                    if desired <= active.source_y + viewport * 0.65
-                        && active.source_y > 0.0 =>
+                    if desired <= active.source_y + viewport * 0.65 && active.source_y > 0.0 =>
                 {
                     (active.source_y - viewport).max(0.0)
                 }
@@ -772,6 +772,25 @@ mod experiment {
         }
 
         #[test]
+        fn limits_displacement_per_input_batch() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            for _ in 0..MAX_INPUT_BATCH {
+                assert_eq!(
+                    apply_key(
+                        key(KeyCode::Down),
+                        &mut position,
+                        &mut direction,
+                        10_000.0,
+                        1000
+                    ),
+                    InputAction::Continue
+                );
+            }
+            assert_eq!(position, 64.0);
+        }
+
+        #[test]
         fn preserves_clamping_and_direction_during_reversal() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
@@ -781,7 +800,13 @@ mod experiment {
             assert_eq!(position, 0.0);
             assert_eq!(direction, ScrollDirection::Backward);
 
-            let _ = apply_key(key(KeyCode::PageDown), &mut position, &mut direction, 1100.0, 1000);
+            let _ = apply_key(
+                key(KeyCode::PageDown),
+                &mut position,
+                &mut direction,
+                1100.0,
+                1000,
+            );
             assert_eq!(position, 100.0);
             assert_eq!(direction, ScrollDirection::Forward);
         }
@@ -791,11 +816,23 @@ mod experiment {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
             assert_eq!(
-                apply_key(key(KeyCode::Char('y')), &mut position, &mut direction, 2000.0, 1000),
+                apply_key(
+                    key(KeyCode::Char('y')),
+                    &mut position,
+                    &mut direction,
+                    2000.0,
+                    1000
+                ),
                 InputAction::Select
             );
             assert_eq!(
-                apply_key(key(KeyCode::Char('q')), &mut position, &mut direction, 2000.0, 1000),
+                apply_key(
+                    key(KeyCode::Char('q')),
+                    &mut position,
+                    &mut direction,
+                    2000.0,
+                    1000
+                ),
                 InputAction::Quit
             );
             let mut released = key(KeyCode::Down);
