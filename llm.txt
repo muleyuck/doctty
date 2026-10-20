@@ -1,7 +1,7 @@
 # doctty — context for LLMs and coding agents
 
 This file summarizes how end users install and run `doctty` (Markdown viewer for Ghostty and Kitty).
-Authoritative details: README.md, docs/MARKDOWN.md, docs/ARCHITECTURE.md, docs/TECH.md.
+Authoritative details: README.md for user-facing behavior, AGENTS.md for development guidance, and source code/tests for implementation contracts.
 
 ## What it is
 
@@ -23,7 +23,7 @@ Versioned GitHub Releases and Homebrew distribution are planned. There is no ins
 Examples:
 
   doctty README.md
-  doctty --theme dark --watch ./docs/guide.md
+  doctty --theme dark --watch ./examples/rich_markdown.md
   doctty --no-mermaid notes.md
   doctty --version
   doctty --help
@@ -37,7 +37,7 @@ Examples:
 
 ## Environment variables (common)
 
-- DOCTTY_MERMAID_CMD: optional explicit command for Mermaid CLI; otherwise mmdc or npx @mermaid-js/mermaid-cli may be used (see docs/TECH.md).
+- DOCTTY_MERMAID_CMD: optional explicit command for Mermaid CLI; otherwise mmdc or npx @mermaid-js/mermaid-cli may be used.
 
 ## Troubleshooting (short)
 

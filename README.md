@@ -52,7 +52,7 @@ doctty README.md
 ```bash
 doctty README.md                           # system theme (default)
 doctty --theme dark notes.md               # dark theme
-doctty --watch docs/guide.md               # auto-reload on save
+doctty --watch examples/rich_markdown.md    # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
 doctty --version                           # print the current version
 doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
@@ -95,18 +95,15 @@ For development, run `make build` and execute `./bin/doctty`. The `bin/` directo
 | `doctty: command not found`           | Ensure Cargo's bin directory (usually `$HOME/.cargo/bin`) is on `PATH`.                                                   |
 | Plain text instead of rich viewer  | Requires a TTY in Ghostty or Kitty. Pipes and redirects trigger headless mode by design.                             |
 | Mermaid diagrams show placeholders | Install `mmdc` or use `npx @mermaid-js/mermaid-cli`. Use `--no-mermaid` to skip entirely.                            |
-| Graphic / snapshot issues          | Rich rendering uses WebKit (macOS only). See [docs/TECH.md](docs/TECH.md).                                           |
+| Graphic / snapshot issues          | Rich rendering uses WebKit on macOS. Check terminal output for diagnostic details.                                   |
 
-## Documentation
+## Markdown support
 
-- [llm.txt](llm.txt) — Agent-oriented install & CLI summary
-- [GFM features & authoring](docs/MARKDOWN.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Development & contributing](docs/DEVELOPMENT.md)
+doctty uses [Comrak](https://github.com/kivikakk/comrak) for Markdown parsing and supports common [GitHub Flavored Markdown](https://github.github.com/gfm/) features such as tables, task lists, footnotes and callouts, as well as math and optional Mermaid diagrams. Rendering can differ from GitHub in edge cases.
 
 ## Contributing
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Run `make ci` before sending a PR.
+Development requirements and verification commands are in [AGENTS.md](AGENTS.md). Run `mise install` to install the pinned tools, `make hooks-install` to enable prek hooks, and `make ci` before opening a PR.
 
 ## License
 

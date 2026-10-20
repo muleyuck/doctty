@@ -12,16 +12,26 @@ Claude/Codex settings for model selection, delegation, and optional automation.
 - Treat release binaries as build artifacts; do not manually patch a compiled binary.
 - Keep the MIT LICENSE intact and preserve attribution to the upstream `posaune0423/mdv` project.
 
-## Read context only when relevant
+## Sources of truth
 
-- `docs/TECH.md` — implementation architecture or rendering changes.
-- `docs/STRUCTURE.md` — unfamiliar module boundaries.
-- `docs/DEVELOPMENT.md` — local commands, hooks, and distribution workflow.
+- `README.md` covers supported user-facing features, installation and usage.
+- CLI definitions, Rust source and tests define current behavior; consult them when changing implementation details rather than relying on a separate architecture/requirements document.
+- Keep implementation-specific explanations near the code. Record durable design decisions and alternatives in relevant Issues/PRs when necessary.
 - `.agents/memory/` contains historical work notes, **not** the active task ledger.
   Do not read it at session start or append to it for routine tasks; consult it only
   when historical context is specifically needed.
 
-Do not preload all project docs or past task logs before a small edit.
+Do not preload unrelated project history for a small edit.
+
+## Development environment
+
+- Run `mise install` to install the pinned Rust toolchain and prek.
+- Run `make hooks-install` to install prek's pre-commit hook; `prek run --all-files` checks all tracked files.
+- `.pre-commit-config.yml` checks YAML/TOML, merge conflicts, Rust formatting, type checking, Clippy and tests.
+- Run `make build` to compile the release binary and update the local, Git-ignored `bin/doctty`. On macOS, the build target also codesigns it.
+- `cargo install --path . --locked` installs from a source checkout.
+- GitHub Actions runs `make ci` on Linux and `cargo build --release --locked` on macOS.
+- Do not commit generated binaries or resurrect the removed install script and self-update command; versioned GitHub Releases/Homebrew distribution is a separate future task.
 
 ## Change and verification policy
 

@@ -4,7 +4,7 @@ use doctty::cli::{DocttyArgs, Theme};
 fn parses_watch_theme_and_mermaid_flags() {
     let args = DocttyArgs::parse_from([
         "doctty",
-        "docs/PRD.md",
+        "README.md",
         "--watch",
         "--theme",
         "dark",
@@ -14,12 +14,12 @@ fn parses_watch_theme_and_mermaid_flags() {
     assert_eq!(args.theme, Theme::Dark);
     assert!(args.watch);
     assert!(args.no_mermaid);
-    assert_eq!(args.path.as_deref(), Some(std::path::Path::new("docs/PRD.md")));
+    assert_eq!(args.path.as_deref(), Some(std::path::Path::new("README.md")));
 }
 
 #[test]
 fn defaults_theme_to_system() {
-    let args = DocttyArgs::parse_from(["doctty", "docs/PRD.md"]);
+    let args = DocttyArgs::parse_from(["doctty", "README.md"]);
 
     assert_eq!(args.theme, Theme::System);
 }
