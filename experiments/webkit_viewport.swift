@@ -104,6 +104,55 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 // pending rendering updates. Avoid adding 40 ms to every prefetch.
                 self.capture(started: started, requestedY: targetY, actualY: actualY)
             }
+        case "outline":
+            // Collect a bounded, scroll-positioned text fallback once at startup.
+            // These offsets come from the same DOM as the WebKit snapshots,
+            // avoiding proportional source-line guesses during fast scrolling.
+            let script = """
+            (() => {
+              const root = document.querySelector('article, .markdown-body') || document.body;
+              const elements = Array.from(
+                root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,pre,table,img')
+              );
+              const stride = Math.max(1, Math.ceil(elements.length / 12000));
+              const items = [];
+              for (let i = 0; i < elements.length; i += stride) {
+                const el = elements[i];
+                // Parent list/code/table blocks already contain child content.
+                const parent = el.parentElement;
+                if (parent && parent.closest('li,pre,table')) continue;
+                const rect = el.getBoundingClientRect();
+                if (rect.height < 1 || rect.width < 1) continue;
+                const tag = el.tagName.toLowerCase();
+                let text = tag === 'img'
+                  ? '[image] ' + (el.getAttribute('alt') || '')
+                  : (el.textContent || '');
+                text = text.replace(/\\s+/g, ' ').trim().slice(0, 160);
+                if (!text) continue;
+                if (/^h[1-6]$/.test(tag)) {
+                  text = '#'.repeat(Number(tag[1])) + ' ' + text;
+                } else if (tag === 'li') {
+                  text = '• ' + text;
+                } else if (tag === 'pre') {
+                  text = '[code] ' + text;
+                } else if (tag === 'table') {
+                  text = '[table] ' + text;
+                }
+                items.push({y: Math.round(rect.top + window.scrollY), text});
+              }
+              return items;
+            })()
+            """
+            webView.evaluateJavaScript(script) { result, error in
+                if let error {
+                    self.emit(["kind": "error", "message": error.localizedDescription])
+                    return
+                }
+                self.emit([
+                    "kind": "outline",
+                    "items": result as? [[String: Any]] ?? []
+                ])
+            }
         case "select":
             // An intentional DOM-selection/clipboard bridge experiment, not mouse selection.
             let script = """
