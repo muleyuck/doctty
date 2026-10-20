@@ -1109,7 +1109,8 @@ mod experiment {
             viewport_height,
             Some(Arc::clone(&latest_position)),
         );
-        let (preview_requests, preview_responses, preview_worker) = if let Some(scene) = image_scene {
+        let (preview_requests, preview_responses, preview_worker) = if let Some(scene) = image_scene
+        {
             let (sender, receiver, worker) = hybrid_image_preview::spawn(
                 scene,
                 viewport_width,
