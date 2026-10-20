@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-#[path = "hybrid_image_preview.rs"]
+#[path = "hybrid_image_preview/mod.rs"]
 mod hybrid_image_preview;
 
 #[cfg(target_os = "macos")]
