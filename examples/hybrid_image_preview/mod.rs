@@ -242,7 +242,7 @@ fn preview_wrap_lines(text: &str, max_units: usize, max_lines: usize) -> Vec<Str
             // Always make progress, even for a wide character in a tiny box.
             end += 1;
         }
-        if end < chars.len() {
+        if end < chars.len() && !chars[end].is_whitespace() {
             if let Some(space) = (start + 1..end)
                 .rev()
                 .find(|&index| chars[index].is_whitespace())
