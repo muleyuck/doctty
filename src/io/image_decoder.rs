@@ -32,7 +32,10 @@ impl ImageDecoder {
     pub fn load_png(&self, path: &Path) -> Result<LoadedImage> {
         let image = ImageReader::open(path)?.with_guessed_format()?.decode()?;
         let (width, height) = image.dimensions();
-        let png_bytes = if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
+        let png_bytes = if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+        {
             fs::read(path)?
         } else {
             let mut cursor = Cursor::new(Vec::new());
@@ -40,7 +43,12 @@ impl ImageDecoder {
             cursor.into_inner()
         };
 
-        Ok(LoadedImage { path: path.to_path_buf(), width, height, png_bytes })
+        Ok(LoadedImage {
+            path: path.to_path_buf(),
+            width,
+            height,
+            png_bytes,
+        })
     }
 
     pub fn dimensions_from_png_bytes(&self, bytes: &[u8]) -> Result<(u32, u32)> {
@@ -56,7 +64,8 @@ pub fn resolve_image_path(document_path: &Path, src: &str) -> PathBuf {
         return source_path.to_path_buf();
     }
 
-    document_path
-        .parent()
-        .map_or_else(|| source_path.to_path_buf(), |parent| parent.join(source_path))
+    document_path.parent().map_or_else(
+        || source_path.to_path_buf(),
+        |parent| parent.join(source_path),
+    )
 }

@@ -26,15 +26,21 @@ pub(super) fn collect_page_viewport_commands(
 ) -> anyhow::Result<GraphicCommands> {
     let mut commands = Vec::new();
     let raster = viewport_raster(page, scroll, content_height, cell_metrics.height_px)?;
-    let visible_placements =
-        if raster.is_none() { Vec::new() } else { vec![(PAGE_IMAGE_ID, PAGE_IMAGE_ID)] };
+    let visible_placements = if raster.is_none() {
+        Vec::new()
+    } else {
+        vec![(PAGE_IMAGE_ID, PAGE_IMAGE_ID)]
+    };
 
     for (image_id, placement_id) in previous_visible_placements
         .iter()
         .copied()
         .filter(|placement| !visible_placements.contains(placement))
     {
-        commands.push(encode_delete(DeleteCommand::Placement { image_id, placement_id }));
+        commands.push(encode_delete(DeleteCommand::Placement {
+            image_id,
+            placement_id,
+        }));
     }
 
     if let Some(raster) = raster {
@@ -53,7 +59,11 @@ pub(super) fn collect_page_viewport_commands(
             cursor_y: 0,
             z_index: -1,
         };
-        commands.push(format!("{}{}", ansi_cursor_move(0, 0), encode_place(&placement)));
+        commands.push(format!(
+            "{}{}",
+            ansi_cursor_move(0, 0),
+            encode_place(&placement)
+        ));
     }
 
     Ok((commands, visible_placements))
@@ -74,7 +84,10 @@ pub(super) fn collect_graphics_commands(
         .copied()
         .filter(|placement| !visible_placements.contains(placement))
     {
-        commands.push(encode_delete(DeleteCommand::Placement { image_id, placement_id }));
+        commands.push(encode_delete(DeleteCommand::Placement {
+            image_id,
+            placement_id,
+        }));
     }
 
     for (index, graphic) in rendered.graphics.iter().enumerate() {
@@ -210,8 +223,13 @@ pub(super) fn visible_graphic_placements(
 fn graphic_png_bytes(graphic: &RenderedGraphic) -> Option<&[u8]> {
     match &graphic.content {
         RenderedGraphicContent::Png(png_bytes) => Some(png_bytes),
-        RenderedGraphicContent::Mermaid { png_bytes: Some(png_bytes), .. } => Some(png_bytes),
-        RenderedGraphicContent::Mermaid { png_bytes: None, .. } => None,
+        RenderedGraphicContent::Mermaid {
+            png_bytes: Some(png_bytes),
+            ..
+        } => Some(png_bytes),
+        RenderedGraphicContent::Mermaid {
+            png_bytes: None, ..
+        } => None,
     }
 }
 

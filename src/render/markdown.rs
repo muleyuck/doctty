@@ -45,15 +45,20 @@ pub fn parse_document(path: PathBuf, source: &str) -> Result<Document> {
         path,
         revision: 0,
         blocks,
-        meta: DocumentMeta { title, links, source_len: source.len() },
+        meta: DocumentMeta {
+            title,
+            links,
+            source_len: source.len(),
+        },
     })
 }
 
 fn normalize_block<'a>(node: &'a AstNode<'a>) -> Option<BlockKind> {
     match &node.data.borrow().value {
-        NodeValue::Heading(heading) => {
-            Some(BlockKind::Heading { level: heading.level, text: collect_styled_text(node) })
-        }
+        NodeValue::Heading(heading) => Some(BlockKind::Heading {
+            level: heading.level,
+            text: collect_styled_text(node),
+        }),
         NodeValue::Paragraph => normalize_paragraph(node),
         NodeValue::BlockQuote => Some(normalize_quote(node)),
         NodeValue::List(list) => Some(normalize_list(node, list)),
@@ -86,16 +91,27 @@ fn normalize_paragraph<'a>(node: &'a AstNode<'a>) -> Option<BlockKind> {
 fn normalize_quote<'a>(node: &'a AstNode<'a>) -> BlockKind {
     let text = collect_styled_text(node);
     if let Some((kind, body)) = parse_callout(&text.plain()) {
-        return BlockKind::Callout { kind, title: None, body };
+        return BlockKind::Callout {
+            kind,
+            title: None,
+            body,
+        };
     }
 
     BlockKind::BlockQuote { text }
 }
 
 fn normalize_list<'a>(node: &'a AstNode<'a>, list: &NodeList) -> BlockKind {
-    let items = node.children().map(collect_styled_text).filter(|text| !text.is_empty()).collect();
+    let items = node
+        .children()
+        .map(collect_styled_text)
+        .filter(|text| !text.is_empty())
+        .collect();
 
-    BlockKind::List { ordered: list.list_type == comrak::nodes::ListType::Ordered, items }
+    BlockKind::List {
+        ordered: list.list_type == comrak::nodes::ListType::Ordered,
+        items,
+    }
 }
 
 fn normalize_code_block(code: &NodeCodeBlock) -> BlockKind {
@@ -105,7 +121,10 @@ fn normalize_code_block(code: &NodeCodeBlock) -> BlockKind {
     if language == "mermaid" {
         BlockKind::Mermaid { source: literal }
     } else {
-        BlockKind::CodeFence { language: (!language.is_empty()).then_some(language), code: literal }
+        BlockKind::CodeFence {
+            language: (!language.is_empty()).then_some(language),
+            code: literal,
+        }
     }
 }
 
@@ -163,7 +182,9 @@ fn parse_callout(text: &str) -> Option<(CalloutKind, StyledText)> {
 fn collect_styled_text<'a>(node: &'a AstNode<'a>) -> StyledText {
     let mut segments = Vec::new();
     collect_text_segments(node, InlineStyle::default(), &mut segments);
-    StyledText { segments: normalize_segments(segments) }
+    StyledText {
+        segments: normalize_segments(segments),
+    }
 }
 
 fn collect_text_segments<'a>(
@@ -183,7 +204,10 @@ fn collect_text_segments<'a>(
             if !value.is_empty() {
                 parts.push(InlineSegment {
                     text: value,
-                    style: InlineStyle { code: true, ..style },
+                    style: InlineStyle {
+                        code: true,
+                        ..style
+                    },
                 });
             }
         }
@@ -201,41 +225,64 @@ fn collect_text_segments<'a>(
         }
         NodeValue::HtmlInline(literal) => {
             if !literal.is_empty() {
-                parts.push(InlineSegment { text: literal.clone(), style });
+                parts.push(InlineSegment {
+                    text: literal.clone(),
+                    style,
+                });
             }
         }
         NodeValue::TaskItem(task) => {
-            let marker = task.symbol.map_or("[ ] ".to_string(), |value| format!("[{value}] "));
-            parts.push(InlineSegment { text: marker, style });
+            let marker = task
+                .symbol
+                .map_or("[ ] ".to_string(), |value| format!("[{value}] "));
+            parts.push(InlineSegment {
+                text: marker,
+                style,
+            });
             for child in node.children() {
                 collect_text_segments(child, style, parts);
             }
         }
         NodeValue::FootnoteReference(reference) => {
-            parts.push(InlineSegment { text: format!("[^{}]", reference.name), style });
+            parts.push(InlineSegment {
+                text: format!("[^{}]", reference.name),
+                style,
+            });
         }
         NodeValue::Link(link) => {
             for child in node.children() {
                 collect_text_segments(child, style, parts);
             }
             if !link.url.is_empty() {
-                parts.push(InlineSegment { text: format!(" <{}>", link.url), style });
+                parts.push(InlineSegment {
+                    text: format!(" <{}>", link.url),
+                    style,
+                });
             }
         }
         NodeValue::Strong => {
-            let style = InlineStyle { bold: true, ..style };
+            let style = InlineStyle {
+                bold: true,
+                ..style
+            };
             for child in node.children() {
                 collect_text_segments(child, style, parts);
             }
         }
         NodeValue::Emph => {
-            let style = InlineStyle { italic: true, ..style };
+            let style = InlineStyle {
+                italic: true,
+                ..style
+            };
             for child in node.children() {
                 collect_text_segments(child, style, parts);
             }
         }
         NodeValue::LineBreak | NodeValue::SoftBreak => {
-            parts.push(InlineSegment { text: "\n".to_string(), style });
+            parts.push(InlineSegment {
+                text: "\n".to_string(),
+                style,
+            });
         }
         NodeValue::Image(_) => {
             for child in node.children() {
@@ -295,7 +342,10 @@ fn is_layout_only_html(html: &str) -> bool {
         .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
         .next()
         .unwrap_or("");
-    matches!(tag, "div" | "p" | "br" | "center" | "details" | "summary" | "section" | "span")
+    matches!(
+        tag,
+        "div" | "p" | "br" | "center" | "details" | "summary" | "section" | "span"
+    )
 }
 
 fn extract_html_img(html: &str) -> Option<BlockKind> {

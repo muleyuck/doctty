@@ -19,8 +19,10 @@ fn decorate_mermaid_svg_adds_renderer_class() {
 fn render_mermaid_blocks_reuses_duplicate_sources() {
     let calls = Arc::new(AtomicUsize::new(0));
     let call_counter = Arc::clone(&calls);
-    let sources =
-        vec!["graph TD\n    A --> B\n".to_string(), "graph TD\n    A --> B\n".to_string()];
+    let sources = vec![
+        "graph TD\n    A --> B\n".to_string(),
+        "graph TD\n    A --> B\n".to_string(),
+    ];
 
     let rendered = render_mermaid_blocks_with(&sources, MermaidMode::Enabled, move |content| {
         call_counter.fetch_add(1, Ordering::SeqCst);
@@ -30,5 +32,10 @@ fn render_mermaid_blocks_reuses_duplicate_sources() {
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(rendered.len(), 1);
-    assert!(rendered.values().next().is_some_and(|html| html.contains("doctty-mermaid")));
+    assert!(
+        rendered
+            .values()
+            .next()
+            .is_some_and(|html| html.contains("doctty-mermaid"))
+    );
 }

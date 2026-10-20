@@ -15,7 +15,10 @@ fn parses_watch_theme_and_mermaid_flags() {
     assert_eq!(args.theme, Theme::Dark);
     assert!(args.watch);
     assert!(args.no_mermaid);
-    assert_eq!(args.path.as_deref(), Some(std::path::Path::new("sample.md")));
+    assert_eq!(
+        args.path.as_deref(),
+        Some(std::path::Path::new("sample.md"))
+    );
 }
 
 #[test]

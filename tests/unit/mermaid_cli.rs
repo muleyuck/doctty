@@ -36,7 +36,10 @@ cp "{}" "$out"
     if let Err(error) = std::fs::write(&script, content) {
         panic!("script should be written: {error}");
     }
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -89,7 +92,10 @@ cp "{}" "$out"
     if let Err(error) = std::fs::write(&script, content) {
         panic!("script should be written: {error}");
     }
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -133,7 +139,10 @@ exit 7
     if let Err(error) = std::fs::write(&script, content) {
         panic!("script should be written: {error}");
     }
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -159,7 +168,9 @@ fn reuses_cached_png_output_without_invoking_command_again() {
     let png_path = dir.path().join("pixel.png");
     let counter_path = dir.path().join("counter.txt");
     let image = ImageBuffer::from_pixel(1, 1, Rgba([255_u8, 0_u8, 0_u8, 255_u8]));
-    image.save(&png_path).unwrap_or_else(|error| panic!("png fixture should be written: {error}"));
+    image
+        .save(&png_path)
+        .unwrap_or_else(|error| panic!("png fixture should be written: {error}"));
 
     let script = dir.path().join("fake-mmdc.sh");
     let content = format!(
@@ -189,7 +200,10 @@ cp "{}" "$out"
     );
     std::fs::write(&script, content)
         .unwrap_or_else(|error| panic!("script should be written: {error}"));
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -199,10 +213,20 @@ cp "{}" "$out"
     let renderer = MermaidCliRenderer::with_cache_dir(script, cache_dir.path().to_path_buf());
 
     renderer
-        .render_png_sized("graph TD\n    A --> B\n", Some(640), Some(2.0), Theme::Light)
+        .render_png_sized(
+            "graph TD\n    A --> B\n",
+            Some(640),
+            Some(2.0),
+            Theme::Light,
+        )
         .unwrap_or_else(|error| panic!("first render should succeed: {error}"));
     renderer
-        .render_png_sized("graph TD\n    A --> B\n", Some(640), Some(2.0), Theme::Light)
+        .render_png_sized(
+            "graph TD\n    A --> B\n",
+            Some(640),
+            Some(2.0),
+            Theme::Light,
+        )
         .unwrap_or_else(|error| panic!("second render should succeed: {error}"));
 
     let count = std::fs::read_to_string(counter_path)
@@ -218,7 +242,9 @@ fn caches_mermaid_output_per_theme() {
     let png_path = dir.path().join("pixel.png");
     let counter_path = dir.path().join("counter.txt");
     let image = ImageBuffer::from_pixel(1, 1, Rgba([255_u8, 0_u8, 0_u8, 255_u8]));
-    image.save(&png_path).unwrap_or_else(|error| panic!("png fixture should be written: {error}"));
+    image
+        .save(&png_path)
+        .unwrap_or_else(|error| panic!("png fixture should be written: {error}"));
 
     let script = dir.path().join("fake-mmdc.sh");
     let content = format!(
@@ -248,7 +274,10 @@ cp "{}" "$out"
     );
     std::fs::write(&script, content)
         .unwrap_or_else(|error| panic!("script should be written: {error}"));
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -258,7 +287,12 @@ cp "{}" "$out"
     let renderer = MermaidCliRenderer::with_cache_dir(script, cache_dir.path().to_path_buf());
 
     renderer
-        .render_png_sized("graph TD\n    A --> B\n", Some(640), Some(2.0), Theme::Light)
+        .render_png_sized(
+            "graph TD\n    A --> B\n",
+            Some(640),
+            Some(2.0),
+            Theme::Light,
+        )
         .unwrap_or_else(|error| panic!("light render should succeed: {error}"));
     renderer
         .render_png_sized("graph TD\n    A --> B\n", Some(640), Some(2.0), Theme::Dark)

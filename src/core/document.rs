@@ -53,7 +53,10 @@ pub struct StyledText {
 impl StyledText {
     #[must_use]
     pub fn plain(&self) -> String {
-        self.segments.iter().map(|segment| segment.text.as_str()).collect()
+        self.segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect()
     }
 
     #[must_use]
@@ -67,23 +70,56 @@ impl StyledText {
         if text.is_empty() {
             return Self::default();
         }
-        Self { segments: vec![InlineSegment { text, style: InlineStyle::default() }] }
+        Self {
+            segments: vec![InlineSegment {
+                text,
+                style: InlineStyle::default(),
+            }],
+        }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum BlockKind {
-    Heading { level: u8, text: StyledText },
-    Paragraph { text: StyledText },
-    List { ordered: bool, items: Vec<StyledText> },
-    BlockQuote { text: StyledText },
-    Callout { kind: CalloutKind, title: Option<StyledText>, body: StyledText },
-    CodeFence { language: Option<String>, code: String },
-    Table { rows: Vec<Vec<StyledText>> },
-    Image { src: String, alt: String, title: Option<String> },
-    Mermaid { source: String },
+    Heading {
+        level: u8,
+        text: StyledText,
+    },
+    Paragraph {
+        text: StyledText,
+    },
+    List {
+        ordered: bool,
+        items: Vec<StyledText>,
+    },
+    BlockQuote {
+        text: StyledText,
+    },
+    Callout {
+        kind: CalloutKind,
+        title: Option<StyledText>,
+        body: StyledText,
+    },
+    CodeFence {
+        language: Option<String>,
+        code: String,
+    },
+    Table {
+        rows: Vec<Vec<StyledText>>,
+    },
+    Image {
+        src: String,
+        alt: String,
+        title: Option<String>,
+    },
+    Mermaid {
+        source: String,
+    },
     Rule,
-    Footnote { label: String, body: StyledText },
+    Footnote {
+        label: String,
+        body: StyledText,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

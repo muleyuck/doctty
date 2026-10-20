@@ -21,8 +21,16 @@ const CELL_WIDTH_PX: u32 = 10;
 const LINE_HEIGHT_PX: u32 = 28;
 const BASELINE_OFFSET_PX: u32 = 20;
 const MONO_ADVANCE_PX: u32 = 9;
-const BODY_FONT: &str = if cfg!(target_os = "macos") { "Helvetica" } else { "DejaVu Sans" };
-const MONO_FONT: &str = if cfg!(target_os = "macos") { "Menlo" } else { "DejaVu Sans Mono" };
+const BODY_FONT: &str = if cfg!(target_os = "macos") {
+    "Helvetica"
+} else {
+    "DejaVu Sans"
+};
+const MONO_FONT: &str = if cfg!(target_os = "macos") {
+    "Menlo"
+} else {
+    "DejaVu Sans Mono"
+};
 
 static FONT_DATABASE: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -83,8 +91,11 @@ fn build_svg(lines: &[RenderedLine], theme: Theme, width_px: u32, height_px: u32
         },
     };
     let available_width = width_px.saturating_sub(40);
-    let article_width =
-        if available_width < 320 { available_width.max(1) } else { available_width.min(980) };
+    let article_width = if available_width < 320 {
+        available_width.max(1)
+    } else {
+        available_width.min(980)
+    };
     let article_x = width_px.saturating_sub(article_width) / 2;
     let article_y = 14;
     let article_height = height_px.saturating_sub(24).max(LINE_HEIGHT_PX);
@@ -145,14 +156,28 @@ fn build_svg(lines: &[RenderedLine], theme: Theme, width_px: u32, height_px: u32
                     content_x.saturating_sub(18),
                     palette.quote_border
                 ));
-                body.push_str(&svg_rich_text(&line.spans, content_x, baseline, palette.muted, 16));
+                body.push_str(&svg_rich_text(
+                    &line.spans,
+                    content_x,
+                    baseline,
+                    palette.muted,
+                    16,
+                ));
             }
             RenderedLineKind::Callout { kind } => {
                 let (fill, border, text_color) =
                     if matches!(*kind, CalloutKind::Warning | CalloutKind::Caution) {
-                        (palette.warning_background, palette.warning_border, palette.foreground)
+                        (
+                            palette.warning_background,
+                            palette.warning_border,
+                            palette.foreground,
+                        )
                     } else {
-                        (palette.callout_background, palette.callout_border, palette.foreground)
+                        (
+                            palette.callout_background,
+                            palette.callout_border,
+                            palette.foreground,
+                        )
                     };
                 body.push_str(&format!(
                     r#"<rect x="{}" y="{y}" width="{content_width}" height="{LINE_HEIGHT_PX}" rx="8" fill="{fill}" stroke="{border}" stroke-width="1"/>"#,
@@ -162,9 +187,18 @@ fn build_svg(lines: &[RenderedLine], theme: Theme, width_px: u32, height_px: u32
                     r#"<rect x="{}" y="{y}" width="4" height="{LINE_HEIGHT_PX}" rx="2" fill="{border}"/>"#,
                     content_x.saturating_sub(14),
                 ));
-                body.push_str(&svg_rich_text(&line.spans, content_x + 4, baseline, text_color, 16));
+                body.push_str(&svg_rich_text(
+                    &line.spans,
+                    content_x + 4,
+                    baseline,
+                    text_color,
+                    16,
+                ));
             }
-            RenderedLineKind::Code { language, is_fence_delimiter } => {
+            RenderedLineKind::Code {
+                language,
+                is_fence_delimiter,
+            } => {
                 body.push_str(&format!(
                     r#"<rect x="{}" y="{y}" width="{content_width}" height="{LINE_HEIGHT_PX}" rx="6" fill="{}" stroke="{}" stroke-width="1"/>"#,
                     content_x.saturating_sub(14),
@@ -221,7 +255,13 @@ fn build_svg(lines: &[RenderedLine], theme: Theme, width_px: u32, height_px: u32
                 ));
             }
             RenderedLineKind::Meta => {
-                body.push_str(&svg_rich_text(&line.spans, content_x, baseline, palette.muted, 14));
+                body.push_str(&svg_rich_text(
+                    &line.spans,
+                    content_x,
+                    baseline,
+                    palette.muted,
+                    14,
+                ));
             }
         }
     }
@@ -373,7 +413,10 @@ fn syntect_theme(theme: Theme) -> &'static SyntectTheme {
 }
 
 fn syntect_color_hex(style: Style) -> String {
-    format!("#{:02x}{:02x}{:02x}", style.foreground.r, style.foreground.g, style.foreground.b)
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        style.foreground.r, style.foreground.g, style.foreground.b
+    )
 }
 
 fn preferred_font_paths() -> &'static [&'static str] {
@@ -449,6 +492,9 @@ mod tests {
 
         assert!(svg.contains(r#"font-weight="600""#), "{svg}");
         assert!(svg.contains(r#"font-style="italic""#), "{svg}");
-        assert!(svg.contains(&format!("font-family=\"{MONO_FONT}\"")), "{svg}");
+        assert!(
+            svg.contains(&format!("font-family=\"{MONO_FONT}\"")),
+            "{svg}"
+        );
     }
 }

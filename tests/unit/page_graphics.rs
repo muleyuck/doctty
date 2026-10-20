@@ -60,7 +60,11 @@ fn viewport_slice_clamps_bottom_without_stretching_extra_blank_rows() {
 #[test]
 fn viewport_raster_encodes_only_the_visible_crop() {
     let image = ImageBuffer::from_fn(8, 10, |_, y| {
-        if y < 6 { Rgba([255, 0, 0, 255]) } else { Rgba([0, 0, 255, 255]) }
+        if y < 6 {
+            Rgba([255, 0, 0, 255])
+        } else {
+            Rgba([0, 0, 255, 255])
+        }
     });
     let mut png_bytes = Vec::new();
     DynamicImage::ImageRgba8(image)

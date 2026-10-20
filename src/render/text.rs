@@ -32,10 +32,26 @@ pub struct RenderedInlineStyle {
 }
 
 impl RenderedInlineStyle {
-    pub const PLAIN: Self = Self { bold: false, italic: false, code: false };
-    pub const BOLD: Self = Self { bold: true, italic: false, code: false };
-    pub const ITALIC: Self = Self { bold: false, italic: true, code: false };
-    pub const CODE: Self = Self { bold: false, italic: false, code: true };
+    pub const PLAIN: Self = Self {
+        bold: false,
+        italic: false,
+        code: false,
+    };
+    pub const BOLD: Self = Self {
+        bold: true,
+        italic: false,
+        code: false,
+    };
+    pub const ITALIC: Self = Self {
+        bold: false,
+        italic: true,
+        code: false,
+    };
+    pub const CODE: Self = Self {
+        bold: false,
+        italic: false,
+        code: true,
+    };
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,12 +63,19 @@ pub struct RenderedInlineSegment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RenderedLineKind {
     Blank,
-    Heading { level: u8 },
+    Heading {
+        level: u8,
+    },
     Paragraph,
     List,
     Quote,
-    Callout { kind: CalloutKind },
-    Code { language: Option<String>, is_fence_delimiter: bool },
+    Callout {
+        kind: CalloutKind,
+    },
+    Code {
+        language: Option<String>,
+        is_fence_delimiter: bool,
+    },
     Table,
     Rule,
     Meta,
@@ -71,7 +94,11 @@ pub struct RenderedGraphic {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RenderedGraphicContent {
     Png(Vec<u8>),
-    Mermaid { source: String, png_bytes: Option<Vec<u8>>, failed: bool },
+    Mermaid {
+        source: String,
+        png_bytes: Option<Vec<u8>>,
+        failed: bool,
+    },
 }
 
 #[must_use]
@@ -116,7 +143,10 @@ pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: Mermai
                 for row in rows {
                     lines.push(format!(
                         "| {} |",
-                        row.iter().map(StyledText::plain).collect::<Vec<_>>().join(" | ")
+                        row.iter()
+                            .map(StyledText::plain)
+                            .collect::<Vec<_>>()
+                            .join(" | ")
                     ));
                 }
             }
@@ -131,7 +161,10 @@ pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: Mermai
                     )),
                     Err(_) => {
                         let image_path = image_decoder::resolve_image_path(&document.path, src);
-                        lines.push(format!("[Image missing: {label} -> {}]", image_path.display()));
+                        lines.push(format!(
+                            "[Image missing: {label} -> {}]",
+                            image_path.display()
+                        ));
                     }
                 }
             }
@@ -196,8 +229,11 @@ pub fn render_document(
             }
             BlockKind::List { ordered, items } => {
                 for (index, item) in items.iter().enumerate() {
-                    let prefix =
-                        if *ordered { format!("{}. ", index + 1) } else { "• ".to_string() };
+                    let prefix = if *ordered {
+                        format!("{}. ", index + 1)
+                    } else {
+                        "• ".to_string()
+                    };
                     let item_text = display_list_item(item);
                     push_wrapped_prefixed_line(
                         &mut lines,
@@ -267,7 +303,10 @@ pub fn render_document(
                     plain_text: String::new(),
                     display_text: String::new(),
                     spans: Vec::new(),
-                    kind: RenderedLineKind::Code { language, is_fence_delimiter: true },
+                    kind: RenderedLineKind::Code {
+                        language,
+                        is_fence_delimiter: true,
+                    },
                 });
             }
             BlockKind::Table { rows } => {
@@ -390,12 +429,21 @@ fn push_wrapped_prefixed_line(
     width: usize,
 ) {
     let body_width = width
-        .saturating_sub(prefix.chars().count().max(continuation_prefix.chars().count()))
+        .saturating_sub(
+            prefix
+                .chars()
+                .count()
+                .max(continuation_prefix.chars().count()),
+        )
         .max(1);
     let segments = wrap_styled_text(&text, body_width);
 
     for (index, segment) in segments.into_iter().enumerate() {
-        let current_prefix = if index == 0 { &prefix } else { &continuation_prefix };
+        let current_prefix = if index == 0 {
+            &prefix
+        } else {
+            &continuation_prefix
+        };
         let prefixed = prepend_plain(segment, current_prefix);
         lines.push(rendered_line(prefixed, kind.clone()));
     }
@@ -419,8 +467,10 @@ fn render_table_display(rows: &[Vec<StyledText>], width: usize) -> Vec<String> {
     }
 
     while table_width(&widths) > width {
-        let Some((index, cell_width)) =
-            widths.iter_mut().enumerate().max_by_key(|(_, cell_width)| **cell_width)
+        let Some((index, cell_width)) = widths
+            .iter_mut()
+            .enumerate()
+            .max_by_key(|(_, cell_width)| **cell_width)
         else {
             break;
         };
@@ -453,7 +503,11 @@ fn table_border(left: char, middle: char, right: char, widths: &[usize]) -> Stri
     line.push(left);
     for (index, width) in widths.iter().enumerate() {
         line.push_str(&"─".repeat(*width + 2));
-        line.push(if index + 1 == widths.len() { right } else { middle });
+        line.push(if index + 1 == widths.len() {
+            right
+        } else {
+            middle
+        });
     }
     line
 }
@@ -574,7 +628,12 @@ fn normalize_language_token(language: &str) -> String {
 fn rendered_line(text: StyledText, kind: RenderedLineKind) -> RenderedLine {
     let plain_text = text.plain();
     let spans = rendered_segments(&text);
-    RenderedLine { plain_text: plain_text.clone(), display_text: plain_text, spans, kind }
+    RenderedLine {
+        plain_text: plain_text.clone(),
+        display_text: plain_text,
+        spans,
+        kind,
+    }
 }
 
 fn rendered_segments(text: &StyledText) -> Vec<RenderedInlineSegment> {
@@ -589,14 +648,21 @@ fn rendered_segments(text: &StyledText) -> Vec<RenderedInlineSegment> {
 }
 
 fn rendered_style(style: InlineStyle) -> RenderedInlineStyle {
-    RenderedInlineStyle { bold: style.bold, italic: style.italic, code: style.code }
+    RenderedInlineStyle {
+        bold: style.bold,
+        italic: style.italic,
+        code: style.code,
+    }
 }
 
 fn spans_from_plain(text: String) -> Vec<RenderedInlineSegment> {
     if text.is_empty() {
         Vec::new()
     } else {
-        vec![RenderedInlineSegment { text, style: RenderedInlineStyle::PLAIN }]
+        vec![RenderedInlineSegment {
+            text,
+            style: RenderedInlineStyle::PLAIN,
+        }]
     }
 }
 
@@ -645,7 +711,9 @@ fn wrap_styled_text(text: &StyledText, width: usize) -> Vec<StyledText> {
         if current.is_empty() {
             lines.push(StyledText::default());
         } else {
-            lines.push(StyledText { segments: std::mem::take(current) });
+            lines.push(StyledText {
+                segments: std::mem::take(current),
+            });
         }
         *current_width = 0;
         *needs_space = false;
@@ -660,14 +728,24 @@ fn wrap_styled_text(text: &StyledText, width: usize) -> Vec<StyledText> {
             let parts = segment.text.split('\n').collect::<Vec<_>>();
             for (index, part) in parts.iter().enumerate() {
                 if index > 0 {
-                    push_current(&mut lines, &mut current, &mut current_width, &mut needs_space);
+                    push_current(
+                        &mut lines,
+                        &mut current,
+                        &mut current_width,
+                        &mut needs_space,
+                    );
                 }
                 if part.is_empty() {
                     continue;
                 }
                 let part_width = part.chars().count();
                 if needs_space && current_width + 1 + part_width > width && !current.is_empty() {
-                    push_current(&mut lines, &mut current, &mut current_width, &mut needs_space);
+                    push_current(
+                        &mut lines,
+                        &mut current,
+                        &mut current_width,
+                        &mut needs_space,
+                    );
                 }
                 if needs_space {
                     current.push(crate::core::document::InlineSegment {
@@ -695,7 +773,12 @@ fn wrap_styled_text(text: &StyledText, width: usize) -> Vec<StyledText> {
                     && current_width + separator_width + word_width > width
                     && !current.is_empty()
                 {
-                    push_current(&mut lines, &mut current, &mut current_width, &mut needs_space);
+                    push_current(
+                        &mut lines,
+                        &mut current,
+                        &mut current_width,
+                        &mut needs_space,
+                    );
                 }
 
                 if needs_space && !is_attached_punctuation(word) {
@@ -716,7 +799,12 @@ fn wrap_styled_text(text: &StyledText, width: usize) -> Vec<StyledText> {
             }
 
             if line_index + 1 != logical_lines.len() {
-                push_current(&mut lines, &mut current, &mut current_width, &mut needs_space);
+                push_current(
+                    &mut lines,
+                    &mut current,
+                    &mut current_width,
+                    &mut needs_space,
+                );
             }
         }
     }
@@ -751,5 +839,7 @@ fn strip_link_destinations(text: &str) -> String {
 
 fn is_attached_punctuation(word: &str) -> bool {
     !word.is_empty()
-        && word.chars().all(|ch| matches!(ch, ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}'))
+        && word
+            .chars()
+            .all(|ch| matches!(ch, ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}'))
 }

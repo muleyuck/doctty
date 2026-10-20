@@ -8,5 +8,8 @@ fn accepts_ghostty_and_kitty() {
 
 #[test]
 fn rejects_unknown_terminal() {
-    assert!(!is_supported_terminal(Some("iterm"), Some("xterm-256color")));
+    assert!(!is_supported_terminal(
+        Some("iterm"),
+        Some("xterm-256color")
+    ));
 }

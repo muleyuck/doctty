@@ -10,7 +10,11 @@ pub struct Viewport {
 impl Viewport {
     #[must_use]
     pub const fn new(width_px: u32, height_px: u32, scroll_y_px: u32) -> Self {
-        Self { width_px, height_px, scroll_y_px }
+        Self {
+            width_px,
+            height_px,
+            scroll_y_px,
+        }
     }
 }
 
@@ -23,7 +27,10 @@ pub struct LayoutIndex {
 impl LayoutIndex {
     #[must_use]
     pub fn new(y_offsets: Vec<u32>, total_height_px: u32) -> Self {
-        Self { y_offsets, total_height_px }
+        Self {
+            y_offsets,
+            total_height_px,
+        }
     }
 }
 
@@ -36,7 +43,11 @@ pub fn visible_block_range(layout: &LayoutIndex, viewport: Viewport) -> Range<us
     let viewport_start = viewport.scroll_y_px;
     let viewport_end = viewport.scroll_y_px.saturating_add(viewport.height_px);
 
-    let start = layout.y_offsets.iter().rposition(|offset| *offset <= viewport_start).unwrap_or(0);
+    let start = layout
+        .y_offsets
+        .iter()
+        .rposition(|offset| *offset <= viewport_start)
+        .unwrap_or(0);
 
     let end = layout
         .y_offsets

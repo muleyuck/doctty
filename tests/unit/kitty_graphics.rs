@@ -50,6 +50,9 @@ fn encodes_delete_visible_placements_command() {
 
 #[test]
 fn encodes_delete_specific_placement_command() {
-    let escape = encode_delete(DeleteCommand::Placement { image_id: 7, placement_id: 3 });
+    let escape = encode_delete(DeleteCommand::Placement {
+        image_id: 7,
+        placement_id: 3,
+    });
     assert_eq!(escape, "\u{1b}_Ga=d,d=i,i=7,p=3\u{1b}\\");
 }

@@ -180,7 +180,12 @@ impl TerminalViewer {
 
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, cursor::Hide, Clear(ClearType::All))?;
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            cursor::Hide,
+            Clear(ClearType::All)
+        )?;
 
         let run_result = self.event_loop();
 
@@ -322,10 +327,16 @@ impl TerminalViewer {
         let article_x = article_origin(width);
 
         for row in 0..content_height {
-            queue!(stdout, cursor::MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+            queue!(
+                stdout,
+                cursor::MoveTo(0, row as u16),
+                Clear(ClearType::CurrentLine)
+            )?;
             if let Some(rendered) = &self.rendered {
-                let visible_end =
-                    rendered.lines.len().min(self.scroll.saturating_add(content_height));
+                let visible_end = rendered
+                    .lines
+                    .len()
+                    .min(self.scroll.saturating_add(content_height));
                 let visible_lines = &rendered.lines[self.scroll..visible_end];
                 let Some(line) = visible_lines.get(row) else {
                     continue;
@@ -363,7 +374,11 @@ impl TerminalViewer {
         };
 
         if self.clear_all_graphics {
-            write!(stdout, "{}", encode_delete(DeleteCommand::AllVisiblePlacements))?;
+            write!(
+                stdout,
+                "{}",
+                encode_delete(DeleteCommand::AllVisiblePlacements)
+            )?;
             self.clear_all_graphics = false;
         }
 
@@ -386,7 +401,9 @@ impl TerminalViewer {
     }
 
     fn page_height(&self) -> usize {
-        terminal::size().map(|(_, height)| usize::from(height.saturating_sub(1))).unwrap_or(20)
+        terminal::size()
+            .map(|(_, height)| usize::from(height.saturating_sub(1)))
+            .unwrap_or(20)
     }
 
     fn max_scroll(&self) -> usize {
@@ -497,18 +514,24 @@ impl TerminalViewer {
         };
         let visible_end = self.scroll.saturating_add(content_height);
         let Some((graphic_index, source)) =
-            rendered.graphics.iter().enumerate().find_map(|(index, graphic)| {
-                if graphic.line_index < self.scroll || graphic.line_index >= visible_end {
-                    return None;
-                }
-
-                match &graphic.content {
-                    RenderedGraphicContent::Mermaid { source, png_bytes: None, failed: false } => {
-                        Some((index, source.clone()))
+            rendered
+                .graphics
+                .iter()
+                .enumerate()
+                .find_map(|(index, graphic)| {
+                    if graphic.line_index < self.scroll || graphic.line_index >= visible_end {
+                        return None;
                     }
-                    _ => None,
-                }
-            })
+
+                    match &graphic.content {
+                        RenderedGraphicContent::Mermaid {
+                            source,
+                            png_bytes: None,
+                            failed: false,
+                        } => Some((index, source.clone())),
+                        _ => None,
+                    }
+                })
         else {
             return false;
         };
@@ -539,8 +562,9 @@ impl TerminalViewer {
                     .unwrap_or(rendered.graphics[graphic_index].height_cells);
 
                 resize_graphic_space(rendered, graphic_index, new_height);
-                if let RenderedGraphicContent::Mermaid { png_bytes, failed, .. } =
-                    &mut rendered.graphics[graphic_index].content
+                if let RenderedGraphicContent::Mermaid {
+                    png_bytes, failed, ..
+                } = &mut rendered.graphics[graphic_index].content
                 {
                     *png_bytes = Some(rendered_png);
                     *failed = false;
@@ -591,11 +615,21 @@ impl TerminalViewer {
             }
             RenderedLineKind::Paragraph | RenderedLineKind::List => {
                 let text = fit_to_width(&line.display_text, width);
-                queue!(stdout, SetForegroundColor(tokens.foreground), Print(text), ResetColor)?;
+                queue!(
+                    stdout,
+                    SetForegroundColor(tokens.foreground),
+                    Print(text),
+                    ResetColor
+                )?;
             }
             RenderedLineKind::Quote => {
                 let text = fit_to_width(&line.display_text, width);
-                queue!(stdout, SetForegroundColor(tokens.muted), Print(text), ResetColor)?;
+                queue!(
+                    stdout,
+                    SetForegroundColor(tokens.muted),
+                    Print(text),
+                    ResetColor
+                )?;
             }
             RenderedLineKind::Callout { kind } => {
                 let text = fit_to_width(&line.display_text, width.saturating_sub(2));
@@ -620,7 +654,10 @@ impl TerminalViewer {
                     ResetColor
                 )?;
             }
-            RenderedLineKind::Code { language, is_fence_delimiter } => {
+            RenderedLineKind::Code {
+                language,
+                is_fence_delimiter,
+            } => {
                 self.draw_code_line(
                     stdout,
                     line,
@@ -632,11 +669,21 @@ impl TerminalViewer {
             }
             RenderedLineKind::Table => {
                 let text = fit_to_width(&line.display_text, width);
-                queue!(stdout, SetForegroundColor(tokens.accent), Print(text), ResetColor)?;
+                queue!(
+                    stdout,
+                    SetForegroundColor(tokens.accent),
+                    Print(text),
+                    ResetColor
+                )?;
             }
             RenderedLineKind::Rule => {
                 let text = fit_to_width(&line.display_text, width);
-                queue!(stdout, SetForegroundColor(tokens.muted), Print(text), ResetColor)?;
+                queue!(
+                    stdout,
+                    SetForegroundColor(tokens.muted),
+                    Print(text),
+                    ResetColor
+                )?;
             }
             RenderedLineKind::Meta => {
                 let text = fit_to_width(&line.display_text, width);
