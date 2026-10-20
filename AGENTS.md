@@ -17,9 +17,6 @@ Claude/Codex settings for model selection, delegation, and optional automation.
 - `README.md` covers supported user-facing features, installation and usage.
 - CLI definitions, Rust source and tests define current behavior; consult them when changing implementation details rather than relying on a separate architecture/requirements document.
 - Keep implementation-specific explanations near the code. Record durable design decisions and alternatives in relevant Issues/PRs when necessary.
-- `.agents/memory/` contains historical work notes, **not** the active task ledger.
-  Do not read it at session start or append to it for routine tasks; consult it only
-  when historical context is specifically needed.
 
 Do not preload unrelated project history for a small edit.
 
