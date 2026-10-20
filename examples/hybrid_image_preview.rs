@@ -64,10 +64,11 @@ impl Tile {
     }
 
     pub(crate) fn source_y(self, position: f64, viewport_height: u32) -> u32 {
-        ((position - self.origin) * SCALE).round().max(0.0).min(
-            f64::from(self.height)
-                - (f64::from(viewport_height) * SCALE).round(),
-        ) as u32
+        ((position - self.origin) * SCALE)
+            .round()
+            .max(0.0)
+            .min(f64::from(self.height) - (f64::from(viewport_height) * SCALE).round())
+            as u32
     }
 
     pub(crate) fn viewport_height_px(viewport_height: u32) -> u32 {
@@ -102,8 +103,7 @@ pub(crate) fn select(cached: &[Tile], position: f64, viewport_height: u32) -> Op
 }
 
 pub(crate) fn free_id(cached: &[Tile]) -> Option<u32> {
-    (FIRST_PREVIEW_ID..=LAST_PREVIEW_ID)
-        .find(|id| cached.iter().all(|tile| tile.id != *id))
+    (FIRST_PREVIEW_ID..=LAST_PREVIEW_ID).find(|id| cached.iter().all(|tile| tile.id != *id))
 }
 
 pub(crate) fn evict(
@@ -115,9 +115,7 @@ pub(crate) fn evict(
     let index = cached
         .iter()
         .enumerate()
-        .filter(|(_, tile)| {
-            Some(tile.id) != placed_id && !tile.covers(position, viewport_height)
-        })
+        .filter(|(_, tile)| Some(tile.id) != placed_id && !tile.covers(position, viewport_height))
         .max_by(|(_, a), (_, b)| {
             (a.origin - position)
                 .abs()
@@ -216,10 +214,13 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
     let end = origin + f64::from(full_height);
     // A very long document can contain 12k outline entries. Only rasterize
     // the visible region, and cap the work for pathologically dense markup.
-    for item in scene.items.iter().filter(|item| {
-        item.y < end && item.y + item.height.max(1.0) >= origin
-    }).take(240) {
-        let x = item.x.clamp(0.0, f64::from(width));
+    for item in scene
+        .items
+        .iter()
+        .filter(|item| item.y < end && item.y + item.height.max(1.0) >= origin)
+        .take(240)
+    {
+        let x = item.x.clamp(0.0, f64::from(width.saturating_sub(1)));
         let y = item.y - origin;
         let item_width = item.width.clamp(1.0, f64::from(width) - x);
         let font_size = item.font_size.clamp(8.0, 42.0);
@@ -239,7 +240,11 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
         }
 
         let weight = item.weight.clamp(300, 800);
-        let font = if item.tag == "pre" { "Menlo" } else { "Helvetica" };
+        let font = if item.tag == "pre" {
+            "Menlo"
+        } else {
+            "Helvetica"
+        };
         let clean = item.text.trim_start_matches('#').trim();
         if clean.is_empty() {
             continue;
@@ -317,9 +322,24 @@ mod tests {
     #[test]
     fn chooses_bounded_preview_tiles_and_protects_displayed_tile() {
         let mut tiles = vec![
-            Tile { id: FIRST_PREVIEW_ID, origin: 0.0, width: 400, height: 1000 },
-            Tile { id: FIRST_PREVIEW_ID + 1, origin: 1000.0, width: 400, height: 1000 },
-            Tile { id: FIRST_PREVIEW_ID + 2, origin: 2000.0, width: 400, height: 1000 },
+            Tile {
+                id: FIRST_PREVIEW_ID,
+                origin: 0.0,
+                width: 400,
+                height: 1000,
+            },
+            Tile {
+                id: FIRST_PREVIEW_ID + 1,
+                origin: 1000.0,
+                width: 400,
+                height: 1000,
+            },
+            Tile {
+                id: FIRST_PREVIEW_ID + 2,
+                origin: 2000.0,
+                width: 400,
+                height: 1000,
+            },
         ];
         let removed = evict(&mut tiles, 1700.0, 1000, Some(FIRST_PREVIEW_ID));
         assert_eq!(removed.map(|t| t.origin), Some(2000.0));
@@ -332,10 +352,16 @@ mod tests {
         let scene = Scene {
             background: "#0d1117".to_owned(),
             items: vec![StyledItem {
-                x: 16.0, y: 50.0, width: 300.0, height: 48.0,
-                font_size: 24.0, line_height: 28.0,
-                weight: 700, color: "#f0f6fc".to_owned(),
-                tag: "h1".to_owned(), text: "Hello <Rust> & WebKit".to_owned(),
+                x: 16.0,
+                y: 50.0,
+                width: 300.0,
+                height: 48.0,
+                font_size: 24.0,
+                line_height: 28.0,
+                weight: 700,
+                color: "#f0f6fc".to_owned(),
+                tag: "h1".to_owned(),
+                text: "Hello <Rust> & WebKit".to_owned(),
                 ..StyledItem::default()
             }],
         };
