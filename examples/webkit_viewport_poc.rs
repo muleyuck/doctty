@@ -29,11 +29,7 @@ mod experiment {
         execute,
         terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     };
-    use doctty::{
-        cli::Theme,
-        core::config::MermaidMode,
-        render::github_html::build_github_html,
-    };
+    use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
     use image::{ImageDecoder, codecs::png::PngDecoder};
     use serde_json::{Value, json};
 
@@ -61,11 +57,7 @@ mod experiment {
     impl Drop for TerminalSession {
         fn drop(&mut self) {
             let _ = terminal::disable_raw_mode();
-            let _ = execute!(
-                io::stdout(),
-                LeaveAlternateScreen,
-                cursor::Show
-            );
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
         }
     }
 
@@ -76,9 +68,15 @@ mod experiment {
     }
 
     impl SwiftProcess {
-        fn start(html: &Path, source_dir: &Path, png: &Path, width: u32, height: u32) -> Result<Self> {
-            let helper = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("experiments/webkit_viewport.swift");
+        fn start(
+            html: &Path,
+            source_dir: &Path,
+            png: &Path,
+            width: u32,
+            height: u32,
+        ) -> Result<Self> {
+            let helper =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("experiments/webkit_viewport.swift");
             let mut child = Command::new("swift")
                 .arg("-swift-version")
                 .arg("5")
@@ -95,7 +93,11 @@ mod experiment {
                 .context("unable to start Swift WebKit helper")?;
             let input = child.stdin.take().context("missing Swift stdin")?;
             let output = BufReader::new(child.stdout.take().context("missing Swift stdout")?);
-            Ok(Self { child, input, output })
+            Ok(Self {
+                child,
+                input,
+                output,
+            })
         }
 
         fn request(&mut self, request: &Value) -> Result<Value> {
@@ -109,9 +111,13 @@ mod experiment {
             if self.output.read_line(&mut line)? == 0 {
                 bail!("WebKit helper closed its output; see Swift stderr");
             }
-            let payload: Value = serde_json::from_str(&line).context("invalid WebKit JSON response")?;
+            let payload: Value =
+                serde_json::from_str(&line).context("invalid WebKit JSON response")?;
             if payload["kind"] == "error" {
-                bail!("WebKit helper: {}", payload["message"].as_str().unwrap_or("unknown error"));
+                bail!(
+                    "WebKit helper: {}",
+                    payload["message"].as_str().unwrap_or("unknown error")
+                );
             }
             Ok(payload)
         }
@@ -125,7 +131,10 @@ mod experiment {
     }
 
     fn html_input(path: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
-        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm")) {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
+        {
             return Ok((path.to_path_buf(), None));
         }
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
@@ -143,16 +152,12 @@ mod experiment {
 
     fn draw(png_path: &Path, status: &str, columns: u16, rows: u16) -> Result<()> {
         let png = fs::read(png_path).context("missing viewport PNG")?;
-        let decoder = PngDecoder::new(std::io::Cursor::new(&png))?;
+        let decoder = PngDecoder::new(io::Cursor::new(&png))?;
         let (width, height) = decoder.dimensions();
         let payload = STANDARD.encode(&png);
         let total_chunks = payload.len().div_ceil(CHUNK_SIZE);
         let mut stdout = io::stdout().lock();
-        execute!(
-            stdout,
-            cursor::MoveTo(0, 0),
-            Clear(ClearType::All)
-        )?;
+        execute!(stdout, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
         // This experiment uses a single atomic a=T upload and placement.
         // Only the displayed viewport pixels are ever transmitted.
         for (index, chunk) in payload.as_bytes().chunks(CHUNK_SIZE).enumerate() {
@@ -206,8 +211,12 @@ mod experiment {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("run this interactive experiment in Ghostty or Herdr");
         }
-        let arg = std::env::args_os().nth(1).unwrap_or_else(|| "README.md".into());
-        let document = PathBuf::from(arg).canonicalize().context("source file not found")?;
+        let arg = std::env::args_os()
+            .nth(1)
+            .unwrap_or_else(|| "README.md".into());
+        let document = PathBuf::from(arg)
+            .canonicalize()
+            .context("source file not found")?;
         let dir = document.parent().context("source directory not found")?;
         let (html, _temp_html) = html_input(&document)?;
         let work = tempfile::tempdir()?;
@@ -226,8 +235,12 @@ mod experiment {
         let _session = TerminalSession::enter()?;
         let (mut position, mut document_height) = snapshot(&mut swift, &output, 0.0, cols, rows)?;
         loop {
-            let Event::Key(key) = event::read()? else { continue };
-            if key.kind != KeyEventKind::Press { continue }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
             let step = 16.0;
             let page = f64::from(height) * 0.85;
             let next = match key.code {

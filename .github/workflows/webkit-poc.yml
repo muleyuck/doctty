@@ -1,0 +1,22 @@
+name: WebKit PoC
+on:
+  pull_request:
+    paths:
+      - 'examples/webkit_viewport_poc.rs'
+      - 'experiments/webkit_viewport.swift'
+      - '.github/workflows/webkit-poc.yml'
+  push:
+    branches:
+      - experiment/persistent-webkit-viewport
+permissions:
+  contents: read
+jobs:
+  macos-example:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: muleyuck/github-actions/actions/rust/setup@v1
+      - name: Check PoC example
+        run: cargo check --example webkit_viewport_poc --locked
+      - name: Typecheck Swift helper
+        run: swiftc -swift-version 5 -typecheck experiments/webkit_viewport.swift
