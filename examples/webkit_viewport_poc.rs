@@ -165,7 +165,11 @@ mod experiment {
 
         fn observe_uploaded(&mut self, cache: &ImageCache) {
             self.observe_snapshot(cache.last_snapshot_ms);
-            self.observe_stages(cache.last_capture_ms, cache.last_encode_ms, cache.last_write_ms);
+            self.observe_stages(
+                cache.last_capture_ms,
+                cache.last_encode_ms,
+                cache.last_write_ms,
+            );
             if cache.last_upload_ms.is_finite() {
                 self.max_upload_ms = self.max_upload_ms.max(cache.last_upload_ms);
             }
@@ -771,7 +775,6 @@ mod experiment {
         Ok(current.document_height)
     }
 
-
     #[derive(Clone, Debug, PartialEq)]
     struct OutlineItem {
         y: f64,
@@ -787,7 +790,10 @@ mod experiment {
         for item in items.iter().take(12_000) {
             if let (Some(y), Some(text)) = (item["y"].as_f64(), item["text"].as_str()) {
                 if y.is_finite() && y >= 0.0 && !text.is_empty() {
-                    result.push(OutlineItem { y, text: text.to_owned() });
+                    result.push(OutlineItem {
+                        y,
+                        text: text.to_owned(),
+                    });
                 }
             }
         }
@@ -812,9 +818,8 @@ mod experiment {
             if item.y >= end {
                 break;
             }
-            let row = ((item.y - position) * f64::from(rows)
-                / f64::from(viewport_height))
-                .floor() as u16;
+            let row =
+                ((item.y - position) * f64::from(rows) / f64::from(viewport_height)).floor() as u16;
             if row >= rows || last_row == Some(row) {
                 continue;
             }
@@ -1441,10 +1446,22 @@ mod experiment {
         #[test]
         fn hybrid_preview_matches_dom_positions() {
             let items = vec![
-                OutlineItem { y: 100.0, text: "before".into() },
-                OutlineItem { y: 1000.0, text: "# Section".into() },
-                OutlineItem { y: 1040.0, text: "paragraph".into() },
-                OutlineItem { y: 1180.0, text: "end".into() },
+                OutlineItem {
+                    y: 100.0,
+                    text: "before".into(),
+                },
+                OutlineItem {
+                    y: 1000.0,
+                    text: "# Section".into(),
+                },
+                OutlineItem {
+                    y: 1040.0,
+                    text: "paragraph".into(),
+                },
+                OutlineItem {
+                    y: 1180.0,
+                    text: "end".into(),
+                },
             ];
             assert_eq!(
                 preview_lines(&items, 1000.0, 200, 10),
@@ -1468,8 +1485,8 @@ mod experiment {
                     {"y": 140, "text": ""}
                 ]
             });
-            let outline = parse_outline(&payload)
-                .unwrap_or_else(|error| panic!("outline parse: {error}"));
+            let outline =
+                parse_outline(&payload).unwrap_or_else(|error| panic!("outline parse: {error}"));
             assert_eq!(outline.len(), 2);
             assert_eq!(outline[0].text, "earlier");
             assert_eq!(outline[1].text, "later");
