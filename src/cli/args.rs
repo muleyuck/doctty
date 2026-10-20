@@ -1,18 +1,14 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
 #[command(
     name = "doctty",
     about = "High-fidelity Markdown viewer for Ghostty and Kitty",
-    arg_required_else_help = true,
-    args_conflicts_with_subcommands = true
+    arg_required_else_help = true
 )]
 pub struct DocttyArgs {
-    #[command(subcommand)]
-    pub command: Option<DocttyCommand>,
-
     /// Markdown file to open.
     pub path: Option<PathBuf>,
 
@@ -42,16 +38,6 @@ impl DocttyArgs {
     {
         <Self as Parser>::parse_from(itr)
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
-pub enum DocttyCommand {
-    /// Replace the current doctty executable when `main`'s CI-generated binary changes.
-    #[command(
-        visible_alias = "upgrade",
-        about = "Replace the current doctty executable when GitHub main publishes a different CI-generated bin/doctty"
-    )]
-    Update,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
