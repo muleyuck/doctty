@@ -39,6 +39,12 @@ mod experiment {
     const SECOND_IMAGE_ID: u32 = 93_002;
     const CHUNK_SIZE: usize = 4096;
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ScrollDirection {
+        Forward,
+        Backward,
+    }
+
     #[derive(Clone, Debug)]
     struct ImageCache {
         image_id: u32,
@@ -48,6 +54,7 @@ mod experiment {
         pixels_per_point: f64,
         document_height: f64,
         last_snapshot_ms: f64,
+        last_upload_ms: f64,
         png_bytes: usize,
     }
 
@@ -212,9 +219,11 @@ mod experiment {
                                 bail!("invalid prefetched PNG width");
                             }
                             // Never place the image before the complete transmission.
+                            let upload_started = Instant::now();
                             let mut stdout = io::stdout().lock();
                             upload_png(&mut stdout, image_id, &png)?;
                             stdout.flush()?;
+                            let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
                             Ok(ImageCache {
                                 image_id,
                                 source_y: response["actualY"].as_f64().unwrap_or(origin),
@@ -223,6 +232,7 @@ mod experiment {
                                 pixels_per_point: scale,
                                 document_height: response["height"].as_f64().unwrap_or(0.0),
                                 last_snapshot_ms: response["elapsedMs"].as_f64().unwrap_or(0.0),
+                                last_upload_ms: upload_ms,
                                 png_bytes: png.len(),
                             })
                         })();
@@ -247,21 +257,48 @@ mod experiment {
         (requests, responses)
     }
 
-    fn prefetch_origin(active: &ImageCache, desired: f64, height: u32) -> Option<f64> {
+    fn prefetch_origin(
+        active: &ImageCache,
+        desired: f64,
+        height: u32,
+        direction: ScrollDirection,
+    ) -> Option<f64> {
         let viewport = f64::from(height);
         let cache_bottom =
             active.source_y + f64::from(active.image_height) / active.pixels_per_point;
         let max_origin = (active.document_height - viewport * 2.0).max(0.0);
         let candidate = if !active.covers(desired, height) {
+            // Recovery when the user outpaces a pending snapshot.
             (desired - viewport * 0.5).clamp(0.0, max_origin)
-        } else if desired + viewport * 1.5 >= cache_bottom && active.source_y < max_origin {
-            (active.source_y + viewport).min(max_origin)
-        } else if desired < active.source_y + viewport * 0.35 && active.source_y > 0.0 {
-            (active.source_y - viewport).max(0.0)
         } else {
-            return None;
+            match direction {
+                ScrollDirection::Forward
+                    if desired + viewport * 1.8 >= cache_bottom
+                        && active.source_y < max_origin =>
+                {
+                    (active.source_y + viewport).min(max_origin)
+                }
+                ScrollDirection::Backward
+                    if desired <= active.source_y + viewport * 0.65
+                        && active.source_y > 0.0 =>
+                {
+                    (active.source_y - viewport).max(0.0)
+                }
+                _ => return None,
+            }
         };
         ((candidate - active.source_y).abs() > 1.0).then_some(candidate)
+    }
+
+    fn prefetch_is_stale(
+        active: &ImageCache,
+        prefetched: &ImageCache,
+        direction: ScrollDirection,
+    ) -> bool {
+        match direction {
+            ScrollDirection::Forward => prefetched.source_y < active.source_y - 1.0,
+            ScrollDirection::Backward => prefetched.source_y > active.source_y + 1.0,
+        }
     }
 
     fn display_cached(
@@ -286,11 +323,11 @@ mod experiment {
         )?;
         execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
         let status = format!(
-            "j/k scroll  J/K page  y copy  q quit | {state} y={position:.0}/{:.0} snap={:.0}ms PNG={}B place={:.0}ms",
-            cache.document_height,
+            "{state} snap={:.0}ms upload={:.0}ms place={:.0}ms y={position:.0}/{:.0} | j/k J/K q",
             cache.last_snapshot_ms,
-            cache.png_bytes,
-            started.elapsed().as_secs_f64() * 1000.0
+            cache.last_upload_ms,
+            started.elapsed().as_secs_f64() * 1000.0,
+            cache.document_height
         );
         write!(
             out,
@@ -409,6 +446,7 @@ mod experiment {
                 pixels_per_point: scale,
                 document_height: result["height"].as_f64().unwrap_or(0.0),
                 last_snapshot_ms: result["elapsedMs"].as_f64().unwrap_or(0.0),
+                last_upload_ms: 0.0,
                 png_bytes: png.len(),
             };
             let source_offset = new_cache.source_offset_px(position, viewport_height);
@@ -538,6 +576,7 @@ mod experiment {
         let mut pending = false;
         let mut prefetched: Option<ImageCache> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
+        let mut direction = ScrollDirection::Forward;
 
         loop {
             // A completed prefetch is already uploaded to the terminal in the
@@ -558,6 +597,19 @@ mod experiment {
                     Ok(WorkerEvent::Error(error)) => bail!("WebKit prefetch: {error}"),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => bail!("WebKit worker disconnected"),
+                }
+            }
+
+            // A direction change can make an already-uploaded prefetch useless.
+            // Discard it so it cannot starve the required image in the new direction.
+            if prefetched
+                .as_ref()
+                .is_some_and(|next| prefetch_is_stale(&active, next, direction))
+            {
+                if let Some(stale) = prefetched.take() {
+                    let mut out = io::stdout().lock();
+                    delete_image(&mut out, stale.image_id)?;
+                    out.flush()?;
                 }
             }
 
@@ -599,7 +651,7 @@ mod experiment {
             }
 
             if !pending && prefetched.is_none() {
-                if let Some(origin) = prefetch_origin(&active, position, height) {
+                if let Some(origin) = prefetch_origin(&active, position, height, direction) {
                     let image_id = if active.image_id == FIRST_IMAGE_ID {
                         SECOND_IMAGE_ID
                     } else {
@@ -653,11 +705,87 @@ mod experiment {
                 _ => continue,
             };
             let max_pos = (document_height - f64::from(height)).max(0.0);
-            position = next.clamp(0.0, max_pos);
+            let next_position = next.clamp(0.0, max_pos);
+            if next_position > position {
+                direction = ScrollDirection::Forward;
+            } else if next_position < position {
+                direction = ScrollDirection::Backward;
+            }
+            position = next_position;
         }
         // Dropping requests stops the worker and its Swift child after the
         // current operation. TerminalSession cleans up both image IDs.
         drop(requests);
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn cached_at(source_y: f64) -> ImageCache {
+            ImageCache {
+                image_id: FIRST_IMAGE_ID,
+                source_y,
+                image_width: 800,
+                image_height: 2000,
+                pixels_per_point: 1.0,
+                document_height: 10_000.0,
+                last_snapshot_ms: 0.0,
+                last_upload_ms: 0.0,
+                png_bytes: 100,
+            }
+        }
+
+        #[test]
+        fn prefetches_early_in_the_scroll_direction() {
+            let first = cached_at(0.0);
+            assert_eq!(
+                prefetch_origin(&first, 300.0, 1000, ScrollDirection::Forward),
+                Some(1000.0)
+            );
+            assert_eq!(
+                prefetch_origin(&first, 300.0, 1000, ScrollDirection::Backward),
+                None
+            );
+            assert_eq!(
+                prefetch_origin(&cached_at(1000.0), 1000.0, 1000, ScrollDirection::Forward),
+                None
+            );
+            assert_eq!(
+                prefetch_origin(&cached_at(1000.0), 1000.0, 1000, ScrollDirection::Backward),
+                Some(0.0)
+            );
+        }
+
+        #[test]
+        fn rejects_prefetch_from_opposite_direction() {
+            let active = cached_at(1000.0);
+            assert!(prefetch_is_stale(
+                &active,
+                &cached_at(2000.0),
+                ScrollDirection::Backward
+            ));
+            assert!(prefetch_is_stale(
+                &active,
+                &cached_at(0.0),
+                ScrollDirection::Forward
+            ));
+            assert!(!prefetch_is_stale(
+                &active,
+                &cached_at(2000.0),
+                ScrollDirection::Forward
+            ));
+        }
+
+        #[test]
+        fn does_not_prefetch_past_document_end() {
+            let mut last = cached_at(8000.0);
+            last.document_height = 10_000.0;
+            assert_eq!(
+                prefetch_origin(&last, 9000.0, 1000, ScrollDirection::Forward),
+                None
+            );
+        }
     }
 }

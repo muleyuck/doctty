@@ -17,6 +17,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
       - name: Check PoC example
-        run: cargo check --example webkit_viewport_poc --locked
+        run: cargo test --example webkit_viewport_poc --locked
       - name: Typecheck Swift helper
         run: swiftc -swift-version 5 -typecheck experiments/webkit_viewport.swift
