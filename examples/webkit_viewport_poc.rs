@@ -637,7 +637,6 @@ mod experiment {
         Ok(current.document_height)
     }
 
-
     // Viewport-sized origin steps with 2-viewport overlap. This first tiled
     // experiment can render a viewport from one cached snapshot; no compositing
     // or changes to the stable viewer are required.
@@ -1110,7 +1109,6 @@ mod experiment {
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
         }
-
 
         #[test]
         fn tile_placement_hide_keeps_image_data_cached() {
