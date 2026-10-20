@@ -13,6 +13,6 @@ jobs:
   checks:
     uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1
     with:
-      test-command: make ci
+      test-command: rustup component add rustfmt clippy && make ci
       install-args: rust
       runs-on: ubuntu-latest

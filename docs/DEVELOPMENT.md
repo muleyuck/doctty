@@ -15,7 +15,7 @@ make build
 make ci    # fmt-check, clippy -D warnings, full test suite
 ```
 
-The GitHub Actions CI job reuses [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml) with `test-command: make ci`. Rust 1.92.0 is pinned in `mise.toml` and `rust-toolchain.toml`.
+The GitHub Actions CI job reuses [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml) with `test-command: rustup component add rustfmt clippy && make ci` (the shared setup installs Rust but not necessarily its formatting and lint components). Rust 1.92.0 is pinned in `mise.toml` and `rust-toolchain.toml`.
 
 ## Git hooks
 

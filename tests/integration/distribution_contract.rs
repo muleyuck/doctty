@@ -22,7 +22,7 @@ fn ci_checks_code_without_write_permissions() {
     );
     assert_eq!(
         inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
-        Some("make ci")
+        Some("rustup component add rustfmt clippy && make ci")
     );
     assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
     assert_eq!(
