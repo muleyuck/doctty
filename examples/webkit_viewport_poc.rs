@@ -1192,6 +1192,106 @@ mod experiment {
         }
 
         #[test]
+        fn tile_cache_remains_bounded_during_long_bidirectional_scrolls() {
+            use std::collections::BTreeSet;
+
+            let viewport = 1000;
+            let document_height = 50_000.0;
+            let mut first = cached_at(0.0);
+            first.document_height = document_height;
+            let mut cached = vec![first];
+            let mut last_displayed_id = Some(FIRST_IMAGE_ID);
+
+            // Sweep the full document, reverse direction, and repeat. Model
+            // instant snapshot completion to stress admission and eviction
+            // independently of WebKit/terminal timing.
+            for _ in 0..3 {
+                for (position, direction) in (0..=196)
+                    .map(|step| (f64::from(step * 250), ScrollDirection::Forward))
+                    .chain(
+                        (0..=196)
+                            .rev()
+                            .map(|step| (f64::from(step * 250), ScrollDirection::Backward)),
+                    )
+                {
+                    if let Some(tile) = select_tile(&cached, position, viewport) {
+                        last_displayed_id = Some(tile.image_id);
+                    }
+
+                    if let Some(origin) = next_tile_origin(
+                        &cached,
+                        position,
+                        viewport,
+                        document_height,
+                        direction,
+                    ) {
+                        if cached.len() == MAX_TILE_CACHE {
+                            if let Some(evicted) = evict_tile(
+                                &mut cached,
+                                position,
+                                viewport,
+                                last_displayed_id,
+                            ) {
+                                assert_ne!(Some(evicted.image_id), last_displayed_id);
+                                assert!(!evicted.covers(position, viewport));
+                            }
+                        }
+
+                        if cached.len() < MAX_TILE_CACHE {
+                            let image_id = tile_image_id(&cached)
+                                .unwrap_or_else(|| panic!("no free tile image id"));
+                            let mut tile = cached_at(origin);
+                            tile.image_id = image_id;
+                            tile.document_height = document_height;
+                            cached.push(tile);
+                        }
+                    }
+
+                    assert!(cached.len() <= MAX_TILE_CACHE);
+                    assert!(cached.iter().all(|tile| {
+                        (FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID).contains(&tile.image_id)
+                    }));
+                    let ids: BTreeSet<_> = cached.iter().map(|tile| tile.image_id).collect();
+                    assert_eq!(ids.len(), cached.len(), "image ids must not collide");
+                    let origins: BTreeSet<_> = cached
+                        .iter()
+                        .map(|tile| tile.source_y.to_bits())
+                        .collect();
+                    assert_eq!(origins.len(), cached.len(), "duplicate tile snapshots");
+                }
+            }
+        }
+
+        #[test]
+        fn tile_eviction_skips_all_current_and_displayed_images() {
+            let mut cached = vec![cached_at(0.0), cached_at(0.0)];
+            cached[1].image_id = SECOND_IMAGE_ID;
+            assert!(evict_tile(&mut cached, 500.0, 1000, Some(FIRST_IMAGE_ID)).is_none());
+            assert_eq!(cached.len(), 2);
+        }
+
+        #[test]
+        fn final_document_tile_does_not_queue_duplicate_snapshots() {
+            let viewport = 1000;
+            let mut last = cached_at(8000.0);
+            last.document_height = 10_000.0;
+            assert_eq!(
+                next_tile_origin(
+                    &[last.clone()],
+                    9000.0,
+                    viewport,
+                    last.document_height,
+                    ScrollDirection::Forward,
+                ),
+                None
+            );
+            assert_eq!(
+                select_tile(&[last], 9000.0, viewport).map(|tile| tile.source_y),
+                Some(8000.0)
+            );
+        }
+
+        #[test]
         fn cache_wait_counts_only_distinct_misses_and_records_duration() {
             let mut stats = CacheWaitStats::default();
             let start = Instant::now();
