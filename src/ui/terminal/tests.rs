@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Cursor;
+use std::time::Duration;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
@@ -16,7 +17,7 @@ use crate::{
 };
 
 use super::{
-    CellMetrics, GraphicViewport, TerminalViewer,
+    CellMetrics, GraphicViewport, TerminalViewer, should_redraw,
     graphics::{
         collect_graphics_commands, collect_page_viewport_commands, fit_graphic_placement,
         visible_graphic_placements,
@@ -199,6 +200,14 @@ fn fit_graphic_placement_stays_within_reserved_box() {
     assert!(rows <= graphic.height_cells);
     assert!(columns > 0);
     assert!(rows > 0);
+}
+
+#[test]
+fn redraw_is_not_starved_by_continuous_input() {
+    assert!(should_redraw(true, false, Duration::ZERO));
+    assert!(!should_redraw(true, true, Duration::from_millis(23)));
+    assert!(should_redraw(true, true, Duration::from_millis(24)));
+    assert!(!should_redraw(false, true, Duration::from_millis(100)));
 }
 
 #[test]
