@@ -15,6 +15,8 @@ make build
 make ci    # fmt-check, clippy -D warnings, full test suite
 ```
 
+The GitHub Actions CI job reuses [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml) with `test-command: make ci`. Rust 1.92.0 is pinned in `mise.toml` and `rust-toolchain.toml`.
+
 ## Git hooks
 
 This repo uses [`lefthook`](https://github.com/evilmartians/lefthook) for local git hooks.

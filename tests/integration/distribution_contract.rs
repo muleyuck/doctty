@@ -14,7 +14,16 @@ fn ci_checks_code_without_write_permissions() {
     let push = mapping_field(triggers, "push");
     let branches = sequence_field(push, "branches");
 
-    assert!(jobs.contains_key(Value::String("checks".to_string())));
+    let checks = mapping_field(jobs, "checks");
+    let inputs = mapping_field(checks, "with");
+    assert_eq!(
+        checks.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
+    );
+    assert_eq!(
+        inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        Some("make ci")
+    );
     assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
     assert_eq!(
         permissions.get(Value::String("contents".to_string())).and_then(Value::as_str),
