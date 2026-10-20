@@ -1,6 +1,6 @@
+use doctty::cli::Theme;
+use doctty::io::mermaid_cli::MermaidCliRenderer;
 use image::{ImageBuffer, Rgba};
-use mdv::cli::Theme;
-use mdv::io::mermaid_cli::MermaidCliRenderer;
 use tempfile::TempDir;
 
 #[test]

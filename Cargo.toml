@@ -1,11 +1,11 @@
 [package]
-name = "mdv"
+name = "doctty"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.92"
 description = "Browser-quality Markdown viewer for the terminal"
 license = "MIT"
-repository = "https://github.com/posaune0423/mdv"
+repository = "https://github.com/muleyuck/doctty"
 readme = "README.md"
 keywords = ["markdown", "terminal", "viewer", "cli", "kitty"]
 categories = ["command-line-utilities", "text-processing"]

@@ -1,5 +1,5 @@
-use mdv::core::document::BlockKind;
-use mdv::render::markdown::parse_document;
+use doctty::core::document::BlockKind;
+use doctty::render::markdown::parse_document;
 
 #[test]
 fn normalizes_common_blocks_from_gfm_markdown() {
@@ -42,8 +42,8 @@ fn normalizes_task_list_and_footnote_reference_text() {
         BlockKind::List { ref items, .. }
             if items
                 == &vec![
-                    mdv::core::document::StyledText::from_plain("[x] done"),
-                    mdv::core::document::StyledText::from_plain("[ ] pending"),
+                    doctty::core::document::StyledText::from_plain("[x] done"),
+                    doctty::core::document::StyledText::from_plain("[ ] pending"),
                 ]
     ));
     assert!(matches!(
@@ -80,7 +80,7 @@ fn preserves_non_layout_html_blocks_as_plain_text() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block { kind: BlockKind::Paragraph { .. }, .. }]
+        [doctty::core::document::Block { kind: BlockKind::Paragraph { .. }, .. }]
     ));
 }
 
@@ -95,7 +95,7 @@ fn parses_html_img_tag_as_image_block() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Image { src, alt, .. },
             ..
         }] if src == "photo.png" && alt == "A photo"
@@ -113,7 +113,7 @@ fn parses_html_img_wrapped_in_p_as_image_block() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Image { src, alt, .. },
             ..
         }] if src == "hero.jpg" && alt == "Centered"
@@ -131,7 +131,7 @@ fn parses_html_img_wrapped_in_div_as_image_block() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Image { src, alt, .. },
             ..
         }] if src == "banner.png" && alt == "Banner"
@@ -149,7 +149,7 @@ fn parses_html_img_tag_with_width_as_image_block() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Image { src, alt, .. },
             ..
         }] if src == "hero.jpg" && alt == "Hero"
@@ -167,7 +167,7 @@ fn keeps_inline_html_as_plain_text() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Paragraph { text },
             ..
         }] if text.plain() == "Before <br/> after."
@@ -185,7 +185,7 @@ fn preserves_math_text_in_plain_document_normalization() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [mdv::core::document::Block {
+        [doctty::core::document::Block {
             kind: BlockKind::Paragraph { text },
             ..
         }] if text.plain() == "Inline $e^{i\\pi} + 1 = 0$ and $$a^2 + b^2 = c^2$$."

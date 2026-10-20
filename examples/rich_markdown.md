@@ -50,13 +50,13 @@ Paragraph with *italic*, **bold**, ***bold italic***, ~~strikethrough~~, `inline
 
 ```rust
 fn main() {
-    println!("hello from mdv");
+    println!("hello from doctty");
 }
 ```
 
 ```json
 {
-  "name": "mdv",
+  "name": "doctty",
   "type": "fixture",
   "features": ["callout", "mermaid", "image"]
 }
@@ -66,7 +66,7 @@ fn main() {
 
 ```mermaid
 flowchart TD
-    Start[Open mdv] --> Parse[Parse markdown]
+    Start[Open doctty] --> Parse[Parse markdown]
     Parse --> Render[Render visible content]
     Render --> Scroll[Scroll smoothly]
 ```

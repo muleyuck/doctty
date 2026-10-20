@@ -8,9 +8,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-const REPOSITORY: &str = "posaune0423/mdv";
-const MAIN_BINARY_URL: &str = "https://raw.githubusercontent.com/posaune0423/mdv/main/bin/mdv";
-const MAIN_MANIFEST_URL: &str = "https://raw.githubusercontent.com/posaune0423/mdv/main/Cargo.toml";
+const REPOSITORY: &str = "muleyuck/doctty";
+const MAIN_BINARY_URL: &str = "https://raw.githubusercontent.com/muleyuck/doctty/main/bin/doctty";
+const MAIN_MANIFEST_URL: &str = "https://raw.githubusercontent.com/muleyuck/doctty/main/Cargo.toml";
 
 #[must_use]
 pub const fn main_binary_url() -> &'static str {
@@ -25,8 +25,8 @@ pub const fn main_manifest_url() -> &'static str {
 pub fn update_current_executable() -> Result<()> {
     let reporter = UpdateReporter::new();
     let current_exe =
-        std::env::current_exe().context("failed to resolve the current mdv executable path")?;
-    reporter.title("mdv updater");
+        std::env::current_exe().context("failed to resolve the current doctty executable path")?;
+    reporter.title("doctty updater");
     reporter
         .info(&format!("Checking the tracked main-branch binary for {}.", current_exe.display()));
 
@@ -35,14 +35,14 @@ pub fn update_current_executable() -> Result<()> {
     reporter.ok(&format!("GitHub main version: {}", format_version(&github_version)));
 
     let local_version = current_version().to_string();
-    reporter.ok(&format!("Local mdv version: {}", format_version(&local_version)));
+    reporter.ok(&format!("Local doctty version: {}", format_version(&local_version)));
 
     let temp_dir = tempfile::tempdir().context("failed to create a temporary update directory")?;
-    let latest_binary_path = temp_dir.path().join("mdv-main");
+    let latest_binary_path = temp_dir.path().join("doctty-main");
 
-    reporter.loading("Downloading latest main/bin/mdv");
+    reporter.loading("Downloading latest main/bin/doctty");
     download_main_binary(main_binary_url(), &latest_binary_path)?;
-    reporter.ok("Downloaded latest main/bin/mdv");
+    reporter.ok("Downloaded latest main/bin/doctty");
 
     let binaries_are_identical = binaries_match(&current_exe, &latest_binary_path)?;
     let install_decision = decide_install(&local_version, &github_version, binaries_are_identical);
@@ -54,7 +54,8 @@ pub fn update_current_executable() -> Result<()> {
     if !matches!(install_decision, InstallDecision::Install) {
         match install_decision {
             InstallDecision::LocalNewer => {
-                reporter.info("Local mdv is newer than GitHub main, so no downgrade was applied.");
+                reporter
+                    .info("Local doctty is newer than GitHub main, so no downgrade was applied.");
             }
             InstallDecision::AlreadyLatest => {
                 reporter.info(
@@ -67,12 +68,12 @@ pub fn update_current_executable() -> Result<()> {
         return Ok(());
     }
 
-    reporter.loading("Installing latest mdv");
+    reporter.loading("Installing latest doctty");
     install_replacement(&current_exe, &latest_binary_path)?;
     reporter.ok(&build_success_message(&github_version));
 
     if directory_is_on_path(current_exe.parent().unwrap_or_else(|| Path::new("."))) {
-        reporter.ok(&format!("PATH continues to resolve mdv from {}", current_exe.display()));
+        reporter.ok(&format!("PATH continues to resolve doctty from {}", current_exe.display()));
     } else {
         reporter.info(&format!(
             "Updated the executable in place, but {} is not currently on PATH.",
@@ -95,12 +96,12 @@ fn download_text(url: &str) -> Result<String> {
         .get(url)
         .set("User-Agent", &format!("{REPOSITORY}/{}", current_version()))
         .call()
-        .with_context(|| format!("failed to download mdv metadata from {url}"))?;
+        .with_context(|| format!("failed to download doctty metadata from {url}"))?;
     let mut reader = response.into_reader();
     let mut content = String::new();
     reader
         .read_to_string(&mut content)
-        .with_context(|| format!("failed to read mdv metadata from {url}"))?;
+        .with_context(|| format!("failed to read doctty metadata from {url}"))?;
     Ok(content)
 }
 
@@ -109,7 +110,7 @@ fn download_main_binary(url: &str, destination: &Path) -> Result<()> {
         .get(url)
         .set("User-Agent", &format!("{REPOSITORY}/{}", current_version()))
         .call()
-        .with_context(|| format!("failed to download mdv from {url}"))?;
+        .with_context(|| format!("failed to download doctty from {url}"))?;
     let mut reader = response.into_reader();
     let mut file = File::create(destination)
         .with_context(|| format!("failed to create {}", destination.display()))?;
@@ -130,7 +131,7 @@ fn install_replacement(current_exe: &Path, replacement: &Path) -> Result<()> {
     let install_dir = current_exe
         .parent()
         .with_context(|| format!("{} has no parent directory", current_exe.display()))?;
-    let staged = install_dir.join(format!(".mdv-update-{}", std::process::id()));
+    let staged = install_dir.join(format!(".doctty-update-{}", std::process::id()));
 
     if staged.exists() {
         fs::remove_file(&staged)
@@ -447,7 +448,7 @@ mod tests {
     fn parses_the_package_version_from_the_github_manifest() {
         let manifest = r#"
 [package]
-name = "mdv"
+name = "doctty"
 version = "0.4.2"
 edition = "2024"
 
@@ -464,7 +465,7 @@ anyhow = "1"
     fn parses_single_quoted_manifest_versions_with_inline_comments() {
         let manifest = r#"
 [package]
-name = "mdv"
+name = "doctty"
 version = '0.4.2-beta.1' # main build
 "#;
 

@@ -1,4 +1,4 @@
-use mdv::{
+use doctty::{
     cli::Theme,
     core::config::MermaidMode,
     render::{markdown::parse_document, text::render_plain_text},

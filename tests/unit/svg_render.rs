@@ -1,4 +1,4 @@
-use mdv::{
+use doctty::{
     cli::Theme,
     render::{
         svg::render_viewport_png,

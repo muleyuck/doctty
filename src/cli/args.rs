@@ -4,14 +4,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
 #[command(
-    name = "mdv",
+    name = "doctty",
     about = "High-fidelity Markdown viewer for Ghostty and Kitty",
     arg_required_else_help = true,
     args_conflicts_with_subcommands = true
 )]
-pub struct MdvArgs {
+pub struct DocttyArgs {
     #[command(subcommand)]
-    pub command: Option<MdvCommand>,
+    pub command: Option<DocttyCommand>,
 
     /// Markdown file to open.
     pub path: Option<PathBuf>,
@@ -33,7 +33,7 @@ pub struct MdvArgs {
     pub version: bool,
 }
 
-impl MdvArgs {
+impl DocttyArgs {
     #[must_use]
     pub fn parse_from<I, T>(itr: I) -> Self
     where
@@ -45,11 +45,11 @@ impl MdvArgs {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
-pub enum MdvCommand {
-    /// Replace the current mdv executable when `main`'s CI-generated binary changes.
+pub enum DocttyCommand {
+    /// Replace the current doctty executable when `main`'s CI-generated binary changes.
     #[command(
         visible_alias = "upgrade",
-        about = "Replace the current mdv executable when GitHub main publishes a different CI-generated bin/mdv"
+        about = "Replace the current doctty executable when GitHub main publishes a different CI-generated bin/doctty"
     )]
     Update,
 }

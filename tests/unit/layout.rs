@@ -1,4 +1,4 @@
-use mdv::core::layout::{LayoutIndex, Viewport, visible_block_range};
+use doctty::core::layout::{LayoutIndex, Viewport, visible_block_range};
 
 #[test]
 fn visible_range_returns_blocks_intersecting_viewport() {

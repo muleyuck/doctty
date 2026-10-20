@@ -1,4 +1,4 @@
-use mdv::core::{
+use doctty::core::{
     diff::BlockDiff,
     document::{Block, BlockId, BlockKind, Document, DocumentMeta, SourceSpan, StyledText},
 };

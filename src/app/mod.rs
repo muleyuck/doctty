@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use tracing::info_span;
 
 use crate::{
-    cli::{MdvArgs, MdvCommand},
+    cli::{DocttyArgs, DocttyCommand},
     core::config::AppConfig,
     io::{fs::FileSystemDocumentSource, self_update},
     render::{markdown::parse_document, text::render_plain_text},
@@ -15,11 +15,11 @@ use crate::{
     ui::terminal::TerminalViewer,
 };
 
-pub fn run(args: MdvArgs) -> Result<()> {
+pub fn run(args: DocttyArgs) -> Result<()> {
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
-    if matches!(args.command.as_ref(), Some(MdvCommand::Update)) {
+    if matches!(args.command.as_ref(), Some(DocttyCommand::Update)) {
         return self_update::update_current_executable();
     }
 

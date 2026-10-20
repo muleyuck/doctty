@@ -11,7 +11,7 @@ use super::mermaid::{decorate_mermaid_svg, render_mermaid_blocks_with};
 fn decorate_mermaid_svg_adds_renderer_class() {
     let decorated = decorate_mermaid_svg(r#"<svg viewBox="0 0 10 10"><rect /></svg>"#);
 
-    assert!(decorated.starts_with(r#"<svg class="mdv-mermaid-diagram""#));
+    assert!(decorated.starts_with(r#"<svg class="doctty-mermaid-diagram""#));
     assert!(decorated.contains(r#"viewBox="0 0 10 10""#));
 }
 
@@ -30,5 +30,5 @@ fn render_mermaid_blocks_reuses_duplicate_sources() {
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(rendered.len(), 1);
-    assert!(rendered.values().next().is_some_and(|html| html.contains("mdv-mermaid")));
+    assert!(rendered.values().next().is_some_and(|html| html.contains("doctty-mermaid")));
 }

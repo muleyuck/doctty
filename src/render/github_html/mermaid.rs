@@ -45,7 +45,7 @@ pub(super) fn replace_mermaid_code_blocks<'a>(
 
         if let Some(source) = mermaid_source {
             let rendered = rendered_mermaid.get(&source).cloned().unwrap_or_else(|| {
-                "<div class=\"mdv-mermaid mdv-mermaid-fallback\">Mermaid unavailable</div>"
+                "<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid unavailable</div>"
                     .to_string()
             });
             node.data.borrow_mut().value = NodeValue::Raw(rendered);
@@ -123,17 +123,18 @@ where
 {
     match mermaid_mode {
         MermaidMode::Disabled => {
-            Ok("<div class=\"mdv-mermaid mdv-mermaid-fallback\">Mermaid disabled</div>".to_string())
+            Ok("<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid disabled</div>"
+                .to_string())
         }
         MermaidMode::Enabled => match render_mermaid(content) {
             Ok(svg_markup) => Ok(format!(
-                "<div class=\"mdv-mermaid\">{}</div>",
+                "<div class=\"doctty-mermaid\">{}</div>",
                 decorate_mermaid_svg(&svg_markup)
             )),
-            Err(_) => {
-                Ok("<div class=\"mdv-mermaid mdv-mermaid-fallback\">Mermaid unavailable</div>"
-                    .to_string())
-            }
+            Err(_) => Ok(
+                "<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid unavailable</div>"
+                    .to_string(),
+            ),
         },
     }
 }
@@ -149,5 +150,5 @@ pub(super) fn decorate_mermaid_svg(svg_markup: &str) -> String {
         sanitized = sanitized[end + 1..].trim_start().to_string();
     }
 
-    sanitized.replacen("<svg", r#"<svg class="mdv-mermaid-diagram""#, 1)
+    sanitized.replacen("<svg", r#"<svg class="doctty-mermaid-diagram""#, 1)
 }

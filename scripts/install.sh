@@ -1,15 +1,15 @@
 #!/bin/sh
-# Install the tracked mdv binary from the main branch.
+# Install the tracked doctty binary from the main branch.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/posaune0423/mdv/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/muleyuck/doctty/main/scripts/install.sh | sh
 # Optional env:
-#   MDV_INSTALL_DIR  directory for the binary (default: $HOME/.local/bin)
+#   DOCTTY_INSTALL_DIR  directory for the binary (default: $HOME/.local/bin)
 
 set -eu
 
-REPO="posaune0423/mdv"
-DEFAULT_INSTALL_DIR="${MDV_INSTALL_DIR:-$HOME/.local/bin}"
-BINARY_URL="https://raw.githubusercontent.com/${REPO}/main/bin/mdv"
+REPO="muleyuck/doctty"
+DEFAULT_INSTALL_DIR="${DOCTTY_INSTALL_DIR:-$HOME/.local/bin}"
+BINARY_URL="https://raw.githubusercontent.com/${REPO}/main/bin/doctty"
 LOG_FILE=""
 TTY_EFFECTS=0
 
@@ -31,7 +31,7 @@ else
 fi
 
 die() {
-  printf '%smdv install:%s %s\n' "$RED" "$RESET" "$1" >&2
+  printf '%sdoctty install:%s %s\n' "$RED" "$RESET" "$1" >&2
   if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
     printf '\n%sLast log lines:%s\n' "$DIM" "$RESET" >&2
     tail -n 40 "$LOG_FILE" >&2 || true
@@ -90,28 +90,11 @@ run_step() {
 print_banner() {
   printf '%s' "$GREEN"
   cat <<'EOF'
-          _____                    _____                    _____          
-         /\    \                  /\    \                  /\    \         
-        /::\____\                /::\    \                /::\____\        
-       /::::|   |               /::::\    \              /:::/    /        
-      /:::::|   |              /::::::\    \            /:::/    /         
-     /::::::|   |             /:::/\:::\    \          /:::/    /          
-    /:::/|::|   |            /:::/  \:::\    \        /:::/____/           
-   /:::/ |::|   |           /:::/    \:::\    \       |::|    |            
-  /:::/  |::|___|______    /:::/    / \:::\    \      |::|    |     _____  
- /:::/   |::::::::\    \  /:::/    /   \:::\ ___\     |::|    |    /\    \ 
-/:::/    |:::::::::\____\/:::/____/     \:::|    |    |::|    |   /::\____\
-\::/    / ~~~~~/:::/    /\:::\    \     /:::|____|    |::|    |  /:::/    /
- \/____/      /:::/    /  \:::\    \   /:::/    /     |::|    | /:::/    / 
-             /:::/    /    \:::\    \ /:::/    /      |::|____|/:::/    /  
-            /:::/    /      \:::\    /:::/    /       |:::::::::::/    /   
-           /:::/    /        \:::\  /:::/    /        \::::::::::/____/    
-          /:::/    /          \:::\/:::/    /          ~~~~~~~~~~          
-         /:::/    /            \::::::/    /                               
-        /:::/    /              \::::/    /                                
-        \::/    /                \::/____/                                 
-         \/____/                  ~~                                       
-                                                                           
+  ____   ___   ____ _____ _____ __   __
+ |  _ \ / _ \ / ___|_   _|_   _|\ \ / /
+ | | | | | | | |     | |   | |   \ V /
+ | |_| | |_| | |___  | |   | |    | |
+ |____/ \___/ \____| |_|   |_|    |_|
 EOF
   printf '%s' "$RESET"
 }
@@ -121,30 +104,30 @@ command -v curl >/dev/null 2>&1 || die "curl is required"
 install_dir="$DEFAULT_INSTALL_DIR"
 case "$install_dir" in
 /*) ;;
-*) die "MDV_INSTALL_DIR must be an absolute path" ;;
+*) die "DOCTTY_INSTALL_DIR must be an absolute path" ;;
 esac
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 LOG_FILE="$tmp_dir/install.log"
-staged_binary="$tmp_dir/mdv"
+staged_binary="$tmp_dir/doctty"
 
-printf '%smdv installer%s\n' "$BOLD" "$RESET"
+printf '%sdoctty installer%s\n' "$BOLD" "$RESET"
 printf '%sInstalling the tracked main-branch binary into %s.%s\n' \
   "$DIM" "$install_dir" "$RESET"
 
-run_step "Downloading main/bin/mdv" \
+run_step "Downloading main/bin/doctty" \
   curl -fL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 1 -o "$staged_binary" "$BINARY_URL"
 
 [ -f "$staged_binary" ] || die "download succeeded but no binary was written"
 
 mkdir -p "$install_dir"
-cp "$staged_binary" "$install_dir/mdv"
-chmod +x "$install_dir/mdv"
+cp "$staged_binary" "$install_dir/doctty"
+chmod +x "$install_dir/doctty"
 
 printf '\n'
 print_banner
-printf '\n%sInstalled mdv to%s %s/mdv\n' "$BOLD" "$RESET" "$install_dir"
+printf '\n%sInstalled doctty to%s %s/doctty\n' "$BOLD" "$RESET" "$install_dir"
 
 case ":${PATH:-}:" in
 *:"$install_dir":*)

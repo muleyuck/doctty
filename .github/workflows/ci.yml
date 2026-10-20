@@ -58,7 +58,7 @@ jobs:
       - name: Detect tracked binary changes
         id: tracked_binary
         run: |
-          if git diff --quiet -- bin/mdv; then
+          if git diff --quiet -- bin/doctty; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -69,7 +69,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bin/mdv
+          git add bin/doctty
           git commit -m "ci: refresh tracked binary"
           git fetch origin main
           git rebase origin/main

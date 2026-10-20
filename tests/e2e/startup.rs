@@ -12,7 +12,7 @@ fn cli_starts_with_a_real_file_path() {
         panic!("sample markdown should be written: {error}");
     }
 
-    let mut command = match Command::cargo_bin("mdv") {
+    let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,
         Err(error) => panic!("binary should build: {error}"),
     };

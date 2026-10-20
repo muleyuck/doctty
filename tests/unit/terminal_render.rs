@@ -1,4 +1,4 @@
-use mdv::{
+use doctty::{
     cli::Theme,
     core::config::MermaidMode,
     render::{

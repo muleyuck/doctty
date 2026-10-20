@@ -1,9 +1,9 @@
 use std::{fs, path::Path};
 
-use mdv::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
 
 #[cfg(target_os = "macos")]
-use mdv::{
+use doctty::{
     io::webkit_snapshot::render_html_to_png,
     ui::page_graphics::{build_graphic_page, total_rows, viewport_slice},
 };
@@ -47,7 +47,7 @@ fn extract_article_body(html: &str) -> &str {
 
 #[test]
 fn readme_style_img_tag_is_restored_in_github_html() {
-    let source = "<div align=\"center\">\n\n# mdv\n\n<img src=\"docs/screenshot.jpg\" width=\"700\" alt=\"hero\" />\n\n</div>\n";
+    let source = "<div align=\"center\">\n\n# doctty\n\n<img src=\"docs/screenshot.jpg\" width=\"700\" alt=\"hero\" />\n\n</div>\n";
     let fixture_dir = fixture_dir("html-wrappers");
     let html = build_github_html(source, &fixture_dir, Theme::Dark, MermaidMode::Disabled)
         .unwrap_or_else(|error| panic!("should render: {error}"));

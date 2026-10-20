@@ -63,7 +63,7 @@ pub fn build_github_html(
   <style>{styles}</style>
 </head>
 <body>
-  <div class="mdv-page">
+  <div class="doctty-page">
     <article class="markdown-body entry-content container-lg">
       {body_html}
     </article>

@@ -10,11 +10,11 @@ pub mod ui;
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::{MdvArgs, Theme};
+    use crate::cli::{DocttyArgs, Theme};
 
     #[test]
     fn default_theme_is_system() {
-        let args = MdvArgs::parse_from(["mdv", "README.md"]);
+        let args = DocttyArgs::parse_from(["doctty", "README.md"]);
         assert_eq!(args.theme, Theme::System);
     }
 }

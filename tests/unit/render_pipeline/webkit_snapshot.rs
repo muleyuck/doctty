@@ -1,11 +1,11 @@
 #[cfg(target_os = "macos")]
-use image::{ImageBuffer, Rgba};
-#[cfg(target_os = "macos")]
-use mdv::io::webkit_snapshot::{
+use doctty::io::webkit_snapshot::{
     SnapshotDiagnostics, SnapshotTypographyDiagnostics, render_html_to_png,
 };
 #[cfg(target_os = "macos")]
-use mdv::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+#[cfg(target_os = "macos")]
+use image::{ImageBuffer, Rgba};
 #[cfg(target_os = "macos")]
 use tempfile::tempdir;
 
@@ -471,8 +471,8 @@ fn webkit_snapshot_reports_nonzero_mermaid_metrics() {
 <html>
 <body style="margin:0;background:#0d1117;color:#e6edf3;">
   <article class="markdown-body">
-    <div class="mdv-mermaid" style="display:flex;justify-content:center;padding:16px 0;">
-      <svg class="mdv-mermaid-diagram" viewBox="0 0 200 100" style="display:block;max-width:100%;height:auto;">
+    <div class="doctty-mermaid" style="display:flex;justify-content:center;padding:16px 0;">
+      <svg class="doctty-mermaid-diagram" viewBox="0 0 200 100" style="display:block;max-width:100%;height:auto;">
         <rect width="200" height="100" fill="#1f6feb"></rect>
         <text x="24" y="58" fill="#ffffff" font-size="28">A -&gt; B</text>
       </svg>

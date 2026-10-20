@@ -7,11 +7,11 @@ build:
 	cargo build --release
 	mkdir -p bin
 ifneq ($(UNAME_S),Darwin)
-	cp target/release/mdv bin/mdv
+	cp target/release/doctty bin/doctty
 else
-	codesign --force --sign - target/release/mdv
-	cp target/release/mdv bin/mdv
-	codesign --force --sign - bin/mdv
+	codesign --force --sign - target/release/doctty
+	cp target/release/doctty bin/doctty
+	codesign --force --sign - bin/doctty
 endif
 
 build-tracked-bin: build
@@ -49,4 +49,4 @@ install-local:
 	cargo install --path . --force
 
 run-local: build
-	./bin/mdv $(FILE)
+	./bin/doctty $(FILE)

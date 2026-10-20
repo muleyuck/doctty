@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-use crate::cli::{MdvArgs, Theme};
+use crate::cli::{DocttyArgs, Theme};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
@@ -12,17 +12,17 @@ pub struct AppConfig {
     pub mermaid_mode: MermaidMode,
 }
 
-impl TryFrom<MdvArgs> for AppConfig {
+impl TryFrom<DocttyArgs> for AppConfig {
     type Error = anyhow::Error;
 
-    fn try_from(value: MdvArgs) -> Result<Self> {
-        let MdvArgs { command, path, watch, theme, no_mermaid, .. } = value;
+    fn try_from(value: DocttyArgs) -> Result<Self> {
+        let DocttyArgs { command, path, watch, theme, no_mermaid, .. } = value;
 
         if command.is_some() {
             bail!("view configuration cannot be built from a subcommand")
         }
 
-        let Some(path) = path else { bail!("mdv requires a Markdown file path") };
+        let Some(path) = path else { bail!("doctty requires a Markdown file path") };
 
         let mermaid_mode = if no_mermaid { MermaidMode::Disabled } else { MermaidMode::Enabled };
 

@@ -12,7 +12,7 @@ Authoring is meant to follow the **[GitHub Flavored Markdown Specification](http
 | **Alerts** | `> [!NOTE]`, `> [!TIP]`, etc. ([syntax](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts)); blockquotes starting with `[!NOTE]`–style tags are also treated as callouts |
 | **Math** | GitHub-style `$...$` and `$$...$$` expressions via Comrak math extensions |
 
-mdv also renders **fenced `mermaid` code blocks** (not part of GFM) when Mermaid is available. Raw HTML blocks are not rendered as HTML in the TUI; content is shown as plain text.
+doctty also renders **fenced `mermaid` code blocks** (not part of GFM) when Mermaid is available. Raw HTML blocks are not rendered as HTML in the TUI; content is shown as plain text.
 
 Exact edge-case behavior follows Comrak’s parser, not a formal proof of spec compliance—when in doubt, compare with the [GFM spec](https://github.github.com/gfm/) and Comrak’s release notes.
 

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
+use doctty::ui::page_graphics::{build_graphic_page, viewport_raster, viewport_slice};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
-use mdv::ui::page_graphics::{build_graphic_page, viewport_raster, viewport_slice};
 
 #[test]
 fn builds_graphic_page_from_full_snapshot_png() {
