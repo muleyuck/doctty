@@ -205,6 +205,61 @@ fn xml_escape(text: &str) -> String {
     out
 }
 
+// Keep words together where possible and treat full-width script characters
+// as wider than Latin characters. This remains an approximation of WebKit
+// shaping, but avoids mid-word breaks and overcrowded Japanese preview lines.
+fn approximate_char_units(ch: char) -> usize {
+    if ch.is_ascii() { 1 } else { 2 }
+}
+
+fn preview_wrap_lines(text: &str, max_units: usize, max_lines: usize) -> Vec<String> {
+    if max_units == 0 || max_lines == 0 {
+        return Vec::new();
+    }
+
+    let chars: Vec<char> = text.chars().take(160).collect();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < chars.len() && lines.len() < max_lines {
+        while start < chars.len() && chars[start].is_whitespace() {
+            start += 1;
+        }
+        if start >= chars.len() {
+            break;
+        }
+
+        let mut end = start;
+        let mut used_units = 0;
+        while end < chars.len() {
+            let char_units = approximate_char_units(chars[end]);
+            if used_units + char_units > max_units {
+                break;
+            }
+            used_units += char_units;
+            end += 1;
+        }
+        if end == start {
+            // Always make progress, even for a wide character in a tiny box.
+            end += 1;
+        }
+        if end < chars.len() {
+            if let Some(space) = (start + 1..end)
+                .rev()
+                .find(|&index| chars[index].is_whitespace())
+            {
+                end = space;
+            }
+        }
+        let line: String = chars[start..end].iter().collect();
+        let line = line.trim_end();
+        if !line.is_empty() {
+            lines.push(line.to_owned());
+        }
+        start = end;
+    }
+    lines
+}
+
 fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
     let full_height = height.saturating_mul(2);
     let background = safe_color(&scene.background, "#ffffff");
@@ -251,13 +306,15 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
         }
         let max_lines = ((item_height / line_height).ceil() as usize).clamp(1, 8);
         let per_line = (item_width / (font_size * 0.52)).floor().max(8.0) as usize;
-        let chars: Vec<char> = clean.chars().take(160).collect();
-        for (index, chunk) in chars.chunks(per_line).take(max_lines).enumerate() {
+        for (index, line) in preview_wrap_lines(clean, per_line, max_lines)
+            .into_iter()
+            .enumerate()
+        {
             let baseline = y + font_size + f64::from(index as u32) * line_height;
             if baseline > f64::from(full_height) {
                 break;
             }
-            let text = xml_escape(&chunk.iter().collect::<String>());
+            let text = xml_escape(&line);
             svg.push_str(&format!(
                 r#"<text x="{x:.1}" y="{baseline:.1}" fill="{color}" font-family="{font}" font-weight="{weight}" font-size="{font_size:.1}">{text}</text>"#
             ));
@@ -345,6 +402,24 @@ mod tests {
         assert_eq!(removed.map(|t| t.origin), Some(2000.0));
         assert_eq!(tiles.len(), 2);
         assert!(tiles.iter().any(|t| t.id == FIRST_PREVIEW_ID));
+    }
+
+    #[test]
+    fn preview_wrapping_prefers_word_boundaries_and_wide_text() {
+        assert_eq!(
+            preview_wrap_lines("Hello world from WebKit", 11, 3),
+            vec!["Hello world", "from WebKit"]
+        );
+        assert_eq!(
+            preview_wrap_lines("日本語の文章", 6, 3),
+            vec!["日本語", "の文章"]
+        );
+        assert_eq!(
+            preview_wrap_lines("Supercalifragilistic", 6, 2),
+            vec!["Superc", "alifra"]
+        );
+        assert!(preview_wrap_lines("hello", 0, 2).is_empty());
+        assert_eq!(preview_wrap_lines("日本語", 1, 3), vec!["日", "本", "語"]);
     }
 
     #[test]
