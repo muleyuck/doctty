@@ -33,8 +33,27 @@ mod experiment {
     use image::{ImageDecoder, codecs::png::PngDecoder};
     use serde_json::{Value, json};
 
-    const IMAGE_ID: u32 = 93_001;
+    const FIRST_IMAGE_ID: u32 = 93_001;
+    const SECOND_IMAGE_ID: u32 = 93_002;
     const CHUNK_SIZE: usize = 4096;
+
+    struct ImageCache {
+        image_id: u32,
+        source_y: f64,
+        image_width: u32,
+        image_height: u32,
+        document_height: f64,
+        last_snapshot_ms: f64,
+        png_bytes: usize,
+    }
+
+    impl ImageCache {
+        fn covers(&self, position: f64, viewport_height: u32) -> bool {
+            position >= self.source_y - 0.5
+                && position + f64::from(viewport_height)
+                    <= self.source_y + f64::from(self.image_height) + 0.5
+        }
+    }
 
     struct TerminalSession;
 
@@ -150,61 +169,184 @@ mod experiment {
         Ok((file.path().to_path_buf(), Some(file)))
     }
 
-    fn draw(png_path: &Path, status: &str, columns: u16, rows: u16) -> Result<()> {
-        let png = fs::read(png_path).context("missing viewport PNG")?;
-        let decoder = PngDecoder::new(io::Cursor::new(&png))?;
-        let (width, height) = decoder.dimensions();
-        let payload = STANDARD.encode(&png);
+    fn upload_png(out: &mut impl Write, image_id: u32, png: &[u8]) -> Result<()> {
+        let payload = STANDARD.encode(png);
         let total_chunks = payload.len().div_ceil(CHUNK_SIZE);
-        let mut stdout = io::stdout().lock();
-        execute!(stdout, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
-        // This experiment uses a single atomic a=T upload and placement.
-        // Only the displayed viewport pixels are ever transmitted.
         for (index, chunk) in payload.as_bytes().chunks(CHUNK_SIZE).enumerate() {
             let more = u8::from(index + 1 < total_chunks);
             if index == 0 {
                 write!(
-                    stdout,
-                    "\x1b_Ga=T,t=d,f=100,i={IMAGE_ID},p=1,c={columns},r={rows},w={width},h={height},C=1,q=2,z=0,m={more};"
+                    out,
+                    "\x1b_Ga=t,t=d,f=100,i={image_id},q=2,m={more};"
                 )?;
             } else {
-                write!(stdout, "\x1b_Gm={more};")?;
+                write!(out, "\x1b_Gm={more};")?;
             }
-            stdout.write_all(chunk)?;
-            stdout.write_all(b"\x1b\\")?;
+            out.write_all(chunk)?;
+            out.write_all(b"\x1b\\")?;
         }
-        execute!(
-            stdout,
-            cursor::MoveTo(0, rows),
-            Clear(ClearType::CurrentLine)
-        )?;
-        write!(stdout, "{status}")?;
-        stdout.flush()?;
         Ok(())
     }
 
-    fn snapshot(
-        helper: &mut SwiftProcess,
-        png: &Path,
-        position: f64,
-        cols: u16,
+    fn place_image(
+        out: &mut impl Write,
+        image_id: u32,
+        columns: u16,
         rows: u16,
-    ) -> Result<(f64, f64)> {
+        width: u32,
+        height: u32,
+        source_y: u32,
+    ) -> Result<()> {
+        write!(
+            out,
+            "\x1b[1;1H\x1b_Ga=p,i={image_id},p=1,c={columns},r={rows},x=0,y={source_y},w={width},h={height},C=1,z=0,q=2;\x1b\\"
+        )?;
+        Ok(())
+    }
+
+    fn render_scroll(
+        helper: &mut SwiftProcess,
+        png_path: &Path,
+        position: f64,
+        columns: u16,
+        rows: u16,
+        viewport_width: u32,
+        viewport_height: u32,
+        cache: &mut Option<ImageCache>,
+    ) -> Result<f64> {
         let started = Instant::now();
-        let result = helper.request(&json!({"type": "snapshot", "y": position}))?;
-        if result["kind"] != "snapshot" {
-            bail!("unexpected WebKit response: {result}");
+        let cache_hit = cache
+            .as_ref()
+            .is_some_and(|entry| entry.covers(position, viewport_height));
+
+        if !cache_hit {
+            let document_height = cache
+                .as_ref()
+                .map_or(0.0, |entry| entry.document_height);
+            let requested_y = if cache.is_some() {
+                (position - f64::from(viewport_height) / 2.0)
+                    .max(0.0)
+                    .min((document_height - 2.0 * f64::from(viewport_height)).max(0.0))
+            } else {
+                0.0
+            };
+            let result = helper.request(&json!({"type": "snapshot", "y": requested_y}))?;
+            if result["kind"] != "snapshot" {
+                bail!("unexpected WebKit response: {result}");
+            }
+            let png = fs::read(png_path).context("missing viewport PNG")?;
+            let decoder = PngDecoder::new(io::Cursor::new(&png))?;
+            let (image_width, image_height) = decoder.dimensions();
+            if image_width < viewport_width || image_height < viewport_height {
+                bail!("cached image smaller than viewport: {image_width}x{image_height}");
+            }
+            let new_id = match cache.as_ref().map(|entry| entry.image_id) {
+                Some(FIRST_IMAGE_ID) => SECOND_IMAGE_ID,
+                _ => FIRST_IMAGE_ID,
+            };
+            let new_cache = ImageCache {
+                image_id: new_id,
+                source_y: result["actualY"].as_f64().unwrap_or(0.0),
+                image_width,
+                image_height,
+                document_height: result["height"].as_f64().unwrap_or(0.0),
+                last_snapshot_ms: result["elapsedMs"].as_f64().unwrap_or(0.0),
+                png_bytes: png.len(),
+            };
+            let source_offset = (position - new_cache.source_y)
+                .max(0.0)
+                .min(f64::from(image_height.saturating_sub(viewport_height)))
+                .round() as u32;
+            let mut out = io::stdout().lock();
+            // Keep the previous image visible while uploading the next image.
+            upload_png(&mut out, new_id, &png)?;
+            place_image(
+                &mut out,
+                new_id,
+                columns,
+                rows,
+                viewport_width,
+                viewport_height,
+                source_offset,
+            )?;
+            if let Some(previous) = cache.as_ref() {
+                write!(
+                    out,
+                    "\x1b_Ga=d,d=i,i={},p=1,q=2;\x1b\\",
+                    previous.image_id
+                )?;
+            }
+            *cache = Some(new_cache);
+        } else if let Some(entry) = cache.as_ref() {
+            let source_offset = (position - entry.source_y)
+                .max(0.0)
+                .min(f64::from(entry.image_height.saturating_sub(viewport_height)))
+                .round() as u32;
+            let mut out = io::stdout().lock();
+            // Stable image ID and placement ID: crop/scroll without re-uploading.
+            place_image(
+                &mut out,
+                entry.image_id,
+                columns,
+                rows,
+                entry.image_width.min(viewport_width),
+                viewport_height,
+                source_offset,
+            )?;
         }
-        let actual = result["actualY"].as_f64().unwrap_or(-1.0);
-        let height = result["height"].as_f64().unwrap_or(0.0);
-        let ms = result["elapsedMs"].as_f64().unwrap_or(0.0);
-        let bytes = result["pngBytes"].as_u64().unwrap_or(0);
+
+        let current = cache.as_ref().context("viewport cache missing")?;
         let status = format!(
-            "j/k: scroll  J/K: page  y: select+copy first paragraph  q: quit  |  y={actual:.0} / h={height:.0}  snapshot={ms:.0}ms  {bytes}B  total={:.0}ms",
+            "j/k scroll J/K page y copy q quit | {} y={position:.0}/{:.0} snap={:.0}ms PNG={}B redraw={:.0}ms",
+            if cache_hit { "cache HIT" } else { "cache MISS" },
+            current.document_height,
+            current.last_snapshot_ms,
+            current.png_bytes,
             started.elapsed().as_secs_f64() * 1000.0
         );
-        draw(png, &status, cols, rows)?;
-        Ok((actual, height))
+        let mut out = io::stdout().lock();
+        execute!(
+            out,
+            cursor::MoveTo(0, rows),
+            Clear(ClearType::CurrentLine)
+        )?;
+        write!(out, "{}", status.chars().take(usize::from(columns)).collect::<String>())?;
+        out.flush()?;
+        Ok(current.document_height)
+    }
+
+    fn graphics_probe() -> Result<()> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+
+        let (width, height) = terminal::size()?;
+        let columns = width.min(18).max(1);
+        let rows = height.saturating_sub(2).min(9).max(1);
+        let image = ImageBuffer::from_pixel(12, 12, Rgba([255, 0, 140, 255]));
+        let mut png = Vec::new();
+        DynamicImage::ImageRgba8(image).write_to(
+            &mut io::Cursor::new(&mut png),
+            ImageFormat::Png,
+        )?;
+
+        let _session = TerminalSession::enter()?;
+        let mut out = io::stdout().lock();
+        // Deliberately bypasses WebKit and the experimental viewport cache.
+        upload_png(&mut out, FIRST_IMAGE_ID, &png)?;
+        place_image(&mut out, FIRST_IMAGE_ID, columns, rows, 12, 12, 0)?;
+        execute!(out, cursor::MoveTo(0, rows))?;
+        write!(out, "Magenta rectangle? Press q to exit.")?;
+        out.flush()?;
+        drop(out);
+        loop {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press
+                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                {
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn run() -> Result<()> {
@@ -214,6 +356,9 @@ mod experiment {
         let arg = std::env::args_os()
             .nth(1)
             .unwrap_or_else(|| "README.md".into());
+        if arg == "--graphics-probe" {
+            return graphics_probe();
+        }
         let document = PathBuf::from(arg)
             .canonicalize()
             .context("source file not found")?;
@@ -233,7 +378,18 @@ mod experiment {
         }
 
         let _session = TerminalSession::enter()?;
-        let (mut position, mut document_height) = snapshot(&mut swift, &output, 0.0, cols, rows)?;
+        let mut cache = None;
+        let mut position = 0.0;
+        let mut document_height = render_scroll(
+            &mut swift,
+            &output,
+            position,
+            cols,
+            rows,
+            width,
+            height,
+            &mut cache,
+        )?;
         loop {
             let Event::Key(key) = event::read()? else {
                 continue;
@@ -262,8 +418,20 @@ mod experiment {
                 _ => continue,
             };
             let max_pos = (document_height - f64::from(height)).max(0.0);
-            (position, document_height) =
-                snapshot(&mut swift, &output, next.clamp(0.0, max_pos), cols, rows)?;
+            let clamped = next.clamp(0.0, max_pos);
+            if (clamped - position).abs() > 0.5 {
+                position = clamped;
+                document_height = render_scroll(
+                    &mut swift,
+                    &output,
+                    position,
+                    cols,
+                    rows,
+                    width,
+                    height,
+                    &mut cache,
+                )?;
+            }
         }
         let _ = swift.request(&json!({"type": "quit"}));
         Ok(())

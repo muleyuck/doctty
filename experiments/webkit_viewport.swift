@@ -21,7 +21,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         self.width = width
         self.height = height
         self.webView = WKWebView(
-            frame: CGRect(x: 0, y: 0, width: width, height: height),
+            frame: CGRect(x: 0, y: 0, width: width, height: height * 2),
             configuration: WKWebViewConfiguration()
         )
         super.init()
@@ -91,7 +91,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 return
             }
             let requestedY = max(0, (request["y"] as? NSNumber)?.doubleValue ?? 0)
-            let maxY = max(0, documentHeight - Double(height))
+            let maxY = max(0, documentHeight - Double(height * 2))
             let targetY = min(requestedY, maxY)
             let started = Date()
             webView.evaluateJavaScript("window.scrollTo(0, \(targetY)); window.scrollY") { result, error in
@@ -134,7 +134,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 
     private func capture(started: Date, requestedY: Double, actualY: Double) {
         let configuration = WKSnapshotConfiguration()
-        configuration.rect = CGRect(x: 0, y: 0, width: width, height: height)
+        configuration.rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
         configuration.afterScreenUpdates = true
         webView.takeSnapshot(with: configuration) { image, error in
             if let error {
