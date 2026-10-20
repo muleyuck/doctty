@@ -192,10 +192,7 @@ mod experiment {
         for (index, chunk) in payload.as_bytes().chunks(CHUNK_SIZE).enumerate() {
             let more = u8::from(index + 1 < total_chunks);
             if index == 0 {
-                write!(
-                    out,
-                    "\x1b_Ga=t,t=d,f=100,i={image_id},q=2,m={more};"
-                )?;
+                write!(out, "\x1b_Ga=t,t=d,f=100,i={image_id},q=2,m={more};")?;
             } else {
                 write!(out, "\x1b_Gm={more};")?;
             }
@@ -237,9 +234,7 @@ mod experiment {
             .is_some_and(|entry| entry.covers(position, viewport_height));
 
         if !cache_hit {
-            let document_height = cache
-                .as_ref()
-                .map_or(0.0, |entry| entry.document_height);
+            let document_height = cache.as_ref().map_or(0.0, |entry| entry.document_height);
             let requested_y = if cache.is_some() {
                 (position - f64::from(viewport_height) / 2.0)
                     .max(0.0)
@@ -286,11 +281,7 @@ mod experiment {
                 source_offset,
             )?;
             if let Some(previous) = cache.as_ref() {
-                write!(
-                    out,
-                    "\x1b_Ga=d,d=i,i={},p=1,q=2;\x1b\\",
-                    previous.image_id
-                )?;
+                write!(out, "\x1b_Ga=d,d=i,i={},p=1,q=2;\x1b\\", previous.image_id)?;
             }
             *cache = Some(new_cache);
         } else if let Some(entry) = cache.as_ref() {
@@ -318,12 +309,15 @@ mod experiment {
             started.elapsed().as_secs_f64() * 1000.0
         );
         let mut out = io::stdout().lock();
-        execute!(
+        execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
+        write!(
             out,
-            cursor::MoveTo(0, rows),
-            Clear(ClearType::CurrentLine)
+            "{}",
+            status
+                .chars()
+                .take(usize::from(columns))
+                .collect::<String>()
         )?;
-        write!(out, "{}", status.chars().take(usize::from(columns)).collect::<String>())?;
         out.flush()?;
         Ok(current.document_height)
     }
@@ -336,10 +330,8 @@ mod experiment {
         let rows = height.saturating_sub(2).min(9).max(1);
         let image = ImageBuffer::from_pixel(12, 12, Rgba([255, 0, 140, 255]));
         let mut png = Vec::new();
-        DynamicImage::ImageRgba8(image).write_to(
-            &mut io::Cursor::new(&mut png),
-            ImageFormat::Png,
-        )?;
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut io::Cursor::new(&mut png), ImageFormat::Png)?;
 
         let _session = TerminalSession::enter()?;
         let mut out = io::stdout().lock();
@@ -394,14 +386,7 @@ mod experiment {
         let mut cache = None;
         let mut position = 0.0;
         let mut document_height = render_scroll(
-            &mut swift,
-            &output,
-            position,
-            cols,
-            rows,
-            width,
-            height,
-            &mut cache,
+            &mut swift, &output, position, cols, rows, width, height, &mut cache,
         )?;
         loop {
             let Event::Key(key) = event::read()? else {
@@ -435,14 +420,7 @@ mod experiment {
             if (clamped - position).abs() > 0.5 {
                 position = clamped;
                 document_height = render_scroll(
-                    &mut swift,
-                    &output,
-                    position,
-                    cols,
-                    rows,
-                    width,
-                    height,
-                    &mut cache,
+                    &mut swift, &output, position, cols, rows, width, height, &mut cache,
                 )?;
             }
         }
