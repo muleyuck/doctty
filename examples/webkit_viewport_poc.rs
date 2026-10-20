@@ -350,13 +350,17 @@ mod experiment {
             (desired - viewport * 0.5).clamp(0.0, max_origin)
         } else {
             match direction {
+                // The cache holds about two viewports. Start the next image as
+                // soon as navigation enters the first viewport rather than
+                // waiting until the user is close to the cache edge.
                 ScrollDirection::Forward
-                    if desired + viewport * 1.8 >= cache_bottom && active.source_y < max_origin =>
+                    if desired > active.source_y + 0.5 && active.source_y < max_origin =>
                 {
                     (active.source_y + viewport).min(max_origin)
                 }
                 ScrollDirection::Backward
-                    if desired <= active.source_y + viewport * 0.65 && active.source_y > 0.0 =>
+                    if desired <= cache_bottom - viewport
+                        && active.source_y > 0.0 =>
                 {
                     (active.source_y - viewport).max(0.0)
                 }
@@ -965,6 +969,16 @@ mod experiment {
         #[test]
         fn prefetches_early_in_the_scroll_direction() {
             let first = cached_at(0.0);
+            // Do not spend cache memory on a document that has not moved yet.
+            assert_eq!(
+                prefetch_origin(&first, 0.0, 1000, ScrollDirection::Forward),
+                None
+            );
+            // One key scroll is enough to schedule the next page.
+            assert_eq!(
+                prefetch_origin(&first, 16.0, 1000, ScrollDirection::Forward),
+                Some(1000.0)
+            );
             assert_eq!(
                 prefetch_origin(&first, 300.0, 1000, ScrollDirection::Forward),
                 Some(1000.0)
@@ -979,6 +993,12 @@ mod experiment {
             );
             assert_eq!(
                 prefetch_origin(&cached_at(1000.0), 1000.0, 1000, ScrollDirection::Backward),
+                Some(0.0)
+            );
+            // Reversing near the far edge of an existing cache starts a
+            // backward prefetch before the viewport leaves that cache.
+            assert_eq!(
+                prefetch_origin(&cached_at(1000.0), 1950.0, 1000, ScrollDirection::Backward),
                 Some(0.0)
             );
         }
