@@ -109,9 +109,8 @@ fn prek_config_uses_repo_quality_gates() {
 
     assert!(!Path::new("lefthook.yml").exists(), "lefthook config should be removed");
 
-    let mise = fs::read_to_string("mise.toml").unwrap_or_else(|error| {
-        panic!("mise config should be readable: {error}")
-    });
+    let mise = fs::read_to_string("mise.toml")
+        .unwrap_or_else(|error| panic!("mise config should be readable: {error}"));
     assert!(mise.contains("prek = \"0.5.5\""), "mise should pin prek like jqc");
 
     let makefile = fs::read_to_string("Makefile")
