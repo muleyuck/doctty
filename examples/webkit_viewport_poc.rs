@@ -92,8 +92,13 @@ mod experiment {
 
     impl Drop for TerminalSession {
         fn drop(&mut self) {
+            let mut stdout = io::stdout().lock();
+            // Free both of this PoC's fixed image IDs, even on early exit.
+            let _ = delete_image(&mut stdout, FIRST_IMAGE_ID);
+            let _ = delete_image(&mut stdout, SECOND_IMAGE_ID);
+            let _ = stdout.flush();
             let _ = terminal::disable_raw_mode();
-            let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
+            let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
         }
     }
 
@@ -202,6 +207,12 @@ mod experiment {
         Ok(())
     }
 
+    fn delete_image(out: &mut impl Write, image_id: u32) -> Result<()> {
+        // Uppercase I frees the stored image data as well as its placements.
+        write!(out, "\x1b_Ga=d,d=I,i={image_id},q=2;\x1b\\")?;
+        Ok(())
+    }
+
     fn place_image(
         out: &mut impl Write,
         image_id: u32,
@@ -281,7 +292,7 @@ mod experiment {
                 source_offset,
             )?;
             if let Some(previous) = cache.as_ref() {
-                write!(out, "\x1b_Ga=d,d=i,i={},p=1,q=2;\x1b\\", previous.image_id)?;
+                delete_image(&mut out, previous.image_id)?;
             }
             *cache = Some(new_cache);
         } else if let Some(entry) = cache.as_ref() {
