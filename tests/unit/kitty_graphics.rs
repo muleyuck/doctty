@@ -1,7 +1,8 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use doctty::io::kitty_graphics::{
-    DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_png,
+    DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_and_place_png,
+    encode_transmit_png,
 };
 
 #[test]
@@ -53,6 +54,46 @@ fn chunks_large_png_transfers_with_correct_continuation_markers() {
             .unwrap_or_else(|error| panic!("Base64 should decode: {error}"));
         assert_eq!(decoded, input);
     }
+}
+
+#[test]
+fn transmit_and_place_png_contains_placement_in_first_chunk() {
+    let placement = KittyImagePlacement {
+        image_id: 7,
+        placement_id: 3,
+        columns: 12,
+        rows: 4,
+        source_x_px: 11,
+        source_y_px: 13,
+        source_width_px: 101,
+        source_height_px: 79,
+        cursor_x: 2,
+        cursor_y: 5,
+        z_index: 0,
+    };
+    let png_bytes = vec![42_u8; 6144];
+    let escape = encode_transmit_and_place_png(&placement, &png_bytes);
+    let chunks: Vec<&str> = escape.split_terminator("\u{1b}\\").collect();
+    assert!(chunks.len() > 1);
+    assert!(chunks[0].starts_with(
+        "\u{1b}_Ga=T,t=d,f=100,i=7,p=3,c=12,r=4,x=11,y=13,w=101,h=79,X=2,Y=5,z=0,q=2,C=1,m=1;"
+    ));
+    assert!(chunks[1].starts_with("\u{1b}_Gm=0;"));
+    assert!(!escape.contains("a=p,"));
+
+    let encoded = chunks
+        .iter()
+        .map(|frame| {
+            frame
+                .split_once(';')
+                .unwrap_or_else(|| panic!("Kitty APC should have a payload"))
+                .1
+        })
+        .collect::<String>();
+    let decoded = STANDARD
+        .decode(encoded)
+        .unwrap_or_else(|error| panic!("encoded PNG payload must round-trip: {error}"));
+    assert_eq!(decoded, png_bytes);
 }
 
 #[test]

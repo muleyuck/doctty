@@ -152,17 +152,20 @@ fn page_viewport_commands_retransmit_cropped_png_for_each_scroll_position() {
     assert_eq!(
         first_commands
             .iter()
-            .filter(|command| command.contains("a=t"))
+            .filter(|command| command.contains("a=T"))
             .count(),
         1
     );
     assert_eq!(
         second_commands
             .iter()
-            .filter(|command| command.contains("a=t"))
+            .filter(|command| command.contains("a=T"))
             .count(),
         1
     );
+    assert_eq!(first_commands.len(), 1, "page render should upload and place atomically");
+    assert!(first_commands.iter().any(|command| command.contains("z=0")));
+    assert!(first_commands.iter().all(|command| !command.contains("a=p")));
     assert!(first_commands.iter().any(|command| command.contains("h=8")));
     assert!(
         second_commands
