@@ -7,9 +7,9 @@ use anyhow::{Result, bail};
 use tracing::info_span;
 
 use crate::{
-    cli::{DocttyArgs, DocttyCommand},
+    cli::DocttyArgs,
     core::config::AppConfig,
-    io::{fs::FileSystemDocumentSource, self_update},
+    io::fs::FileSystemDocumentSource,
     render::{markdown::parse_document, text::render_plain_text},
     support::tracing::init_tracing,
     ui::terminal::TerminalViewer,
@@ -19,10 +19,6 @@ pub fn run(args: DocttyArgs) -> Result<()> {
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
-    if matches!(args.command.as_ref(), Some(DocttyCommand::Update)) {
-        return self_update::update_current_executable();
-    }
-
     let config = AppConfig::try_from(args)?;
     if config.path == Path::new("-") {
         return run_from_stdin(config);

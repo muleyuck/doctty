@@ -6,7 +6,7 @@
 | Status | Active |
 | Product | `doctty` |
 | Language | Rust 2024 |
-| Toolchain | Rust `1.92.0` |
+| Toolchain | Rust `1.99.0` (mise) |
 | Document Basis | Repository audit on 2026-03-29 |
 
 ## 1. 技術概要
@@ -173,16 +173,13 @@ GitHub Actions の `ci.yml` は次を実行する。
 - clippy
 - test
 
-Rust toolchain は `1.92.0` に固定されている。
+Rust toolchain は `mise.toml` で `1.99.0` に固定し、`clippy` と `rustfmt` を含める。CI は Ubuntu で `make ci`、macOS で `cargo build --release --locked` を実行する。
 
 ### 8.3 Distribution
 
-release automation は現在持たない。配布契約は次の 2 本だけである。
-
-- `scripts/install.sh` は GitHub `main` 上の追跡対象 `bin/doctty` を取得して install directory に配置する
-- `doctty update` は現在の実行ファイルと GitHub `main` の `bin/doctty` を byte-for-byte で比較し、差分があるときだけ置き換える
-
-repo の `bin/doctty` は install / update の実体であり、`main` への push 後に `ci.yml` の macOS job が自動生成して必要時のみ commit する。ローカルでは `make build-tracked-bin` で同じ packaging path を再現できるが、追跡 binary の更新責務は人手ではなく CI が持つ。
+現時点では自動リリース・Homebrew Formulaは未実装。開発中は `cargo install --path . --locked` または `make build` を使用する。
+`make build` で生成する `bin/doctty` はGit管理外。
+CIは `fmt` / `clippy` / `test` のみを実行し、`main` へのバイナリ自動コミットは行わない。
 
 ## 9. テスト戦略
 

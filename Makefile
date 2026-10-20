@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 UNAME_S := $(shell uname -s)
 
-.PHONY: build build-tracked-bin fmt fmt-check lint test test-unit test-integration test-e2e check ci hooks-install install-local run-local
+.PHONY: build fmt fmt-check lint test test-unit test-integration test-e2e check ci hooks-install install-local run-local
 
 build:
 	cargo build --release
@@ -14,7 +14,6 @@ else
 	codesign --force --sign - bin/doctty
 endif
 
-build-tracked-bin: build
 
 fmt:
 	cargo fmt --all

@@ -66,7 +66,6 @@ terminal 常用者が Markdown を読むとき、次の摩擦が発生しやす�
 - `--theme system|light|dark`
 - `--no-mermaid`
 - `--version`
-- `update`
 
 ### 5.3 Markdown 表示対象
 
@@ -128,7 +127,6 @@ terminal 常用者が Markdown を読むとき、次の摩擦が発生しやす�
 6. `--watch` でファイル更新を検知し、再読み込みできること
 7. `system` を既定に、`light` / `dark` を明示指定で切り替えられること
 8. 最低限の keyboard navigation を持つこと
-9. `update` で GitHub `main` の追跡対象 `bin/doctty` と現在の `doctty` 実行ファイルを比較し、差分があるときだけ上書きインストールできること
 
 ### 6.2 Non-Functional Requirements
 

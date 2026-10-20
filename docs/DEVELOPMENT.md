@@ -15,6 +15,8 @@ make build
 make ci    # fmt-check, clippy -D warnings, full test suite
 ```
 
+GitHub Actions uses the reusable [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml): Linux runs `make ci`, and macOS runs `cargo build --release --locked`. Both use Rust 1.99.0 with `rustfmt` and `clippy` configured by `mise.toml`, matching jqc's Rust setup. Run `mise install rust` locally to install the same toolchain.
+
 ## Git hooks
 
 This repo uses [`lefthook`](https://github.com/evilmartians/lefthook) for local git hooks.
@@ -36,7 +38,6 @@ Configured hooks:
 | `make test` | All tests |
 | `make test-unit` / `test-integration` / `test-e2e` | Split suites |
 | `make build` | Build `target/release/doctty` and refresh the local `bin/doctty` copy so `./bin/doctty` runs the latest local build |
-| `make build-tracked-bin` | Alias for `make build`; kept for the CI packaging path name |
 | `make hooks-install` | Install git hooks from `lefthook.yml` into `.git/hooks` |
 
 ## Contributing
@@ -45,12 +46,10 @@ Issues and pull requests are welcome. Please run `make ci` before opening a PR s
 
 ## Distribution
 
-This repository currently has no release automation and no changelog workflow. Distribution is intentionally simple:
-
-- `scripts/install.sh` downloads GitHub `main`'s CI-generated `bin/doctty` and installs it into the selected bin directory.
-- `doctty update` downloads that same CI-generated `bin/doctty`, compares it to the current executable, and replaces the current file only when the bytes differ.
-- Pushes to `main` run `.github/workflows/ci.yml`, which builds `bin/doctty` on macOS and commits the refreshed artifact back to `main` when the bytes change.
-- `make build` refreshes the local `bin/doctty` copy as a runnable development artifact, while CI still owns the committed `main` branch `bin/doctty` that install/update consume.
+- `make build` compiles and signs the release binary, copying it to Git-ignored `bin/doctty`.
+- `cargo install --path . --locked` installs from a source checkout.
+- CI runs formatting, Clippy and tests with read-only GitHub permissions; it does not commit binaries.
+- Versioned GitHub Releases and Homebrew installation are planned. The legacy install script and `doctty update` are removed.
 
 ### Contributors
 
