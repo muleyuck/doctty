@@ -1116,9 +1116,7 @@ mod experiment {
                 .unwrap_or_else(|error| panic!("placement hide failed: {error}"));
             assert_eq!(
                 encoded,
-                format!("\\x1b_Ga=d,d=i,i={FIRST_IMAGE_ID},p=1,q=2;\\x1b\\\\")
-                    .replace("\\\\x1b", "\\x1b")
-                    .into_bytes()
+                format!("\x1b_Ga=d,d=i,i={FIRST_IMAGE_ID},p=1,q=2;\x1b\\").into_bytes()
             );
         }
 
