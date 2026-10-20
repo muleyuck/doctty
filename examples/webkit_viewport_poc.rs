@@ -539,6 +539,7 @@ mod experiment {
         let (requests, responses) = spawn_worker(swift, output, width);
         let mut pending = false;
         let mut prefetched: Option<ImageCache> = None;
+        let mut last_displayed: Option<(u32, u64)> = None;
 
         loop {
             // A completed prefetch is already uploaded to the terminal in the
@@ -622,7 +623,12 @@ mod experiment {
                 "cache HIT"
             };
             if active.covers(position, height) {
-                display_cached(&active, position, cols, rows, height, state)?;
+                // Do not send redundant placements every 12 ms when nothing moved.
+                let fingerprint = (active.image_id, position.to_bits());
+                if last_displayed != Some(fingerprint) {
+                    display_cached(&active, position, cols, rows, height, state)?;
+                    last_displayed = Some(fingerprint);
+                }
             }
 
             if !event::poll(Duration::from_millis(12))? {
