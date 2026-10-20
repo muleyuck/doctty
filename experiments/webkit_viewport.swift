@@ -138,9 +138,35 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 } else if (tag === 'table') {
                   text = '[table] ' + text;
                 }
-                items.push({y: Math.round(rect.top + window.scrollY), text});
+                const style = window.getComputedStyle(el);
+                const normalizedColor = value => {
+                  const match = value.match(/^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                  return match ? '#' + [match[1], match[2], match[3]]
+                    .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
+                };
+                items.push({
+                  y: Math.round(rect.top + window.scrollY),
+                  x: Math.round(rect.left + window.scrollX),
+                  width: Math.round(rect.width),
+                  height: Math.round(rect.height),
+                  text,
+                  tag,
+                  fontSize: parseFloat(style.fontSize) || 16,
+                  lineHeight: parseFloat(style.lineHeight) || 24,
+                  weight: parseInt(style.fontWeight, 10) || 400,
+                  color: normalizedColor(style.color),
+                  background: normalizedColor(style.backgroundColor)
+                });
               }
-              return items;
+              return {
+                background: (() => {
+                  const background = window.getComputedStyle(document.body).backgroundColor;
+                  const match = background.match(/^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                  return match ? '#' + [match[1], match[2], match[3]]
+                    .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '#ffffff';
+                })(),
+                items
+              };
             })()
             """
             webView.evaluateJavaScript(script) { result, error in
@@ -150,7 +176,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 }
                 self.emit([
                     "kind": "outline",
-                    "items": result as? [[String: Any]] ?? []
+                    "items": (result as? [String: Any])?["items"] as? [[String: Any]] ?? [],
+                    "background": (result as? [String: Any])?["background"] as? String ?? "#ffffff"
                 ])
             }
         case "select":
