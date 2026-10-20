@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::BTreeSet,
     io::{self, Write},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::Result;
@@ -45,6 +45,14 @@ use crate::{
     },
     ui::page_graphics::{GraphicPage, total_rows},
 };
+
+// Bound input queues and guarantee periodic frames during continuous scroll input.
+const MAX_PENDING_EVENTS: usize = 128;
+const MAX_REDRAW_DELAY: Duration = Duration::from_millis(24);
+
+fn should_redraw(needs_redraw: bool, input_pending: bool, elapsed: Duration) -> bool {
+    needs_redraw && (!input_pending || elapsed >= MAX_REDRAW_DELAY)
+}
 
 #[derive(Clone, Copy)]
 struct GraphicViewport {
@@ -200,10 +208,18 @@ impl TerminalViewer {
     }
 
     fn event_loop(&mut self) -> Result<()> {
+        let mut last_redraw = Instant::now();
         loop {
-            if self.needs_redraw && !event::poll(Duration::ZERO)? {
+            if self.needs_redraw
+                && should_redraw(
+                    self.needs_redraw,
+                    event::poll(Duration::ZERO)?,
+                    last_redraw.elapsed(),
+                )
+            {
                 self.draw()?;
                 self.needs_redraw = false;
+                last_redraw = Instant::now();
             }
             if self.config.watch && self.maybe_reload() {
                 continue;
@@ -224,8 +240,9 @@ impl TerminalViewer {
     }
 
     fn read_pending_events(&mut self) -> Result<Vec<Event>> {
-        let mut events = vec![event::read()?];
-        while event::poll(Duration::ZERO)? {
+        let mut events = Vec::with_capacity(MAX_PENDING_EVENTS);
+        events.push(event::read()?);
+        while events.len() < MAX_PENDING_EVENTS && event::poll(Duration::ZERO)? {
             events.push(event::read()?);
         }
         Ok(events)
