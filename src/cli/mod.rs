@@ -16,7 +16,10 @@ pub fn parse() -> DocttyArgs {
 
 #[must_use]
 pub fn startup_message(args: &DocttyArgs) -> String {
-    let path = args.path.as_deref().unwrap_or_else(|| std::path::Path::new("<missing>"));
+    let path = args
+        .path
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("<missing>"));
     let mut message = format!("doctty: path={}", path.display());
 
     if args.watch {
@@ -33,7 +36,8 @@ pub fn startup_message(args: &DocttyArgs) -> String {
 }
 
 fn requested_version_flag(args: &[std::ffi::OsString]) -> bool {
-    args.iter()
-        .skip(1)
-        .any(|arg| arg.to_str().is_some_and(|flag| matches!(flag, "--version" | "-V")))
+    args.iter().skip(1).any(|arg| {
+        arg.to_str()
+            .is_some_and(|flag| matches!(flag, "--version" | "-V"))
+    })
 }

@@ -65,7 +65,11 @@ pub fn render_html_to_png(
         if stderr.is_empty() {
             bail!("swift snapshot helper exited with {}", output.status);
         }
-        bail!("swift snapshot helper exited with {}: {}", output.status, stderr);
+        bail!(
+            "swift snapshot helper exited with {}: {}",
+            output.status,
+            stderr
+        );
     }
 
     let png_bytes = fs::read(&output_path).context("swift snapshot helper did not produce png")?;
@@ -76,7 +80,10 @@ pub fn render_html_to_png(
                 .context("swift snapshot helper produced invalid diagnostics report")
         })?;
     let _ = cleanup_workspace(&workspace);
-    Ok(SnapshotResult { png_bytes, diagnostics })
+    Ok(SnapshotResult {
+        png_bytes,
+        diagnostics,
+    })
 }
 
 #[cfg(not(target_os = "macos"))]

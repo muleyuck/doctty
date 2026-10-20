@@ -17,13 +17,17 @@ pub(super) fn create_workspace(base_dir: &Path, read_access_root: &Path) -> Resu
             continue;
         }
 
-        let dir = candidate.join(".doctty-webkit").join(format!("{timestamp}"));
+        let dir = candidate
+            .join(".doctty-webkit")
+            .join(format!("{timestamp}"));
         if fs::create_dir_all(&dir).is_ok() {
             return Ok(dir);
         }
     }
 
-    let dir = normalized_root.join(".doctty-webkit").join(format!("{timestamp}"));
+    let dir = normalized_root
+        .join(".doctty-webkit")
+        .join(format!("{timestamp}"));
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -95,7 +99,11 @@ fn resolve_local_reference(base_dir: &Path, reference: &str) -> PathBuf {
     }
 
     let path = Path::new(reference);
-    if path.is_absolute() { normalize_path(path) } else { normalize_path(&base_dir.join(path)) }
+    if path.is_absolute() {
+        normalize_path(path)
+    } else {
+        normalize_path(&base_dir.join(path))
+    }
 }
 
 fn absolutize_path(path: &Path) -> PathBuf {
@@ -109,7 +117,11 @@ fn absolutize_path(path: &Path) -> PathBuf {
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = if path.is_absolute() { PathBuf::from("/") } else { PathBuf::new() };
+    let mut normalized = if path.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::new()
+    };
     for component in path.components() {
         match component {
             std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
@@ -122,7 +134,11 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
 
-    if normalized.as_os_str().is_empty() { PathBuf::from(".") } else { normalized }
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
 }
 
 fn common_path_prefix(left: &Path, right: &Path) -> PathBuf {

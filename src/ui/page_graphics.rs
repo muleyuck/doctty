@@ -60,7 +60,11 @@ pub fn viewport_slice(
     let total_rows = total_rows(page, cell_height_px);
     let rows = total_rows.saturating_sub(scroll_rows).min(content_rows) as u16;
     if rows == 0 {
-        return ViewportSlice { source_y_px: 0, source_height_px: 0, rows: 0 };
+        return ViewportSlice {
+            source_y_px: 0,
+            source_height_px: 0,
+            rows: 0,
+        };
     }
 
     let raster_scale = page.image_width_px as f32 / page.display_width_px.max(1) as f32;
@@ -74,7 +78,11 @@ pub fn viewport_slice(
     let source_height_px =
         unclamped_source_height_px.min(page.image_height_px.saturating_sub(source_y_px));
 
-    ViewportSlice { source_y_px, source_height_px, rows }
+    ViewportSlice {
+        source_y_px,
+        source_height_px,
+        rows,
+    }
 }
 
 pub fn viewport_raster(
@@ -90,7 +98,12 @@ pub fn viewport_raster(
 
     let image = image::load_from_memory_with_format(&page.png_bytes, ImageFormat::Png)
         .context("failed to decode page snapshot png for viewport crop")?;
-    let cropped = image.crop_imm(0, slice.source_y_px, page.image_width_px, slice.source_height_px);
+    let cropped = image.crop_imm(
+        0,
+        slice.source_y_px,
+        page.image_width_px,
+        slice.source_height_px,
+    );
     let mut png_bytes = Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(cropped.to_rgba8())
         .write_to(&mut png_bytes, ImageFormat::Png)
@@ -106,5 +119,7 @@ pub fn viewport_raster(
 
 #[must_use]
 pub fn total_rows(page: &GraphicPage, cell_height_px: f32) -> usize {
-    ((page.display_height_px as f32) / cell_height_px).ceil().max(0.0) as usize
+    ((page.display_height_px as f32) / cell_height_px)
+        .ceil()
+        .max(0.0) as usize
 }

@@ -83,15 +83,34 @@ fn graphics_commands_only_transmit_png_payload_once() {
         article_x: 0,
         article_width: 20,
         viewport_width: 80,
-        cell_metrics: CellMetrics { width_px: 8.0, height_px: 16.0 },
+        cell_metrics: CellMetrics {
+            width_px: 8.0,
+            height_px: 16.0,
+        },
     };
     let (first_commands, _) = collect_graphics_commands(&rendered, viewport, &[], &mut transmitted);
     let (second_commands, _) =
         collect_graphics_commands(&rendered, viewport, &[], &mut transmitted);
 
-    assert_eq!(first_commands.iter().filter(|command| command.contains("a=t")).count(), 1);
-    assert_eq!(second_commands.iter().filter(|command| command.contains("a=t")).count(), 0);
-    assert!(second_commands.iter().any(|command| command.contains("a=p")));
+    assert_eq!(
+        first_commands
+            .iter()
+            .filter(|command| command.contains("a=t"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        second_commands
+            .iter()
+            .filter(|command| command.contains("a=t"))
+            .count(),
+        0
+    );
+    assert!(
+        second_commands
+            .iter()
+            .any(|command| command.contains("a=p"))
+    );
 }
 
 #[test]
@@ -109,7 +128,10 @@ fn page_viewport_commands_retransmit_cropped_png_for_each_scroll_position() {
         &page,
         0,
         4,
-        CellMetrics { width_px: 8.0, height_px: 2.0 },
+        CellMetrics {
+            width_px: 8.0,
+            height_px: 2.0,
+        },
         &[],
         &mut transmitted,
     )
@@ -118,17 +140,40 @@ fn page_viewport_commands_retransmit_cropped_png_for_each_scroll_position() {
         &page,
         4,
         4,
-        CellMetrics { width_px: 8.0, height_px: 2.0 },
+        CellMetrics {
+            width_px: 8.0,
+            height_px: 2.0,
+        },
         &[],
         &mut transmitted,
     )
     .unwrap_or_else(|error| panic!("viewport commands should rebuild after scroll: {error}"));
 
-    assert_eq!(first_commands.iter().filter(|command| command.contains("a=t")).count(), 1);
-    assert_eq!(second_commands.iter().filter(|command| command.contains("a=t")).count(), 1);
+    assert_eq!(
+        first_commands
+            .iter()
+            .filter(|command| command.contains("a=t"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        second_commands
+            .iter()
+            .filter(|command| command.contains("a=t"))
+            .count(),
+        1
+    );
     assert!(first_commands.iter().any(|command| command.contains("h=8")));
-    assert!(second_commands.iter().any(|command| command.contains("h=8")));
-    assert!(second_commands.iter().any(|command| command.contains("x=0,y=0")));
+    assert!(
+        second_commands
+            .iter()
+            .any(|command| command.contains("h=8"))
+    );
+    assert!(
+        second_commands
+            .iter()
+            .any(|command| command.contains("x=0,y=0"))
+    );
 }
 
 #[test]
@@ -142,8 +187,13 @@ fn fit_graphic_placement_stays_within_reserved_box() {
         content: RenderedGraphicContent::Png(vec![1]),
     };
 
-    let (columns, rows, _, _) =
-        fit_graphic_placement(&graphic, CellMetrics { width_px: 8.0, height_px: 16.0 });
+    let (columns, rows, _, _) = fit_graphic_placement(
+        &graphic,
+        CellMetrics {
+            width_px: 8.0,
+            height_px: 16.0,
+        },
+    );
 
     assert!(columns <= graphic.width_cells);
     assert!(rows <= graphic.height_cells);
@@ -217,9 +267,18 @@ fn try_new_degrades_gracefully_when_graphic_mode_unavailable() {
     )
     .unwrap_or_else(|error| panic!("viewer should degrade gracefully, not fail: {error}"));
 
-    assert!(viewer.graphic_page.is_none(), "graphic page should be None in test mode");
-    assert!(viewer.rendered.is_some(), "text-mode fallback should be populated");
-    assert!(viewer.warning.is_some(), "warning should be set when graphic mode is unavailable");
+    assert!(
+        viewer.graphic_page.is_none(),
+        "graphic page should be None in test mode"
+    );
+    assert!(
+        viewer.rendered.is_some(),
+        "text-mode fallback should be populated"
+    );
+    assert!(
+        viewer.warning.is_some(),
+        "warning should be set when graphic mode is unavailable"
+    );
 }
 
 fn sample_viewer(source: &str) -> TerminalViewer {

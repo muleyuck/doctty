@@ -35,8 +35,9 @@ fn headless_render_covers_core_mvp_blocks() {
 
 #[test]
 fn headless_render_supports_repo_rich_fixture() {
-    let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join("rich_markdown.md");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("rich_markdown.md");
 
     let mut command = match Command::cargo_bin("doctty") {
         Ok(command) => command,

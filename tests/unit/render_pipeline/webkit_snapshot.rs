@@ -35,7 +35,10 @@ fn typography_entry<'a>(
 #[cfg(target_os = "macos")]
 fn assert_px_close(actual: f64, expected: f64, label: &str) {
     let delta = (actual - expected).abs();
-    assert!(delta <= 0.25, "{label} expected {expected}px but got {actual}px");
+    assert!(
+        delta <= 0.25,
+        "{label} expected {expected}px but got {actual}px"
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -100,17 +103,27 @@ Paragraph with **bold**, *italic*, and `inline code`.
     let cases = [(Theme::Light, "light"), (Theme::Dark, "dark")];
 
     for (theme, theme_name) in cases {
-        let html =
-            build_github_html(markdown, std::path::Path::new("."), theme, MermaidMode::Disabled)
-                .unwrap_or_else(|error| panic!("html should render for {theme_name}: {error}"));
+        let html = build_github_html(
+            markdown,
+            std::path::Path::new("."),
+            theme,
+            MermaidMode::Disabled,
+        )
+        .unwrap_or_else(|error| panic!("html should render for {theme_name}: {error}"));
 
         let snapshot =
             render_html_to_png(&html, std::path::Path::new("."), 960).unwrap_or_else(|error| {
                 panic!("webkit should render typography snapshot for {theme_name}: {error}")
             });
 
-        assert!(snapshot.diagnostics.fonts_ready, "{theme_name} document fonts should be ready");
-        assert!(snapshot.diagnostics.prose_font_ready, "{theme_name} prose font should load");
+        assert!(
+            snapshot.diagnostics.fonts_ready,
+            "{theme_name} document fonts should be ready"
+        );
+        assert!(
+            snapshot.diagnostics.prose_font_ready,
+            "{theme_name} prose font should load"
+        );
         assert_eq!(snapshot.diagnostics.heading_font_weight, "600");
         assert_eq!(snapshot.diagnostics.strong_font_weight, "600");
 
@@ -169,8 +182,16 @@ Paragraph with **bold**, *italic*, and `inline code`.
             "{theme_name} code font family should use the GitHub monospace stack, got {}",
             code.font_family
         );
-        assert_px_close(code.font_size_px, 13.6, &format!("{theme_name} code font-size"));
-        assert_px_close(code.line_height_px, 20.4, &format!("{theme_name} code line-height"));
+        assert_px_close(
+            code.font_size_px,
+            13.6,
+            &format!("{theme_name} code font-size"),
+        );
+        assert_px_close(
+            code.line_height_px,
+            20.4,
+            &format!("{theme_name} code line-height"),
+        );
     }
 }
 
@@ -199,7 +220,9 @@ fn webkit_snapshot_renders_local_markdown_images() {
         .to_rgba8();
 
     assert!(
-        image.pixels().any(|pixel| pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30),
+        image
+            .pixels()
+            .any(|pixel| pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30),
         "rendered snapshot should contain pixels from the local markdown image"
     );
     assert!(snapshot.diagnostics.images_ready);
@@ -303,12 +326,21 @@ fn webkit_snapshot_renders_html_img_from_project_readme() {
         .unwrap_or_else(|error| panic!("README webkit snapshot should render: {error}"));
 
     // The README hero image should load successfully.
-    let demo_assets: Vec<_> =
-        snapshot.diagnostics.images.iter().filter(|img| img.source.contains("demo")).collect();
+    let demo_assets: Vec<_> = snapshot
+        .diagnostics
+        .images
+        .iter()
+        .filter(|img| img.source.contains("demo"))
+        .collect();
     assert!(
         !demo_assets.is_empty(),
         "should detect README hero image in diagnostics, got: {:?}",
-        snapshot.diagnostics.images.iter().map(|i| &i.source).collect::<Vec<_>>()
+        snapshot
+            .diagnostics
+            .images
+            .iter()
+            .map(|i| &i.source)
+            .collect::<Vec<_>>()
     );
     assert!(
         demo_assets[0].natural_width_px > 0.0,
@@ -339,10 +371,26 @@ fn webkit_snapshot_renders_badge_fixture_images_with_nonzero_size() {
 
     for asset in &snapshot.diagnostics.images {
         assert!(asset.complete, "{} should complete", asset.source);
-        assert!(asset.natural_width_px >= 80.0, "{} should keep badge width", asset.source);
-        assert!(asset.natural_height_px >= 20.0, "{} should keep badge height", asset.source);
-        assert!(asset.rendered_width_px >= 80.0, "{} should render visibly wide", asset.source);
-        assert!(asset.rendered_height_px >= 18.0, "{} should render visibly tall", asset.source);
+        assert!(
+            asset.natural_width_px >= 80.0,
+            "{} should keep badge width",
+            asset.source
+        );
+        assert!(
+            asset.natural_height_px >= 20.0,
+            "{} should keep badge height",
+            asset.source
+        );
+        assert!(
+            asset.rendered_width_px >= 80.0,
+            "{} should render visibly wide",
+            asset.source
+        );
+        assert!(
+            asset.rendered_height_px >= 18.0,
+            "{} should render visibly tall",
+            asset.source
+        );
     }
 }
 
@@ -372,14 +420,24 @@ fn webkit_snapshot_renders_centered_block_fixture_assets() {
         .collect();
     assert_eq!(centered_pngs.len(), 2);
     assert!(
-        centered_pngs.iter().any(|asset| asset.rendered_width_px >= 200.0),
+        centered_pngs
+            .iter()
+            .any(|asset| asset.rendered_width_px >= 200.0),
         "expected at least one wide centered image, got {:?}",
-        centered_pngs.iter().map(|asset| asset.rendered_width_px).collect::<Vec<_>>()
+        centered_pngs
+            .iter()
+            .map(|asset| asset.rendered_width_px)
+            .collect::<Vec<_>>()
     );
     assert!(
-        centered_pngs.iter().any(|asset| asset.rendered_width_px >= 300.0),
+        centered_pngs
+            .iter()
+            .any(|asset| asset.rendered_width_px >= 300.0),
         "expected the larger centered image to remain visibly wide, got {:?}",
-        centered_pngs.iter().map(|asset| asset.rendered_width_px).collect::<Vec<_>>()
+        centered_pngs
+            .iter()
+            .map(|asset| asset.rendered_width_px)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -491,7 +549,10 @@ fn webkit_snapshot_reports_nonzero_mermaid_metrics() {
     assert!(snapshot.diagnostics.mermaids[0].rendered_height_px > 0.0);
     let aspect = snapshot.diagnostics.mermaids[0].rendered_width_px
         / snapshot.diagnostics.mermaids[0].rendered_height_px;
-    assert!(aspect > 1.5 && aspect < 2.5, "unexpected mermaid aspect ratio: {aspect}");
+    assert!(
+        aspect > 1.5 && aspect < 2.5,
+        "unexpected mermaid aspect ratio: {aspect}"
+    );
 }
 
 #[cfg(target_os = "macos")]

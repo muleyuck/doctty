@@ -43,7 +43,10 @@ impl MermaidCliRenderer {
         if command_exists("npx") {
             return Self {
                 command: PathBuf::from("npx"),
-                base_args: vec![OsString::from("-y"), OsString::from("@mermaid-js/mermaid-cli")],
+                base_args: vec![
+                    OsString::from("-y"),
+                    OsString::from("@mermaid-js/mermaid-cli"),
+                ],
                 cache_dir: default_cache_root().join("mermaid"),
             };
         }
@@ -66,7 +69,11 @@ impl MermaidCliRenderer {
 
     #[must_use]
     pub fn with_cache_dir(command: impl Into<PathBuf>, cache_dir: PathBuf) -> Self {
-        Self { command: command.into(), base_args: Vec::new(), cache_dir }
+        Self {
+            command: command.into(),
+            base_args: Vec::new(),
+            cache_dir,
+        }
     }
 
     pub fn render_png(&self, source: &str, theme: Theme) -> Result<Vec<u8>> {
@@ -146,11 +153,17 @@ impl MermaidCliRenderer {
             .with_context(|| format!("failed to execute {}", self.command.display()))?;
 
         if !command_output.status.success() {
-            let stderr = String::from_utf8_lossy(&command_output.stderr).trim().to_string();
+            let stderr = String::from_utf8_lossy(&command_output.stderr)
+                .trim()
+                .to_string();
             if stderr.is_empty() {
                 bail!("mermaid renderer exited with {}", command_output.status);
             }
-            bail!("mermaid renderer exited with {}: {}", command_output.status, stderr);
+            bail!(
+                "mermaid renderer exited with {}: {}",
+                command_output.status,
+                stderr
+            );
         }
 
         let rendered = fs::read(&output)

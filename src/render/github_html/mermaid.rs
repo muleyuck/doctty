@@ -63,12 +63,14 @@ pub(super) fn render_mermaid_blocks_with<F>(
 where
     F: Fn(&str) -> Result<String> + Sync,
 {
-    let unique_sources = sources.iter().fold(Vec::<String>::new(), |mut acc, source| {
-        if !acc.contains(source) {
-            acc.push(source.clone());
-        }
-        acc
-    });
+    let unique_sources = sources
+        .iter()
+        .fold(Vec::<String>::new(), |mut acc, source| {
+            if !acc.contains(source) {
+                acc.push(source.clone());
+            }
+            acc
+        });
 
     if unique_sources.is_empty() {
         return Ok(HashMap::new());
@@ -100,8 +102,9 @@ where
         }
 
         for handle in handles {
-            for (source, html) in
-                handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))?
+            for (source, html) in handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?
             {
                 rendered.insert(source, html);
             }
@@ -122,10 +125,10 @@ where
     F: Fn(&str) -> Result<String>,
 {
     match mermaid_mode {
-        MermaidMode::Disabled => {
-            Ok("<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid disabled</div>"
-                .to_string())
-        }
+        MermaidMode::Disabled => Ok(
+            "<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid disabled</div>"
+                .to_string(),
+        ),
         MermaidMode::Enabled => match render_mermaid(content) {
             Ok(svg_markup) => Ok(format!(
                 "<div class=\"doctty-mermaid\">{}</div>",

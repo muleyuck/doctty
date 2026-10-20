@@ -7,7 +7,9 @@ fn ci_checks_code_without_write_permissions() {
     let workflow = fs::read_to_string(".github/workflows/ci.yml")
         .unwrap_or_else(|error| panic!("CI workflow should be readable: {error}"));
     let parsed = parse_yaml(&workflow);
-    let root = parsed.as_mapping().unwrap_or_else(|| panic!("workflow root should be a mapping"));
+    let root = parsed
+        .as_mapping()
+        .unwrap_or_else(|| panic!("workflow root should be a mapping"));
     let jobs = mapping_field(root, "jobs");
     let permissions = mapping_field(root, "permissions");
     let triggers = mapping_field(root, "on");
@@ -17,33 +19,49 @@ fn ci_checks_code_without_write_permissions() {
     let checks = mapping_field(jobs, "checks");
     let inputs = mapping_field(checks, "with");
     assert_eq!(
-        checks.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        checks
+            .get(Value::String("uses".to_string()))
+            .and_then(Value::as_str),
         Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
     );
     assert_eq!(
-        inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        inputs
+            .get(Value::String("test-command".to_string()))
+            .and_then(Value::as_str),
         Some("make ci")
     );
     let macos_build = mapping_field(jobs, "macos-build");
     let macos_inputs = mapping_field(macos_build, "with");
     assert_eq!(
-        macos_build.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        macos_build
+            .get(Value::String("uses".to_string()))
+            .and_then(Value::as_str),
         Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
     );
     assert_eq!(
-        macos_inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        macos_inputs
+            .get(Value::String("test-command".to_string()))
+            .and_then(Value::as_str),
         Some("cargo build --release --locked")
     );
     assert_eq!(
-        macos_inputs.get(Value::String("runs-on".to_string())).and_then(Value::as_str),
+        macos_inputs
+            .get(Value::String("runs-on".to_string()))
+            .and_then(Value::as_str),
         Some("macos-latest")
     );
     assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
     assert_eq!(
-        permissions.get(Value::String("contents".to_string())).and_then(Value::as_str),
+        permissions
+            .get(Value::String("contents".to_string()))
+            .and_then(Value::as_str),
         Some("read")
     );
-    assert!(branches.iter().any(|branch| branch.as_str() == Some("main")));
+    assert!(
+        branches
+            .iter()
+            .any(|branch| branch.as_str() == Some("main"))
+    );
 }
 
 #[test]
@@ -74,7 +92,9 @@ fn prek_config_uses_repo_quality_gates() {
     let config = fs::read_to_string(".pre-commit-config.yml")
         .unwrap_or_else(|error| panic!("prek config should be readable: {error}"));
     let parsed = parse_yaml(&config);
-    let root = parsed.as_mapping().unwrap_or_else(|| panic!("prek root should be a mapping"));
+    let root = parsed
+        .as_mapping()
+        .unwrap_or_else(|| panic!("prek root should be a mapping"));
     let repos = root
         .get(Value::String("repos".to_string()))
         .and_then(Value::as_sequence)
@@ -107,7 +127,10 @@ fn prek_config_uses_repo_quality_gates() {
         assert!(config.contains(args), "prek should run {args}");
     }
 
-    assert!(!Path::new("lefthook.yml").exists(), "lefthook config should be removed");
+    assert!(
+        !Path::new("lefthook.yml").exists(),
+        "lefthook config should be removed"
+    );
 
     let mise = fs::read_to_string("mise.toml")
         .unwrap_or_else(|error| panic!("mise config should be readable: {error}"));

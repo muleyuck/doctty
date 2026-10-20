@@ -53,6 +53,9 @@ fn cleanup_workspace_removes_empty_doctty_webkit_parent() {
     cleanup_workspace(&workspace)
         .unwrap_or_else(|error| panic!("workspace cleanup should succeed: {error}"));
 
-    assert!(!parent.exists(), "empty .doctty-webkit parent should be removed");
+    assert!(
+        !parent.exists(),
+        "empty .doctty-webkit parent should be removed"
+    );
     let _ = std::fs::remove_dir_all(base);
 }

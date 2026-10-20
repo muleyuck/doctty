@@ -38,8 +38,11 @@ pub(super) fn syntax_adapter(theme: Theme) -> &'static SyntectAdapter {
     match theme {
         Theme::Light | Theme::System => LIGHT_SYNTAX_ADAPTER
             .get_or_init(|| SyntectAdapterBuilder::new().theme("InspiredGitHub").build()),
-        Theme::Dark => DARK_SYNTAX_ADAPTER
-            .get_or_init(|| SyntectAdapterBuilder::new().theme("base16-ocean.dark").build()),
+        Theme::Dark => DARK_SYNTAX_ADAPTER.get_or_init(|| {
+            SyntectAdapterBuilder::new()
+                .theme("base16-ocean.dark")
+                .build()
+        }),
     }
 }
 

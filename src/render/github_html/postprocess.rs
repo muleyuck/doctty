@@ -95,7 +95,12 @@ fn decorate_code_tag(pre_body: &str, language: Option<&str>) -> String {
 
     let code_open_tag = &code_segment[..=code_open_end];
     let mut classes = extract_attr(code_open_tag, "class")
-        .map(|value| value.split_whitespace().map(ToOwned::to_owned).collect::<Vec<_>>())
+        .map(|value| {
+            value
+                .split_whitespace()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
 
     if let Some(language) = language {
@@ -258,7 +263,9 @@ fn escaped_entity_len(text: &str) -> Option<usize> {
     let is_hex = text.starts_with("#x") || text.starts_with("#X");
 
     if is_hex {
-        let digits = text.strip_prefix("#x").or_else(|| text.strip_prefix("#X"))?;
+        let digits = text
+            .strip_prefix("#x")
+            .or_else(|| text.strip_prefix("#X"))?;
         let end = digits.find(';')?;
         if end == 0 || !digits[..end].chars().all(|ch| ch.is_ascii_hexdigit()) {
             return None;
@@ -286,7 +293,9 @@ fn escaped_entity_len(text: &str) -> Option<usize> {
 fn find_code_pre_open(html: &str) -> Option<(usize, usize)> {
     let mut best: Option<(usize, usize)> = None;
     for needle in ["<code", "<pre"] {
-        let Some(pos) = html.find(needle) else { continue };
+        let Some(pos) = html.find(needle) else {
+            continue;
+        };
         let after = pos + needle.len();
         if after < html.len() && !matches!(html.as_bytes()[after], b'>' | b' ' | b'\t' | b'\n') {
             continue;
@@ -315,7 +324,10 @@ fn find_code_pre_close(html: &str) -> Option<(usize, usize)> {
 }
 
 fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
-    let tag = escaped_tag.strip_prefix("&lt;")?.strip_suffix("&gt;")?.trim();
+    let tag = escaped_tag
+        .strip_prefix("&lt;")?
+        .strip_suffix("&gt;")?
+        .trim();
     let decoded = tag.replace("&quot;", "\"").replace("&amp;", "&");
     let decoded = decoded.trim();
 
@@ -403,7 +415,10 @@ fn restore_block_tag_close(tag: &str) -> Option<String> {
 fn restore_anchor(tag: &str) -> Option<String> {
     let attrs = tag.strip_prefix('a')?.trim();
     let attrs = parse_attributes_strict(attrs)?;
-    let href = attrs.iter().find(|(name, _)| name == "href").map(|(_, value)| value.as_str())?;
+    let href = attrs
+        .iter()
+        .find(|(name, _)| name == "href")
+        .map(|(_, value)| value.as_str())?;
     if !is_safe_href(href) {
         return None;
     }
@@ -449,7 +464,10 @@ fn restore_img(tag: &str) -> Option<String> {
     let body = body.strip_suffix('/').unwrap_or(body).trim();
 
     let attrs = parse_attributes_strict(body)?;
-    let src = attrs.iter().find(|(name, _)| *name == "src").map(|(_, value)| value.as_str())?;
+    let src = attrs
+        .iter()
+        .find(|(name, _)| *name == "src")
+        .map(|(_, value)| value.as_str())?;
     if !is_safe_src(src) {
         return None;
     }
@@ -515,7 +533,10 @@ struct ParsedTagAttributes {
 fn parse_attributes_and_flags(input: &str) -> Option<ParsedTagAttributes> {
     let input = input.trim();
     if input.is_empty() {
-        return Some(ParsedTagAttributes { attrs: Vec::new(), flags: Vec::new() });
+        return Some(ParsedTagAttributes {
+            attrs: Vec::new(),
+            flags: Vec::new(),
+        });
     }
 
     let mut attrs = Vec::new();

@@ -16,13 +16,30 @@ impl TryFrom<DocttyArgs> for AppConfig {
     type Error = anyhow::Error;
 
     fn try_from(value: DocttyArgs) -> Result<Self> {
-        let DocttyArgs { path, watch, theme, no_mermaid, .. } = value;
+        let DocttyArgs {
+            path,
+            watch,
+            theme,
+            no_mermaid,
+            ..
+        } = value;
 
-        let Some(path) = path else { bail!("doctty requires a Markdown file path") };
+        let Some(path) = path else {
+            bail!("doctty requires a Markdown file path")
+        };
 
-        let mermaid_mode = if no_mermaid { MermaidMode::Disabled } else { MermaidMode::Enabled };
+        let mermaid_mode = if no_mermaid {
+            MermaidMode::Disabled
+        } else {
+            MermaidMode::Enabled
+        };
 
-        Ok(Self { path, watch, theme: theme.resolve(), mermaid_mode })
+        Ok(Self {
+            path,
+            watch,
+            theme: theme.resolve(),
+            mermaid_mode,
+        })
     }
 }
 

@@ -93,9 +93,18 @@ fn html_img_fixture_restores_img_tags_in_github_html() {
         body.contains(r#"<img src="../../../../examples/pixel.png""#),
         "standalone <img> should be restored, got:\n{body}"
     );
-    assert!(body.contains(r#"width="700""#), "width attribute should be preserved, got:\n{body}");
-    assert!(body.contains(r#"<p align="center">"#), "<p align> should be restored, got:\n{body}");
-    assert!(body.contains("</p>"), "</p> should be restored, got:\n{body}");
+    assert!(
+        body.contains(r#"width="700""#),
+        "width attribute should be preserved, got:\n{body}"
+    );
+    assert!(
+        body.contains(r#"<p align="center">"#),
+        "<p align> should be restored, got:\n{body}"
+    );
+    assert!(
+        body.contains("</p>"),
+        "</p> should be restored, got:\n{body}"
+    );
 }
 
 #[test]
@@ -164,7 +173,10 @@ fn details_fixture_restores_details_and_summary_markup() {
     .unwrap_or_else(|error| panic!("details fixture should render: {error}"));
     let body = extract_article_body(&html);
 
-    assert!(body.contains(r#"<details open>"#), "details tag should be restored, got:\n{body}");
+    assert!(
+        body.contains(r#"<details open>"#),
+        "details tag should be restored, got:\n{body}"
+    );
     assert!(
         body.contains("<summary>Architecture Notes</summary>"),
         "summary tag should be restored, got:\n{body}"
@@ -187,7 +199,10 @@ fn picture_fixture_restores_picture_and_source_markup() {
     .unwrap_or_else(|error| panic!("picture fixture should render: {error}"));
     let body = extract_article_body(&html);
 
-    assert!(body.contains("<picture>"), "picture tag should be restored, got:\n{body}");
+    assert!(
+        body.contains("<picture>"),
+        "picture tag should be restored, got:\n{body}"
+    );
     assert!(
         body.contains(r#"<source media="(prefers-color-scheme: dark)" srcset="../../../../examples/pixel.png" />"#),
         "dark-mode source should be restored, got:\n{body}"
@@ -218,7 +233,11 @@ fn gfm_fixtures_generate_expected_html_fragments() {
             });
         let body = extract_article_body(&html);
 
-        for snippet in expected.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        for snippet in expected
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
             assert!(
                 body.contains(snippet),
                 "fixture {} missing snippet: {snippet}\nbody:\n{body}",
@@ -242,7 +261,10 @@ fn gfm_fixtures_render_through_webkit_and_terminal_graphics_path() {
             panic!("fixture {} should snapshot: {error}", fixture_dir.display())
         });
         let page = build_graphic_page(&snapshot.png_bytes, 120, 960).unwrap_or_else(|error| {
-            panic!("fixture {} should decode graphic page: {error}", fixture_dir.display())
+            panic!(
+                "fixture {} should decode graphic page: {error}",
+                fixture_dir.display()
+            )
         });
         let slice = viewport_slice(&page, 0, 20, 21.0);
 

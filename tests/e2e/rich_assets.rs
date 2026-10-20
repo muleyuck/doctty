@@ -33,7 +33,10 @@ cp "{}" "$out"
     if let Err(error) = std::fs::write(&script, content) {
         panic!("script should be written: {error}");
     }
-    let status = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let status = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("chmod failed: {status}"),
@@ -41,8 +44,10 @@ cp "{}" "$out"
     }
 
     let doc_path = dir.path().join("doc.md");
-    let source =
-        format!("![pixel]({})\n\n```mermaid\ngraph TD\n    A --> B\n```\n", image_path.display());
+    let source = format!(
+        "![pixel]({})\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+        image_path.display()
+    );
     if let Err(error) = std::fs::write(&doc_path, source) {
         panic!("doc should be written: {error}");
     }

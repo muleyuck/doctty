@@ -23,7 +23,9 @@ fn sample_document(lines: Vec<&str>) -> Document {
             .enumerate()
             .map(|(index, value)| Block {
                 id: BlockId(index),
-                kind: BlockKind::Paragraph { text: StyledText::from_plain(value) },
+                kind: BlockKind::Paragraph {
+                    text: StyledText::from_plain(value),
+                },
                 span: SourceSpan::default(),
                 source_hash: index as u64 ^ (value.len() as u64),
             })

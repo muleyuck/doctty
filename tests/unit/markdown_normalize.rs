@@ -21,8 +21,14 @@ graph TD
         Err(error) => panic!("document should parse: {error}"),
     };
 
-    assert!(matches!(document.blocks[0].kind, BlockKind::Heading { level: 1, .. }));
-    assert!(matches!(document.blocks[1].kind, BlockKind::Paragraph { .. }));
+    assert!(matches!(
+        document.blocks[0].kind,
+        BlockKind::Heading { level: 1, .. }
+    ));
+    assert!(matches!(
+        document.blocks[1].kind,
+        BlockKind::Paragraph { .. }
+    ));
     assert!(matches!(document.blocks[2].kind, BlockKind::Callout { .. }));
     assert!(matches!(document.blocks[3].kind, BlockKind::Mermaid { .. }));
     assert_eq!(document.meta.links, vec!["https://example.com".to_string()]);
@@ -50,7 +56,10 @@ fn normalizes_task_list_and_footnote_reference_text() {
         document.blocks[1].kind,
         BlockKind::Paragraph { ref text } if text.plain().contains("[^1]")
     ));
-    assert!(matches!(document.blocks[2].kind, BlockKind::Footnote { .. }));
+    assert!(matches!(
+        document.blocks[2].kind,
+        BlockKind::Footnote { .. }
+    ));
 }
 
 #[test]
@@ -80,7 +89,10 @@ fn preserves_non_layout_html_blocks_as_plain_text() {
 
     assert!(matches!(
         document.blocks.as_slice(),
-        [doctty::core::document::Block { kind: BlockKind::Paragraph { .. }, .. }]
+        [doctty::core::document::Block {
+            kind: BlockKind::Paragraph { .. },
+            ..
+        }]
     ));
 }
 
