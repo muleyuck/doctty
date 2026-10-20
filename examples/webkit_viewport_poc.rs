@@ -132,6 +132,30 @@ mod experiment {
         }
     }
 
+    // Per-run high-water marks: retain diagnostics after the screen catches up.
+    // 'snap' includes WebKit capture + PNG encoding, 'upload' measures the
+    // Kitty terminal transfer. Skipped captures still count towards snap.
+    #[derive(Default)]
+    struct TileTimingStats {
+        max_snapshot_ms: f64,
+        max_upload_ms: f64,
+    }
+
+    impl TileTimingStats {
+        fn observe_snapshot(&mut self, elapsed_ms: f64) {
+            if elapsed_ms.is_finite() {
+                self.max_snapshot_ms = self.max_snapshot_ms.max(elapsed_ms);
+            }
+        }
+
+        fn observe_uploaded(&mut self, cache: &ImageCache) {
+            self.observe_snapshot(cache.last_snapshot_ms);
+            if cache.last_upload_ms.is_finite() {
+                self.max_upload_ms = self.max_upload_ms.max(cache.last_upload_ms);
+            }
+        }
+    }
+
     #[derive(Clone, Debug)]
     struct ImageCache {
         image_id: u32,
@@ -280,7 +304,7 @@ mod experiment {
 
     enum WorkerEvent {
         Snapshot(ImageCache),
-        Skipped,
+        Skipped { snapshot_ms: f64 },
         Selection(String),
         Error(String),
     }
@@ -319,12 +343,14 @@ mod experiment {
                         image_id,
                         requested_at,
                     } => {
+                        let mut snapshot_ms = 0.0;
                         let result = (|| -> Result<Option<ImageCache>> {
                             let response =
                                 swift.request(&json!({"type": "snapshot", "y": origin}))?;
                             if response["kind"] != "snapshot" {
                                 bail!("unexpected WebKit snapshot reply: {response}");
                             }
+                            snapshot_ms = response["elapsedMs"].as_f64().unwrap_or(0.0);
                             let actual_y = response["actualY"].as_f64().unwrap_or(origin);
                             let obsolete = || {
                                 latest_tiled_position.as_ref().is_some_and(|latest| {
@@ -374,7 +400,7 @@ mod experiment {
                         })();
                         match result {
                             Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
-                            Ok(None) => WorkerEvent::Skipped,
+                            Ok(None) => WorkerEvent::Skipped { snapshot_ms },
                             Err(error) => WorkerEvent::Error(error.to_string()),
                         }
                     }
@@ -793,6 +819,7 @@ mod experiment {
         let mut direction = ScrollDirection::Forward;
         let mut pending: Option<u32> = None;
         let mut skipped_uploads = 0usize;
+        let mut tile_timings = TileTimingStats::default();
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -803,6 +830,7 @@ mod experiment {
                     Ok(WorkerEvent::Snapshot(next)) => {
                         pending = None;
                         document_height = next.document_height;
+                        tile_timings.observe_uploaded(&next);
                         // Skip images too far behind a quick direction reversal.
                         if (next.source_y - position).abs() > f64::from(viewport_height) * 4.0 {
                             let mut out = io::stdout().lock();
@@ -812,9 +840,10 @@ mod experiment {
                             cached.push(next);
                         }
                     }
-                    Ok(WorkerEvent::Skipped) => {
+                    Ok(WorkerEvent::Skipped { snapshot_ms }) => {
                         pending = None;
                         skipped_uploads += 1;
+                        tile_timings.observe_snapshot(snapshot_ms);
                     }
                     Ok(WorkerEvent::Selection(text)) => {
                         if !text.is_empty() {
@@ -837,11 +866,13 @@ mod experiment {
                 let fingerprint = (tile.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
                     let status = format!(
-                        "TILED cached={} skipped={} waits={} max={:.0}ms",
-                        cached.len(),
+                        "TILE wait={:.0}ms snapMax={:.0}ms upMax={:.0}ms skips={} waits={} cached={}",
+                        wait.worst(now).as_secs_f64() * 1000.0,
+                        tile_timings.max_snapshot_ms,
+                        tile_timings.max_upload_ms,
                         skipped_uploads,
                         wait.episodes,
-                        wait.worst(now).as_secs_f64() * 1000.0
+                        cached.len()
                     );
                     display_cached(
                         tile,
@@ -1034,7 +1065,7 @@ mod experiment {
                         pending = false;
                         prefetched = Some(next);
                     }
-                    Ok(WorkerEvent::Skipped) => {
+                    Ok(WorkerEvent::Skipped { .. }) => {
                         // Only the opt-in tiled worker can skip uploads.
                         pending = false;
                     }
@@ -1190,6 +1221,23 @@ mod experiment {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn tile_timing_marks_include_skipped_snapshots_and_uploaded_tiles() {
+            let mut stats = TileTimingStats::default();
+            stats.observe_snapshot(420.0);
+            let mut cache = cached_at(0.0);
+            cache.last_snapshot_ms = 210.0;
+            cache.last_upload_ms = 95.0;
+            stats.observe_uploaded(&cache);
+            assert_eq!(stats.max_snapshot_ms, 420.0);
+            assert_eq!(stats.max_upload_ms, 95.0);
+            cache.last_snapshot_ms = 510.0;
+            cache.last_upload_ms = 40.0;
+            stats.observe_uploaded(&cache);
+            assert_eq!(stats.max_snapshot_ms, 510.0);
+            assert_eq!(stats.max_upload_ms, 95.0);
         }
 
         #[test]
