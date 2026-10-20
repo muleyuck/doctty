@@ -393,6 +393,7 @@ mod experiment {
         rows: u16,
         viewport_height: u32,
         state: &str,
+        previous_image: Option<u32>,
     ) -> Result<()> {
         let started = Instant::now();
         let mut out = io::stdout().lock();
@@ -406,6 +407,9 @@ mod experiment {
             cache.viewport_height_px(viewport_height),
             cache.source_offset_px(position, viewport_height),
         )?;
+        if let Some(previous) = previous_image.filter(|id| *id != cache.image_id) {
+            hide_image_placement(&mut out, previous)?;
+        }
         execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
         let status = format!(
             "{state} snap={:.0}ms upload={:.0}ms place={:.0}ms y={position:.0}/{:.0} | j/k J/K q",
@@ -498,6 +502,12 @@ mod experiment {
             out.write_all(chunk)?;
             out.write_all(b"\x1b\\")?;
         }
+        Ok(())
+    }
+
+    fn hide_image_placement(out: &mut impl Write, image_id: u32) -> Result<()> {
+        // Lowercase 'i' deletes only the placement, retaining Kitty image data.
+        write!(out, "\x1b_Ga=d,d=i,i={image_id},p=1,q=2;\x1b\\")?;
         Ok(())
     }
 
@@ -778,6 +788,7 @@ mod experiment {
                         rows,
                         viewport_height,
                         &status,
+                        last_displayed.map(|fingerprint| fingerprint.0),
                     )?;
                     last_displayed = Some(fingerprint);
                 }
@@ -1048,7 +1059,7 @@ mod experiment {
                 // Do not send redundant placements every 12 ms when nothing moved.
                 let fingerprint = (active.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
-                    display_cached(&active, position, cols, rows, height, &status)?;
+                    display_cached(&active, position, cols, rows, height, &status, None)?;
                     last_displayed = Some(fingerprint);
                 }
                 last_wait_status_at = None;
@@ -1097,6 +1108,19 @@ mod experiment {
             KeyEvent::new(code, KeyModifiers::NONE)
         }
 
+
+        #[test]
+        fn tile_placement_hide_keeps_image_data_cached() {
+            let mut encoded = Vec::new();
+            hide_image_placement(&mut encoded, FIRST_IMAGE_ID)
+                .unwrap_or_else(|error| panic!("placement hide failed: {error}"));
+            assert_eq!(
+                encoded,
+                format!("\\x1b_Ga=d,d=i,i={FIRST_IMAGE_ID},p=1,q=2;\\x1b\\\\")
+                    .replace("\\\\x1b", "\\x1b")
+                    .into_bytes()
+            );
+        }
 
         #[test]
         fn tiled_prefetch_stays_bounded_and_prioritizes_direction() {
