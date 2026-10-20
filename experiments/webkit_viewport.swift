@@ -136,7 +136,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         let configuration = WKSnapshotConfiguration()
         configuration.rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
         configuration.afterScreenUpdates = true
+        let captureStarted = Date()
         webView.takeSnapshot(with: configuration) { image, error in
+            let captureMs = Date().timeIntervalSince(captureStarted) * 1000
+            let encodeStarted = Date()
             if let error {
                 self.emit(["kind": "error", "message": error.localizedDescription])
                 return
@@ -150,14 +153,20 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 self.emit(["kind": "error", "message": "could not encode viewport PNG"])
                 return
             }
+            let encodeMs = Date().timeIntervalSince(encodeStarted) * 1000
             do {
+                let writeStarted = Date()
                 try png.write(to: self.outputURL, options: .atomic)
+                let writeMs = Date().timeIntervalSince(writeStarted) * 1000
                 self.emit([
                     "kind": "snapshot",
                     "requestedY": requestedY,
                     "actualY": actualY,
                     "height": self.documentHeight,
                     "elapsedMs": Date().timeIntervalSince(started) * 1000,
+                    "captureMs": captureMs,
+                    "encodeMs": encodeMs,
+                    "writeMs": writeMs,
                     "pngBytes": png.count
                 ])
             } catch {
