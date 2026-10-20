@@ -42,7 +42,7 @@ check:
 ci: fmt-check lint test
 
 hooks-install:
-	lefthook install
+	prek install --overwrite
 
 install-local:
 	cargo install --path . --force

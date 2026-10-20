@@ -15,21 +15,26 @@ make build
 make ci    # fmt-check, clippy -D warnings, full test suite
 ```
 
-GitHub Actions uses the reusable [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml): Linux runs `make ci`, and macOS runs `cargo build --release --locked`. Both use Rust 1.99.0 with `rustfmt` and `clippy` configured by `mise.toml`, matching jqc's Rust setup. Run `mise install rust` locally to install the same toolchain.
+GitHub Actions uses the reusable [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml): Linux runs `make ci`, and macOS runs `cargo build --release --locked`. Both use Rust 1.99.0 with `rustfmt` and `clippy` configured by `mise.toml`. Run `mise install rust` locally to install the same toolchain.
 
 ## Git hooks
 
-This repo uses [`lefthook`](https://github.com/evilmartians/lefthook) for local git hooks.
+This repository uses [prek](https://github.com/j178/prek) rather than Lefthook. Rust and prek versions are pinned in `mise.toml`.
 
 ```bash
-brew install lefthook
+mise install
 make hooks-install
 ```
 
-Configured hooks:
+For existing checkouts that already installed Lefthook, first run `lefthook uninstall` while the Lefthook CLI is available. This removes its old pre-commit and pre-push Git hooks. Then run the commands above to install prek. `make hooks-install` replaces an existing pre-commit shim.
 
-- `pre-commit`: `cargo fmt --all -- --check` and `cargo check --workspace --all-targets --all-features`
-- `pre-push`: `make ci`
+The `.pre-commit-config.yml` checks YAML, TOML and merge conflict markers, then runs Rust formatting, `cargo check`, Clippy and tests **on each commit**. No pre-push hook is installed by prek.
+
+To run the hooks manually against tracked files:
+
+```bash
+prek run --all-files
+```
 
 | Command | Purpose |
 |---------|---------|
@@ -38,7 +43,7 @@ Configured hooks:
 | `make test` | All tests |
 | `make test-unit` / `test-integration` / `test-e2e` | Split suites |
 | `make build` | Build `target/release/doctty` and refresh the local `bin/doctty` copy so `./bin/doctty` runs the latest local build |
-| `make hooks-install` | Install git hooks from `lefthook.yml` into `.git/hooks` |
+| `make hooks-install` | Install the prek pre-commit hook (overwriting the previous pre-commit shim) |
 
 ## Contributing
 
