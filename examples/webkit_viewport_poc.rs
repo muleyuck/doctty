@@ -138,6 +138,9 @@ mod experiment {
     #[derive(Default)]
     struct TileTimingStats {
         max_snapshot_ms: f64,
+        max_capture_ms: f64,
+        max_encode_ms: f64,
+        max_write_ms: f64,
         max_upload_ms: f64,
     }
 
@@ -148,8 +151,21 @@ mod experiment {
             }
         }
 
+        fn observe_stages(&mut self, capture_ms: f64, encode_ms: f64, write_ms: f64) {
+            if capture_ms.is_finite() {
+                self.max_capture_ms = self.max_capture_ms.max(capture_ms);
+            }
+            if encode_ms.is_finite() {
+                self.max_encode_ms = self.max_encode_ms.max(encode_ms);
+            }
+            if write_ms.is_finite() {
+                self.max_write_ms = self.max_write_ms.max(write_ms);
+            }
+        }
+
         fn observe_uploaded(&mut self, cache: &ImageCache) {
             self.observe_snapshot(cache.last_snapshot_ms);
+            self.observe_stages(cache.last_capture_ms, cache.last_encode_ms, cache.last_write_ms);
             if cache.last_upload_ms.is_finite() {
                 self.max_upload_ms = self.max_upload_ms.max(cache.last_upload_ms);
             }
@@ -165,6 +181,9 @@ mod experiment {
         pixels_per_point: f64,
         document_height: f64,
         last_snapshot_ms: f64,
+        last_capture_ms: f64,
+        last_encode_ms: f64,
+        last_write_ms: f64,
         last_upload_ms: f64,
         png_bytes: usize,
     }
@@ -304,7 +323,12 @@ mod experiment {
 
     enum WorkerEvent {
         Snapshot(ImageCache),
-        Skipped { snapshot_ms: f64 },
+        Skipped {
+            snapshot_ms: f64,
+            capture_ms: f64,
+            encode_ms: f64,
+            write_ms: f64,
+        },
         Selection(String),
         Error(String),
     }
@@ -344,6 +368,9 @@ mod experiment {
                         requested_at,
                     } => {
                         let mut snapshot_ms = 0.0;
+                        let mut capture_ms = 0.0;
+                        let mut encode_ms = 0.0;
+                        let mut write_ms = 0.0;
                         let result = (|| -> Result<Option<ImageCache>> {
                             let response =
                                 swift.request(&json!({"type": "snapshot", "y": origin}))?;
@@ -351,6 +378,9 @@ mod experiment {
                                 bail!("unexpected WebKit snapshot reply: {response}");
                             }
                             snapshot_ms = response["elapsedMs"].as_f64().unwrap_or(0.0);
+                            capture_ms = response["captureMs"].as_f64().unwrap_or(0.0);
+                            encode_ms = response["encodeMs"].as_f64().unwrap_or(0.0);
+                            write_ms = response["writeMs"].as_f64().unwrap_or(0.0);
                             let actual_y = response["actualY"].as_f64().unwrap_or(origin);
                             let obsolete = || {
                                 latest_tiled_position.as_ref().is_some_and(|latest| {
@@ -393,14 +423,22 @@ mod experiment {
                                 image_height,
                                 pixels_per_point: scale,
                                 document_height: response["height"].as_f64().unwrap_or(0.0),
-                                last_snapshot_ms: response["elapsedMs"].as_f64().unwrap_or(0.0),
+                                last_snapshot_ms: snapshot_ms,
+                                last_capture_ms: capture_ms,
+                                last_encode_ms: encode_ms,
+                                last_write_ms: write_ms,
                                 last_upload_ms: upload_ms,
                                 png_bytes: png.len(),
                             }))
                         })();
                         match result {
                             Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
-                            Ok(None) => WorkerEvent::Skipped { snapshot_ms },
+                            Ok(None) => WorkerEvent::Skipped {
+                                snapshot_ms,
+                                capture_ms,
+                                encode_ms,
+                                write_ms,
+                            },
                             Err(error) => WorkerEvent::Error(error.to_string()),
                         }
                     }
@@ -658,6 +696,9 @@ mod experiment {
                 pixels_per_point: scale,
                 document_height: result["height"].as_f64().unwrap_or(0.0),
                 last_snapshot_ms: result["elapsedMs"].as_f64().unwrap_or(0.0),
+                last_capture_ms: result["captureMs"].as_f64().unwrap_or(0.0),
+                last_encode_ms: result["encodeMs"].as_f64().unwrap_or(0.0),
+                last_write_ms: result["writeMs"].as_f64().unwrap_or(0.0),
                 last_upload_ms: 0.0,
                 png_bytes: png.len(),
             };
@@ -1542,6 +1583,9 @@ mod experiment {
                 pixels_per_point: 1.0,
                 document_height: 10_000.0,
                 last_snapshot_ms: 0.0,
+                last_capture_ms: 0.0,
+                last_encode_ms: 0.0,
+                last_write_ms: 0.0,
                 last_upload_ms: 0.0,
                 png_bytes: 100,
             }
