@@ -1,7 +1,7 @@
 ---
 description: Commit message format and conventions
 alwaysApply: false
-globs: ["**/.claude/commands/**", "**/lefthook.yml"]
+globs: ["**/.claude/commands/**", "**/.pre-commit-config.yml"]
 ---
 
 # Commit Style
