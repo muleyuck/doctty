@@ -47,4 +47,3 @@ fn version_flag_stays_numeric_only_when_combined_with_a_path() {
         .success()
         .stdout(diff(format!("{}\n", env!("CARGO_PKG_VERSION"))));
 }
-
