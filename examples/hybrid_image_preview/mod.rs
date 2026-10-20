@@ -449,12 +449,7 @@ mod tests {
                     displayed_id = Some(tile.id);
                 } else {
                     if cached.len() == MAX_PREVIEW_CACHE {
-                        if let Some(old) = evict(
-                            &mut cached,
-                            position,
-                            viewport,
-                            displayed_id,
-                        ) {
+                        if let Some(old) = evict(&mut cached, position, viewport, displayed_id) {
                             assert_ne!(Some(old.id), displayed_id);
                             assert!(!old.covers(position, viewport));
                             evicted_count += 1;
@@ -480,9 +475,10 @@ mod tests {
                 assert!(cached.len() <= MAX_PREVIEW_CACHE);
                 let ids: BTreeSet<_> = cached.iter().map(|tile| tile.id).collect();
                 assert_eq!(ids.len(), cached.len(), "duplicate Kitty IDs");
-                assert!(ids.iter().all(|id| {
-                    (FIRST_PREVIEW_ID..=LAST_PREVIEW_ID).contains(id)
-                }));
+                assert!(
+                    ids.iter()
+                        .all(|id| { (FIRST_PREVIEW_ID..=LAST_PREVIEW_ID).contains(id) })
+                );
             }
         }
         assert!(evicted_count > 10, "stress test must exercise eviction");
@@ -511,7 +507,10 @@ mod tests {
         assert!(!svg.contains("entry-00000"));
         assert!(!svg.contains("entry-11999"));
         assert!(svg.matches("<text ").count() <= 42);
-        assert!(svg.len() < 20000, "SVG size should not grow with document length");
+        assert!(
+            svg.len() < 20000,
+            "SVG size should not grow with document length"
+        );
     }
 
     #[test]
