@@ -405,6 +405,116 @@ mod tests {
     }
 
     #[test]
+    fn tile_geometry_stays_within_the_uploaded_image() {
+        let viewport = 1000;
+        let tile = Tile {
+            id: FIRST_PREVIEW_ID,
+            origin: 1000.0,
+            width: 400,
+            height: 1000,
+        };
+        assert!(!tile.covers(999.0, viewport));
+        assert!(tile.covers(1000.0, viewport));
+        assert!(tile.covers(2000.0, viewport));
+        assert!(!tile.covers(2001.0, viewport));
+        assert_eq!(tile.source_y(1000.0, viewport), 0);
+        assert_eq!(tile.source_y(1500.0, viewport), 250);
+        assert_eq!(tile.source_y(2000.0, viewport), 500);
+        assert_eq!(Tile::viewport_height_px(viewport), 500);
+        assert_eq!(tile_origin(49000.0, viewport, 50000.0), 48000.0);
+        assert_eq!(tile_origin(0.0, viewport, 1000.0), 0.0);
+    }
+
+    #[test]
+    fn preview_cache_remains_bounded_across_repeated_long_scrolls() {
+        use std::collections::BTreeSet;
+
+        let viewport = 1000;
+        let document_height = 50000.0;
+        let mut cached = vec![Tile {
+            id: FIRST_PREVIEW_ID,
+            origin: 0.0,
+            width: 400,
+            height: 1000,
+        }];
+        let mut displayed_id = Some(FIRST_PREVIEW_ID);
+        let mut evicted_count = 0;
+
+        // Model instantaneous worker completion. Repeated bidirectional
+        // sweeps exercise cache admission, eviction, and image-ID reuse.
+        for _ in 0..3 {
+            for step in (0..=196).chain((0..=196).rev()) {
+                let position = f64::from(step * 250);
+                if let Some(tile) = select(&cached, position, viewport) {
+                    displayed_id = Some(tile.id);
+                } else {
+                    if cached.len() == MAX_PREVIEW_CACHE {
+                        if let Some(old) = evict(
+                            &mut cached,
+                            position,
+                            viewport,
+                            displayed_id,
+                        ) {
+                            assert_ne!(Some(old.id), displayed_id);
+                            assert!(!old.covers(position, viewport));
+                            evicted_count += 1;
+                        }
+                    }
+                    if cached.len() < MAX_PREVIEW_CACHE {
+                        let id = free_id(&cached)
+                            .unwrap_or_else(|| panic!("preview image ID exhausted"));
+                        let origin = tile_origin(position, viewport, document_height);
+                        assert!(
+                            cached.iter().all(|tile| tile.origin != origin),
+                            "duplicate preview tile"
+                        );
+                        cached.push(Tile {
+                            id,
+                            origin,
+                            width: 400,
+                            height: 1000,
+                        });
+                    }
+                }
+
+                assert!(cached.len() <= MAX_PREVIEW_CACHE);
+                let ids: BTreeSet<_> = cached.iter().map(|tile| tile.id).collect();
+                assert_eq!(ids.len(), cached.len(), "duplicate Kitty IDs");
+                assert!(ids.iter().all(|id| {
+                    (FIRST_PREVIEW_ID..=LAST_PREVIEW_ID).contains(id)
+                }));
+            }
+        }
+        assert!(evicted_count > 10, "stress test must exercise eviction");
+    }
+
+    #[test]
+    fn long_outline_rasterizes_only_nearby_document_items() {
+        let items = (0..12000)
+            .map(|index| StyledItem {
+                y: f64::from(index) * 24.0,
+                x: 8.0,
+                width: 600.0,
+                height: 20.0,
+                font_size: 14.0,
+                line_height: 20.0,
+                text: format!("entry-{index:05}"),
+                ..StyledItem::default()
+            })
+            .collect();
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items,
+        };
+        let svg = preview_svg(&scene, 120000.0, 800, 480);
+        assert!(svg.contains("entry-05000"));
+        assert!(!svg.contains("entry-00000"));
+        assert!(!svg.contains("entry-11999"));
+        assert!(svg.matches("<text ").count() <= 42);
+        assert!(svg.len() < 20000, "SVG size should not grow with document length");
+    }
+
+    #[test]
     fn preview_wrapping_prefers_word_boundaries_and_wide_text() {
         assert_eq!(
             preview_wrap_lines("Hello world from WebKit", 11, 3),
