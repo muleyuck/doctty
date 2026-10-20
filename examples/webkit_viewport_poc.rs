@@ -771,6 +771,87 @@ mod experiment {
         Ok(current.document_height)
     }
 
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct OutlineItem {
+        y: f64,
+        text: String,
+    }
+
+    fn parse_outline(value: &Value) -> Result<Vec<OutlineItem>> {
+        if value["kind"] != "outline" {
+            bail!("unexpected outline reply: {value}");
+        }
+        let items = value["items"].as_array().context("missing outline items")?;
+        let mut result = Vec::with_capacity(items.len().min(12_000));
+        for item in items.iter().take(12_000) {
+            if let (Some(y), Some(text)) = (item["y"].as_f64(), item["text"].as_str()) {
+                if y.is_finite() && y >= 0.0 && !text.is_empty() {
+                    result.push(OutlineItem { y, text: text.to_owned() });
+                }
+            }
+        }
+        result.sort_by(|a, b| a.y.total_cmp(&b.y));
+        Ok(result)
+    }
+
+    fn preview_lines(
+        outline: &[OutlineItem],
+        position: f64,
+        viewport_height: u32,
+        rows: u16,
+    ) -> Vec<(u16, String)> {
+        if rows == 0 || viewport_height == 0 {
+            return Vec::new();
+        }
+        let end = position + f64::from(viewport_height);
+        let start = outline.partition_point(|entry| entry.y < position);
+        let mut visible = Vec::new();
+        let mut last_row = None;
+        for item in &outline[start..] {
+            if item.y >= end {
+                break;
+            }
+            let row = ((item.y - position) * f64::from(rows)
+                / f64::from(viewport_height))
+                .floor() as u16;
+            if row >= rows || last_row == Some(row) {
+                continue;
+            }
+            visible.push((row, item.text.clone()));
+            last_row = Some(row);
+        }
+        visible
+    }
+
+    fn display_preview(
+        outline: &[OutlineItem],
+        position: f64,
+        columns: u16,
+        rows: u16,
+        viewport_height: u32,
+        previously_placed: Option<u32>,
+    ) -> Result<()> {
+        let mut out = io::stdout().lock();
+        if let Some(image_id) = previously_placed {
+            hide_image_placement(&mut out, image_id)?;
+        }
+        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+        for (row, line) in preview_lines(outline, position, viewport_height, rows) {
+            execute!(out, cursor::MoveTo(0, row))?;
+            let clean: String = line
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(usize::from(columns).saturating_sub(1))
+                .collect();
+            write!(out, "{clean}")?;
+        }
+        execute!(out, cursor::MoveTo(0, rows))?;
+        write!(out, "PREVIEW y={position:.0} (WebKit image pending)")?;
+        out.flush()?;
+        Ok(())
+    }
+
     // Viewport-sized origin steps with 2-viewport overlap. This first tiled
     // experiment can render a viewport from one cached snapshot; no compositing
     // or changes to the stable viewer are required.
@@ -859,6 +940,7 @@ mod experiment {
         viewport_width: u32,
         viewport_height: u32,
         initial: ImageCache,
+        outline: Option<Vec<OutlineItem>>,
     ) -> Result<()> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
@@ -876,6 +958,8 @@ mod experiment {
         let mut skipped_uploads = 0usize;
         let mut tile_timings = TileTimingStats::default();
         tile_timings.observe_uploaded(&cached[0]);
+        let mut showing_preview = false;
+        let mut last_preview_position: Option<u64> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -926,7 +1010,14 @@ mod experiment {
 
             if let Some(tile) = selected {
                 let fingerprint = (tile.image_id, position.to_bits());
-                if last_displayed != Some(fingerprint) {
+                if showing_preview || last_displayed != Some(fingerprint) {
+                    if showing_preview {
+                        let mut out = io::stdout().lock();
+                        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+                        out.flush()?;
+                        showing_preview = false;
+                        last_preview_position = None;
+                    }
                     let status = format!(
                         "TILE snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
                         tile_timings.max_snapshot_ms,
@@ -948,6 +1039,20 @@ mod experiment {
                     last_displayed = Some(fingerprint);
                 }
                 last_wait_status_at = None;
+            } else if let Some(ref outline) = outline {
+                if last_preview_position != Some(position.to_bits()) {
+                    display_preview(
+                        outline,
+                        position,
+                        columns,
+                        rows,
+                        viewport_height,
+                        last_displayed.map(|fingerprint| fingerprint.0),
+                    )?;
+                    showing_preview = true;
+                    last_displayed = None;
+                    last_preview_position = Some(position.to_bits());
+                }
             } else if last_wait_status_at.is_none_or(|previous| {
                 now.saturating_duration_since(previous) >= Duration::from_millis(100)
             }) {
@@ -1073,7 +1178,8 @@ mod experiment {
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let tiled = first == "--tiled";
+        let hybrid = first == "--hybrid";
+        let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
             arguments.next().unwrap_or_else(|| "README.md".into())
         } else {
@@ -1100,6 +1206,12 @@ mod experiment {
             bail!("expected WebKit readiness response: {ready}");
         }
 
+        let outline = if hybrid {
+            Some(parse_outline(&swift.request(&json!({"type": "outline"}))?)?)
+        } else {
+            None
+        };
+
         let _session = TerminalSession::enter()?;
         let mut cache = None;
         let mut position = 0.0;
@@ -1108,7 +1220,7 @@ mod experiment {
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
         if tiled {
-            return run_tiled(swift, output, cols, rows, width, height, active);
+            return run_tiled(swift, output, cols, rows, width, height, active, outline);
         }
         let mut document_height = initial_height;
         let (requests, responses) = spawn_worker(swift, output, width, height, None);
@@ -1324,6 +1436,43 @@ mod experiment {
             assert!(snapshot_is_obsolete(3000.0, 0.0, 3000.0, 1000));
             // Moving rapidly within an overlapping snapshot stays valid.
             assert!(!snapshot_is_obsolete(0.0, 1750.0, 1000.0, 1000));
+        }
+
+        #[test]
+        fn hybrid_preview_matches_dom_positions() {
+            let items = vec![
+                OutlineItem { y: 100.0, text: "before".into() },
+                OutlineItem { y: 1000.0, text: "# Section".into() },
+                OutlineItem { y: 1040.0, text: "paragraph".into() },
+                OutlineItem { y: 1180.0, text: "end".into() },
+            ];
+            assert_eq!(
+                preview_lines(&items, 1000.0, 200, 10),
+                vec![
+                    (0, "# Section".into()),
+                    (2, "paragraph".into()),
+                    (9, "end".into()),
+                ],
+            );
+            assert!(preview_lines(&items, 1400.0, 200, 10).is_empty());
+        }
+
+        #[test]
+        fn hybrid_outline_rejects_invalid_entries_and_sorts() {
+            let payload = json!({
+                "kind": "outline",
+                "items": [
+                    {"y": 500, "text": "later"},
+                    {"y": -1, "text": "invalid"},
+                    {"y": 100, "text": "earlier"},
+                    {"y": 140, "text": ""}
+                ]
+            });
+            let outline = parse_outline(&payload)
+                .unwrap_or_else(|error| panic!("outline parse: {error}"));
+            assert_eq!(outline.len(), 2);
+            assert_eq!(outline[0].text, "earlier");
+            assert_eq!(outline[1].text, "later");
         }
 
         #[test]
