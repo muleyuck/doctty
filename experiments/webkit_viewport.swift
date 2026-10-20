@@ -100,9 +100,9 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                     return
                 }
                 let actualY = (result as? NSNumber)?.doubleValue ?? -1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                    self.capture(started: started, requestedY: targetY, actualY: actualY)
-                }
+                // afterScreenUpdates on WKSnapshotConfiguration already waits for
+                // pending rendering updates. Avoid adding 40 ms to every prefetch.
+                self.capture(started: started, requestedY: targetY, actualY: actualY)
             }
         case "select":
             // An intentional DOM-selection/clipboard bridge experiment, not mouse selection.
