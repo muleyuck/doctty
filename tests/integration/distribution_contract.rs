@@ -22,7 +22,21 @@ fn ci_checks_code_without_write_permissions() {
     );
     assert_eq!(
         inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
-        Some("rustup component add rustfmt clippy && make ci")
+        Some("make ci")
+    );
+    let macos_build = mapping_field(jobs, "macos-build");
+    let macos_inputs = mapping_field(macos_build, "with");
+    assert_eq!(
+        macos_build.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
+    );
+    assert_eq!(
+        macos_inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        Some("cargo build --release --locked")
+    );
+    assert_eq!(
+        macos_inputs.get(Value::String("runs-on".to_string())).and_then(Value::as_str),
+        Some("macos-latest")
     );
     assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
     assert_eq!(

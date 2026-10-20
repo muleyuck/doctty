@@ -23,7 +23,7 @@
 ├── Cargo.toml
 ├── Makefile
 ├── README.md
-└── rust-toolchain.toml
+└── mise.toml
 ```
 
 ## 2. ディレクトリ別の役割
@@ -233,7 +233,7 @@ tests/
 | `README.md` | エンドユーザー向け紹介と使い方 |
 | `Cargo.toml` | crate metadata、依存、lint policy |
 | `Cargo.lock` | 依存 lock |
-| `rust-toolchain.toml` | Rust version 固定 |
+| `mise.toml` | Rust version と clippy/rustfmt の固定 |
 | `.cargo/config.toml` | cargo alias |
 | `Makefile` | build / test / lint の短縮コマンドとローカル用 `bin/doctty` の生成 |
 | `bin/doctty` | `make build` で生成するGit管理外のローカル実行ファイル |

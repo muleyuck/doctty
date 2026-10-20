@@ -6,7 +6,7 @@
 | Status | Active |
 | Product | `doctty` |
 | Language | Rust 2024 |
-| Toolchain | Rust `1.92.0` |
+| Toolchain | Rust `1.99.0` (mise) |
 | Document Basis | Repository audit on 2026-03-29 |
 
 ## 1. 技術概要
@@ -173,7 +173,7 @@ GitHub Actions の `ci.yml` は次を実行する。
 - clippy
 - test
 
-Rust toolchain は `1.92.0` に固定されている。
+Rust toolchain は `mise.toml` で `1.99.0` に固定し、`clippy` と `rustfmt` を含める。CI は Ubuntu で `make ci`、macOS で `cargo build --release --locked` を実行する。
 
 ### 8.3 Distribution
 
