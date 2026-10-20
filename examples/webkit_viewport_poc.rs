@@ -231,14 +231,12 @@ mod experiment {
                             Err(error) => WorkerEvent::Error(error.to_string()),
                         }
                     }
-                    WorkerCommand::Select => {
-                        match swift.request(&json!({"type": "select"})) {
-                            Ok(value) => WorkerEvent::Selection(
-                                value["text"].as_str().unwrap_or("").to_owned(),
-                            ),
-                            Err(error) => WorkerEvent::Error(error.to_string()),
+                    WorkerCommand::Select => match swift.request(&json!({"type": "select"})) {
+                        Ok(value) => {
+                            WorkerEvent::Selection(value["text"].as_str().unwrap_or("").to_owned())
                         }
-                    }
+                        Err(error) => WorkerEvent::Error(error.to_string()),
+                    },
                 };
                 if outgoing.send(reply).is_err() {
                     break;
