@@ -15,11 +15,11 @@ make build
 make ci    # fmt-check, clippy -D warnings, full test suite
 ```
 
-GitHub Actions uses the reusable [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml): Linux runs `make ci`, and macOS runs `cargo build --release --locked`. Both use Rust 1.99.0 with `rustfmt` and `clippy` configured by `mise.toml`, matching jqc's Rust setup. Run `mise install rust` locally to install the same toolchain.
+GitHub Actions uses the reusable [`muleyuck/github-actions` `ci-rust.yml`](https://github.com/muleyuck/github-actions/blob/main/.github/workflows/ci-rust.yml): Linux runs `make ci`, and macOS runs `cargo build --release --locked`. Both use Rust 1.99.0 with `rustfmt` and `clippy` configured by `mise.toml`. Run `mise install rust` locally to install the same toolchain.
 
 ## Git hooks
 
-As in [jqc](https://github.com/muleyuck/jqc), this repository uses [prek](https://github.com/j178/prek) rather than Lefthook. Rust and prek versions are pinned in `mise.toml`.
+This repository uses [prek](https://github.com/j178/prek) rather than Lefthook. Rust and prek versions are pinned in `mise.toml`.
 
 ```bash
 mise install
@@ -28,7 +28,7 @@ make hooks-install
 
 For existing checkouts that already installed Lefthook, first run `lefthook uninstall` while the Lefthook CLI is available. This removes its old pre-commit and pre-push Git hooks. Then run the commands above to install prek. `make hooks-install` replaces an existing pre-commit shim.
 
-The `.pre-commit-config.yml` checks YAML, TOML and merge conflict markers, then runs Rust formatting, `cargo check`, Clippy and tests **on each commit** (matching jqc's pre-commit policy). No pre-push hook is installed by prek.
+The `.pre-commit-config.yml` checks YAML, TOML and merge conflict markers, then runs Rust formatting, `cargo check`, Clippy and tests **on each commit**. No pre-push hook is installed by prek.
 
 To run the hooks manually against tracked files:
 
