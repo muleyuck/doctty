@@ -3,6 +3,7 @@
 .DS_Store
 
 .doctty-webkit
+/bin/
 
 # Claude Code per-machine approvals and local permissions
 /.claude/settings.local.json

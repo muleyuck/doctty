@@ -3,62 +3,54 @@ use std::{fs, path::Path};
 use serde_yaml::{Mapping, Value};
 
 #[test]
-fn install_script_downloads_the_tracked_main_binary_with_feedback() {
-    let script = fs::read_to_string("scripts/install.sh").unwrap_or_else(|error| {
-        panic!("install script should be readable from the repository root: {error}")
-    });
-
-    assert!(
-        script.contains("raw.githubusercontent.com/${REPO}/main/bin/doctty"),
-        "install script should download the tracked main binary"
-    );
-    assert!(script.contains("spinner"), "install script should provide loading feedback");
-    assert!(script.contains("_____"), "install script should print the success ASCII banner");
-}
-
-#[test]
-fn ci_workflow_refreshes_the_tracked_binary_on_main_pushes() {
+fn ci_checks_code_without_write_permissions() {
     let workflow = fs::read_to_string(".github/workflows/ci.yml")
-        .unwrap_or_else(|error| panic!("ci workflow should be readable: {error}"));
+        .unwrap_or_else(|error| panic!("CI workflow should be readable: {error}"));
     let parsed = parse_yaml(&workflow);
     let root = parsed.as_mapping().unwrap_or_else(|| panic!("workflow root should be a mapping"));
     let jobs = mapping_field(root, "jobs");
+    let permissions = mapping_field(root, "permissions");
     let triggers = mapping_field(root, "on");
     let push = mapping_field(triggers, "push");
     let branches = sequence_field(push, "branches");
 
-    assert!(
-        jobs.contains_key(Value::String("checks".to_string())),
-        "ci workflow should keep the core checks job"
+    let checks = mapping_field(jobs, "checks");
+    let inputs = mapping_field(checks, "with");
+    assert_eq!(
+        checks.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
     );
-    assert!(
-        jobs.contains_key(Value::String("refresh_tracked_binary".to_string())),
-        "ci workflow should refresh bin/doctty from CI on main pushes"
+    assert_eq!(
+        inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        Some("make ci")
     );
-    assert!(
-        workflow.contains("github.actor != 'github-actions[bot]'"),
-        "ci workflow should avoid infinite bot-triggered refresh loops"
+    let macos_build = mapping_field(jobs, "macos-build");
+    let macos_inputs = mapping_field(macos_build, "with");
+    assert_eq!(
+        macos_build.get(Value::String("uses".to_string())).and_then(Value::as_str),
+        Some("muleyuck/github-actions/.github/workflows/ci-rust.yml@v1")
     );
-    assert!(
-        workflow.contains("git add bin/doctty"),
-        "ci workflow should commit refreshed bin/doctty back to main"
+    assert_eq!(
+        macos_inputs.get(Value::String("test-command".to_string())).and_then(Value::as_str),
+        Some("cargo build --release --locked")
     );
-    assert!(
-        workflow.contains("git fetch origin main"),
-        "ci workflow should fetch the latest main branch before pushing refreshed bin/doctty"
+    assert_eq!(
+        macos_inputs.get(Value::String("runs-on".to_string())).and_then(Value::as_str),
+        Some("macos-latest")
     );
-    assert!(
-        workflow.contains("git rebase origin/main"),
-        "ci workflow should rebase onto the latest main branch before pushing refreshed bin/doctty"
+    assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
+    assert_eq!(
+        permissions.get(Value::String("contents".to_string())).and_then(Value::as_str),
+        Some("read")
     );
-    assert!(
-        branches.iter().any(|branch| branch.as_str() == Some("main")),
-        "ci workflow should run on pushes to main"
-    );
-    assert!(
-        !jobs.contains_key(Value::String("release_assets".to_string())),
-        "ci workflow should no longer define the old release asset job"
-    );
+    assert!(branches.iter().any(|branch| branch.as_str() == Some("main")));
+}
+
+#[test]
+fn legacy_distribution_is_removed() {
+    assert!(!Path::new("scripts/install.sh").exists());
+    assert!(!Path::new("bin/doctty").exists());
+    assert!(!Path::new("src/io/self_update.rs").exists());
 }
 
 #[test]

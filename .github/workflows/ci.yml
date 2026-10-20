@@ -7,70 +7,19 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1
+    with:
+      test-command: make ci
+      install-args: rust
+      runs-on: ubuntu-latest
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-          components: clippy,rustfmt
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --all-targets --all-features
-
-  refresh_tracked_binary:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
-    needs: checks
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build tracked binary
-        run: make build-tracked-bin
-
-      - name: Detect tracked binary changes
-        id: tracked_binary
-        run: |
-          if git diff --quiet -- bin/doctty; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit refreshed tracked binary
-        if: steps.tracked_binary.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bin/doctty
-          git commit -m "ci: refresh tracked binary"
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+  macos-build:
+    uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1
+    with:
+      test-command: cargo build --release --locked
+      install-args: rust
+      runs-on: macos-latest

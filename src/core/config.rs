@@ -16,11 +16,7 @@ impl TryFrom<DocttyArgs> for AppConfig {
     type Error = anyhow::Error;
 
     fn try_from(value: DocttyArgs) -> Result<Self> {
-        let DocttyArgs { command, path, watch, theme, no_mermaid, .. } = value;
-
-        if command.is_some() {
-            bail!("view configuration cannot be built from a subcommand")
-        }
+        let DocttyArgs { path, watch, theme, no_mermaid, .. } = value;
 
         let Some(path) = path else { bail!("doctty requires a Markdown file path") };
 

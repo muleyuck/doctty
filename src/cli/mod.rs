@@ -1,6 +1,6 @@
 mod args;
 
-pub use args::{DocttyArgs, DocttyCommand, Theme};
+pub use args::{DocttyArgs, Theme};
 
 #[must_use]
 pub fn parse() -> DocttyArgs {
@@ -16,10 +16,6 @@ pub fn parse() -> DocttyArgs {
 
 #[must_use]
 pub fn startup_message(args: &DocttyArgs) -> String {
-    if matches!(args.command.as_ref(), Some(DocttyCommand::Update)) {
-        return "doctty: command=update".to_string();
-    }
-
     let path = args.path.as_deref().unwrap_or_else(|| std::path::Path::new("<missing>"));
     let mut message = format!("doctty: path={}", path.display());
 

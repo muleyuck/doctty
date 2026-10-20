@@ -1,4 +1,4 @@
-use doctty::cli::{DocttyArgs, DocttyCommand, Theme};
+use doctty::cli::{DocttyArgs, Theme};
 
 #[test]
 fn parses_watch_theme_and_mermaid_flags() {
@@ -15,14 +15,6 @@ fn parses_watch_theme_and_mermaid_flags() {
     assert!(args.watch);
     assert!(args.no_mermaid);
     assert_eq!(args.path.as_deref(), Some(std::path::Path::new("docs/PRD.md")));
-}
-
-#[test]
-fn parses_update_subcommand_without_document_path() {
-    let args = DocttyArgs::parse_from(["doctty", "update"]);
-
-    assert_eq!(args.command, Some(DocttyCommand::Update));
-    assert_eq!(args.path, None);
 }
 
 #[test]

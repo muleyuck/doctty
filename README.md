@@ -28,19 +28,18 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 | **Syntax highlighting**      | 100+ languages via [syntect](https://github.com/trishume/syntect)                              |
 | **System/light/dark themes** | `system` by default, with explicit `light` / `dark` overrides                                  |
 | **Watch mode**               | `--watch` auto-reloads on file change                                                          |
-| **Quick update**             | `doctty update` replaces the current executable when `main`'s CI-generated `bin/doctty` changes      |
 | **Pipe-friendly**            | Plain-text fallback when stdout is not a TTY — works in CI and scripts                         |
 | **Vim navigation**           | `j`/`k`/`g`/`G`/PageUp/PageDown                                                                |
 
 ## Quick start
 
-**Install** (into `$HOME/.local/bin` by default):
+**Install from a local checkout** (requires Rust 1.92+):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/muleyuck/doctty/main/scripts/install.sh | sh
+cargo install --path . --locked
 ```
 
-This installs the CI-generated [`bin/doctty`](bin/doctty) artifact from `main`. If that binary does not match your host platform, build from source instead.
+Versioned GitHub Releases and Homebrew distribution are planned. There is currently no installer script or in-app updater.
 
 **Run** (in Ghostty or Kitty):
 
@@ -55,7 +54,6 @@ doctty README.md                           # system theme (default)
 doctty --theme dark notes.md               # dark theme
 doctty --watch docs/guide.md               # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
-doctty update                              # replace this doctty if main/bin/doctty changed
 doctty --version                           # print the current version
 doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 ```
@@ -82,17 +80,19 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 ## Installation
 
-| Method             | Command / notes                                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Install script** | See [Quick start](#quick-start). Downloads the CI-generated `main` branch [`bin/doctty`](bin/doctty) and installs it into `DOCTTY_INSTALL_DIR` or `$HOME/.local/bin`. |
-| **Cargo**          | `cargo install --path . --locked --force` or `make install-local` from a clone                                                                               |
+From a clone, install with Cargo:
+
+```bash
+cargo install --path . --locked
+```
+
+For development, run `make build` and execute `./bin/doctty`. The `bin/` directory is generated locally and is not committed.
 
 ## Troubleshooting
 
 | Symptom                            | What to try                                                                                                          |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `doctty: command not found`           | Ensure `$HOME/.local/bin` is on `PATH`, then restart the terminal.                                                   |
-| `doctty update` fails                 | Confirm the current `doctty` location is writable and GitHub `main` exposes the expected [`bin/doctty`](bin/doctty) artifact. |
+| `doctty: command not found`           | Ensure Cargo's bin directory (usually `$HOME/.cargo/bin`) is on `PATH`.                                                   |
 | Plain text instead of rich viewer  | Requires a TTY in Ghostty or Kitty. Pipes and redirects trigger headless mode by design.                             |
 | Mermaid diagrams show placeholders | Install `mmdc` or use `npx @mermaid-js/mermaid-cli`. Use `--no-mermaid` to skip entirely.                            |
 | Graphic / snapshot issues          | Rich rendering uses WebKit (macOS only). See [docs/TECH.md](docs/TECH.md).                                           |

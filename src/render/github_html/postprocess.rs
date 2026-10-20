@@ -495,16 +495,9 @@ fn parse_attributes_strict(input: &str) -> Option<Vec<(String, String)>> {
             Some((name, after)) => (name.trim(), after.trim()),
             None => return None,
         };
-        let quoted = match after_name.strip_prefix('"') {
-            Some(after_quote) => match after_quote.split_once('"') {
-                Some((value, remainder)) => {
-                    rest = remainder.trim();
-                    value
-                }
-                None => return None,
-            },
-            None => return None,
-        };
+        let after_quote = after_name.strip_prefix('"')?;
+        let (quoted, remainder) = after_quote.split_once('"')?;
+        rest = remainder.trim();
         if quoted.contains('<') || quoted.contains('>') {
             return None;
         }
