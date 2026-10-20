@@ -130,10 +130,10 @@ pub(crate) fn spawn(
     viewport_width: u32,
     viewport_height: u32,
     latest_position: Arc<AtomicU64>,
-) -> (Sender<Request>, Receiver<Response>) {
+) -> (Sender<Request>, Receiver<Response>, thread::JoinHandle<()>) {
     let (requests, incoming) = mpsc::channel::<Request>();
     let (outgoing, responses) = mpsc::channel::<Response>();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         while let Ok(request) = incoming.recv() {
             let obsolete = || {
                 let current = f64::from_bits(latest_position.load(Ordering::Relaxed));
@@ -175,7 +175,7 @@ pub(crate) fn spawn(
             }
         }
     });
-    (requests, responses)
+    (requests, responses, worker)
 }
 
 fn safe_color(input: &str, fallback: &str) -> String {
