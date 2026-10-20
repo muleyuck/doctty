@@ -20,7 +20,6 @@ fn help_mentions_core_flags() {
         .stdout(contains("system"));
 }
 
-
 #[test]
 fn version_flag_prints_the_package_version() {
     let mut command = match Command::cargo_bin("doctty") {

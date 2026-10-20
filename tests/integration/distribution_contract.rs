@@ -15,18 +15,12 @@ fn ci_checks_code_without_write_permissions() {
     let branches = sequence_field(push, "branches");
 
     assert!(jobs.contains_key(Value::String("checks".to_string())));
-    assert!(
-        !jobs.contains_key(Value::String("refresh_tracked_binary".to_string()))
-    );
+    assert!(!jobs.contains_key(Value::String("refresh_tracked_binary".to_string())));
     assert_eq!(
-        permissions
-            .get(Value::String("contents".to_string()))
-            .and_then(Value::as_str),
+        permissions.get(Value::String("contents".to_string())).and_then(Value::as_str),
         Some("read")
     );
-    assert!(
-        branches.iter().any(|branch| branch.as_str() == Some("main"))
-    );
+    assert!(branches.iter().any(|branch| branch.as_str() == Some("main")));
 }
 
 #[test]

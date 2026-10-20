@@ -17,7 +17,6 @@ fn parses_watch_theme_and_mermaid_flags() {
     assert_eq!(args.path.as_deref(), Some(std::path::Path::new("docs/PRD.md")));
 }
 
-
 #[test]
 fn defaults_theme_to_system() {
     let args = DocttyArgs::parse_from(["doctty", "docs/PRD.md"]);
