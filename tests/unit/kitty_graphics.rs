@@ -32,15 +32,15 @@ fn chunks_large_png_transfers_with_correct_continuation_markers() {
             let more = if final_frame { 0 } else { 1 };
 
             if index == 0 {
-                assert_eq!(
-                    control,
-                    format!("a=t,t=d,f=100,i=31,q=2,m={more}")
-                );
+                assert_eq!(control, format!("a=t,t=d,f=100,i=31,q=2,m={more}"));
             } else {
                 assert_eq!(control, format!("m={more}"));
             }
 
-            assert!(chunk.len() <= 4096, "Kitty payload exceeds the 4096-byte limit");
+            assert!(
+                chunk.len() <= 4096,
+                "Kitty payload exceeds the 4096-byte limit"
+            );
             if !final_frame {
                 assert_eq!(chunk.len(), 4096);
                 assert_eq!(chunk.len() % 4, 0);

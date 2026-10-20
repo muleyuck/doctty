@@ -37,13 +37,13 @@ pub fn encode_transmit_png(image_id: u32, png_bytes: &[u8]) -> String {
         .step_by(MAX_GRAPHICS_CHUNK_BYTES)
         .enumerate()
     {
-        let end = start.saturating_add(MAX_GRAPHICS_CHUNK_BYTES).min(payload.len());
+        let end = start
+            .saturating_add(MAX_GRAPHICS_CHUNK_BYTES)
+            .min(payload.len());
         let more = u8::from(end < payload.len());
 
         if index == 0 {
-            commands.push_str(&format!(
-                "\u{1b}_Ga=t,t=d,f=100,i={image_id},q=2,m={more};"
-            ));
+            commands.push_str(&format!("\u{1b}_Ga=t,t=d,f=100,i={image_id},q=2,m={more};"));
         } else {
             commands.push_str(&format!("\u{1b}_Gm={more};"));
         }
