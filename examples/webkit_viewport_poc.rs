@@ -1167,9 +1167,8 @@ mod experiment {
             }
 
             if pending.is_none() {
-                let recovery = outline.is_some()
-                    && selected.is_none()
-                    && idle_for >= HYBRID_SETTLE_AFTER;
+                let recovery =
+                    outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
                 let origin = if recovery {
                     recovery_tile_origin(&cached, position, viewport_height, document_height)
                 } else {
@@ -1551,30 +1550,18 @@ mod experiment {
                 HybridDisplayMode::Preview
             );
             assert_eq!(
-                hybrid_display_mode(
-                    true,
-                    true,
-                    Duration::from_millis(300),
-                    HYBRID_SETTLE_AFTER,
-                ),
+                hybrid_display_mode(true, true, Duration::from_millis(300), HYBRID_SETTLE_AFTER,),
+
                 HybridDisplayMode::Image
             );
             assert_eq!(
-                hybrid_display_mode(
-                    false,
-                    false,
-                    Duration::from_millis(50),
-                    Duration::ZERO,
-                ),
+                hybrid_display_mode(false, false, Duration::from_millis(50), Duration::ZERO,),
+
                 HybridDisplayMode::Hold
             );
             assert_eq!(
-                hybrid_display_mode(
-                    false,
-                    false,
-                    HYBRID_PREVIEW_AFTER,
-                    Duration::ZERO,
-                ),
+                hybrid_display_mode(false, false, HYBRID_PREVIEW_AFTER, Duration::ZERO,),
+
                 HybridDisplayMode::Preview
             );
         }
