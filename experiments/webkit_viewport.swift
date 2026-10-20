@@ -140,6 +140,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 }
                 const style = window.getComputedStyle(el);
                 const normalizedColor = value => {
+                  if (value.startsWith('rgba(') &&
+                      Number(value.slice(value.lastIndexOf(',') + 1).replace(')', '').trim()) === 0) {
+                    return '';
+                  }
                   const match = value.match(/^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
                   return match ? '#' + [match[1], match[2], match[3]]
                     .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
