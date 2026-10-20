@@ -701,7 +701,8 @@ mod experiment {
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
-                Some(entry.image_id) != displayed_image_id && !entry.covers(position, viewport_height)
+                Some(entry.image_id) != displayed_image_id
+                    && !entry.covers(position, viewport_height)
             })
             .max_by(|(_, a), (_, b)| {
                 (a.source_y - position)
