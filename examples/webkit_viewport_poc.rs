@@ -41,6 +41,10 @@ mod experiment {
     // Keep each visible scroll step small (4 arrow keys x 16px = 64px).
     // Larger batches reduce Kitty placements but look jumpy on fast trackpad input.
     const MAX_INPUT_BATCH: usize = 4;
+    // Experimental bounded tile store: four uploaded 2-viewport snapshots
+    // and at most one additional in-flight image.
+    const MAX_TILE_CACHE: usize = 4;
+    const LAST_TILE_IMAGE_ID: u32 = 93_006;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
@@ -182,8 +186,9 @@ mod experiment {
         fn drop(&mut self) {
             let mut stdout = io::stdout().lock();
             // Free both of this PoC's fixed image IDs, even on early exit.
-            let _ = delete_image(&mut stdout, FIRST_IMAGE_ID);
-            let _ = delete_image(&mut stdout, SECOND_IMAGE_ID);
+            for id in FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID {
+                let _ = delete_image(&mut stdout, id);
+            }
             let _ = stdout.flush();
             let _ = terminal::disable_raw_mode();
             let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
@@ -623,6 +628,239 @@ mod experiment {
         Ok(current.document_height)
     }
 
+
+    // Viewport-sized origin steps with 2-viewport overlap. This first tiled
+    // experiment can render a viewport from one cached snapshot; no compositing
+    // or changes to the stable viewer are required.
+    fn select_tile(
+        cached: &[ImageCache],
+        position: f64,
+        viewport_height: u32,
+    ) -> Option<&ImageCache> {
+        cached
+            .iter()
+            .filter(|entry| entry.covers(position, viewport_height))
+            .min_by(|a, b| {
+                let midpoint_a = a.source_y + f64::from(viewport_height) * 0.5;
+                let midpoint_b = b.source_y + f64::from(viewport_height) * 0.5;
+                (position - midpoint_a)
+                    .abs()
+                    .total_cmp(&(position - midpoint_b).abs())
+            })
+    }
+
+    // Directional queue priority: current viewport, two ahead, one behind.
+    // Work is admitted only when the previous snapshot has finished, so
+    // unused tiles cannot accumulate in an unbounded worker queue.
+    fn next_tile_origin(
+        cached: &[ImageCache],
+        position: f64,
+        viewport_height: u32,
+        document_height: f64,
+        direction: ScrollDirection,
+    ) -> Option<f64> {
+        let height = f64::from(viewport_height);
+        let max_origin = (document_height - height * 2.0).max(0.0);
+        let tile_index = (position / height).floor() as i64;
+        let offsets: [i64; 4] = match direction {
+            ScrollDirection::Forward => [0, 1, 2, -1],
+            ScrollDirection::Backward => [0, -1, -2, 1],
+        };
+        offsets
+            .into_iter()
+            .filter_map(|delta| tile_index.checked_add(delta))
+            .filter(|index| *index >= 0)
+            .map(|index| ((index as f64) * height).min(max_origin))
+            .find(|origin| {
+                !cached
+                    .iter()
+                    .any(|entry| (entry.source_y - origin).abs() <= 1.0)
+            })
+    }
+
+    fn tile_image_id(cached: &[ImageCache]) -> Option<u32> {
+        (FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID)
+            .find(|id| cached.iter().all(|entry| entry.image_id != *id))
+    }
+
+    fn evict_tile(
+        cached: &mut Vec<ImageCache>,
+        position: f64,
+        viewport_height: u32,
+        displayed_image_id: Option<u32>,
+    ) -> Option<ImageCache> {
+        let index = cached
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                entry.image_id != displayed_image_id
+                    && !entry.covers(position, viewport_height)
+            })
+            .max_by(|(_, a), (_, b)| {
+                (a.source_y - position)
+                    .abs()
+                    .total_cmp(&(b.source_y - position).abs())
+            })
+            .map(|(index, _)| index)?;
+        Some(cached.remove(index))
+    }
+
+    // Independent prototype for comparison with the original single-prefetch
+    // viewer. All costly WebKit captures and PNG transfers stay on the worker.
+    // The event loop never waits for a snapshot. Images held by Kitty are
+    // bounded to MAX_TILE_CACHE + one upload and freed on eviction/exit.
+    fn run_tiled(
+        swift: SwiftProcess,
+        png_path: PathBuf,
+        columns: u16,
+        rows: u16,
+        viewport_width: u32,
+        viewport_height: u32,
+        initial: ImageCache,
+    ) -> Result<()> {
+        let mut document_height = initial.document_height;
+        let (requests, responses) = spawn_worker(swift, png_path, viewport_width);
+        let mut cached = vec![initial];
+        let mut position = 0.0;
+        let mut direction = ScrollDirection::Forward;
+        let mut pending: Option<u32> = None;
+        let mut last_displayed: Option<(u32, u64)> = None;
+        let mut wait = CacheWaitStats::default();
+        let mut last_wait_status_at: Option<Instant> = None;
+
+        'viewer: loop {
+            loop {
+                match responses.try_recv() {
+                    Ok(WorkerEvent::Snapshot(next)) => {
+                        pending = None;
+                        document_height = next.document_height;
+                        // Skip images too far behind a quick direction reversal.
+                        if (next.source_y - position).abs()
+                            > f64::from(viewport_height) * 4.0
+                        {
+                            let mut out = io::stdout().lock();
+                            delete_image(&mut out, next.image_id)?;
+                            out.flush()?;
+                        } else {
+                            cached.push(next);
+                        }
+                    }
+                    Ok(WorkerEvent::Selection(text)) => {
+                        if !text.is_empty() {
+                            let mut out = io::stdout().lock();
+                            write!(out, "\x1b]52;c;{}\x07", STANDARD.encode(text))?;
+                            out.flush()?;
+                        }
+                    }
+                    Ok(WorkerEvent::Error(error)) => bail!("WebKit tile: {error}"),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => bail!("WebKit tile worker disconnected"),
+                }
+            }
+
+            let now = Instant::now();
+            let selected = select_tile(&cached, position, viewport_height);
+            wait.observe(selected.is_some(), now);
+
+            if let Some(tile) = selected {
+                let fingerprint = (tile.image_id, position.to_bits());
+                if last_displayed != Some(fingerprint) {
+                    let status = format!(
+                        "TILED cached={} waits={} max={:.0}ms",
+                        cached.len(),
+                        wait.episodes,
+                        wait.worst(now).as_secs_f64() * 1000.0
+                    );
+                    display_cached(
+                        tile,
+                        position,
+                        columns,
+                        rows,
+                        viewport_height,
+                        &status,
+                    )?;
+                    last_displayed = Some(fingerprint);
+                }
+                last_wait_status_at = None;
+            } else if last_wait_status_at.is_none_or(|previous| {
+                now.saturating_duration_since(previous) >= Duration::from_millis(100)
+            }) {
+                // No image can cover this position yet. Keep the previous
+                // placement until the worker publishes the missing tile.
+                let last = cached
+                    .iter()
+                    .find(|entry| Some(entry.image_id) == last_displayed.map(|v| v.0));
+                if let Some(tile) = last.or_else(|| cached.first()) {
+                    display_cache_wait(
+                        tile,
+                        position,
+                        columns,
+                        rows,
+                        viewport_height,
+                        pending.is_some(),
+                        &wait,
+                        now,
+                    )?;
+                }
+                last_wait_status_at = Some(now);
+            }
+
+            if pending.is_none() {
+                if let Some(origin) = next_tile_origin(
+                    &cached,
+                    position,
+                    viewport_height,
+                    document_height,
+                    direction,
+                ) {
+                    if cached.len() >= MAX_TILE_CACHE {
+                        if let Some(old) = evict_tile(
+                            &mut cached,
+                            position,
+                            viewport_height,
+                            last_displayed.map(|v| v.0),
+                        ) {
+                            let mut out = io::stdout().lock();
+                            delete_image(&mut out, old.image_id)?;
+                            out.flush()?;
+                        }
+                    }
+                    if cached.len() < MAX_TILE_CACHE {
+                        if let Some(image_id) = tile_image_id(&cached) {
+                            requests.send(WorkerCommand::Snapshot { origin, image_id })?;
+                            pending = Some(image_id);
+                        }
+                    }
+                }
+            }
+
+            if !event::poll(Duration::from_millis(12))? {
+                continue;
+            }
+            for index in 0..MAX_INPUT_BATCH {
+                if index > 0 && !event::poll(Duration::ZERO)? {
+                    break;
+                }
+                let Event::Key(key) = event::read()? else {
+                    continue;
+                };
+                match apply_key(
+                    key,
+                    &mut position,
+                    &mut direction,
+                    document_height,
+                    viewport_height,
+                ) {
+                    InputAction::Quit => break 'viewer,
+                    InputAction::Select => requests.send(WorkerCommand::Select)?,
+                    InputAction::Continue => {}
+                }
+            }
+        }
+        drop(requests);
+        Ok(())
+    }
+
     fn graphics_probe() -> Result<()> {
         use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
@@ -659,9 +897,14 @@ mod experiment {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("run this interactive experiment in Ghostty or Herdr");
         }
-        let arg = std::env::args_os()
-            .nth(1)
-            .unwrap_or_else(|| "README.md".into());
+        let mut arguments = std::env::args_os().skip(1);
+        let first = arguments.next().unwrap_or_else(|| "README.md".into());
+        let tiled = first == "--tiled";
+        let arg = if tiled {
+            arguments.next().unwrap_or_else(|| "README.md".into())
+        } else {
+            first
+        };
         if arg == "--graphics-probe" {
             return graphics_probe();
         }
@@ -690,6 +933,9 @@ mod experiment {
             &mut swift, &output, position, cols, rows, width, height, &mut cache,
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
+        if tiled {
+            return run_tiled(swift, output, cols, rows, width, height, active);
+        }
         let mut document_height = initial_height;
         let (requests, responses) = spawn_worker(swift, output, width);
         let mut pending = false;
@@ -849,6 +1095,82 @@ mod experiment {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+
+        #[test]
+        fn tiled_prefetch_stays_bounded_and_prioritizes_direction() {
+            let first = cached_at(0.0);
+            assert_eq!(
+                next_tile_origin(
+                    &[first.clone()],
+                    0.0,
+                    1000,
+                    10_000.0,
+                    ScrollDirection::Forward
+                ),
+                Some(1000.0)
+            );
+            let next = cached_at(1000.0);
+            assert_eq!(
+                next_tile_origin(
+                    &[first.clone(), next.clone()],
+                    0.0,
+                    1000,
+                    10_000.0,
+                    ScrollDirection::Forward
+                ),
+                Some(2000.0)
+            );
+            assert_eq!(
+                next_tile_origin(
+                    &[next],
+                    1000.0,
+                    1000,
+                    10_000.0,
+                    ScrollDirection::Backward
+                ),
+                Some(0.0)
+            );
+        }
+
+        #[test]
+        fn tile_eviction_preserves_visible_and_displayed_images() {
+            let mut cached = vec![
+                cached_at(0.0),
+                cached_at(1000.0),
+                cached_at(2000.0),
+                cached_at(3000.0),
+            ];
+            for (index, tile) in cached.iter_mut().enumerate() {
+                tile.image_id = FIRST_IMAGE_ID + index as u32;
+            }
+            let removed = evict_tile(&mut cached, 1500.0, 1000, Some(FIRST_IMAGE_ID))
+                .unwrap_or_else(|| panic!("should find an unused tile"));
+            assert_eq!(removed.source_y, 3000.0);
+            assert_eq!(cached.len(), 3);
+            assert!(cached.iter().any(|tile| tile.source_y == 0.0));
+            assert!(cached.iter().any(|tile| tile.source_y == 1000.0));
+        }
+
+        #[test]
+        fn tile_selection_respects_image_coverage() {
+            let cached = vec![cached_at(0.0), cached_at(1000.0)];
+            assert_eq!(
+                select_tile(&cached, 1200.0, 1000).map(|tile| tile.source_y),
+                Some(1000.0)
+            );
+            assert!(select_tile(&cached, 2500.0, 1000).is_none());
+            assert_eq!(
+                next_tile_origin(
+                    &[cached_at(0.0)],
+                    0.0,
+                    1000,
+                    2000.0,
+                    ScrollDirection::Forward
+                ),
+                None
+            );
         }
 
         #[test]
