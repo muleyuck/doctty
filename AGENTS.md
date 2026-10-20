@@ -1,77 +1,54 @@
-# Agent Guidelines
+# doctty — Project guidance
 
-- please do not eslint-disable, just fix the implementation
-- Please use GitHub Flavored Markdown
+doctty is a Rust 2024 Markdown viewer for interactive terminals and headless/piped output.
+These are shared repository standards for human contributors and coding agents. Use personal
+Claude/Codex settings for model selection, delegation, and optional automation.
 
-## Project Docs (Project Context)
+## Preserve these contracts
 
-Load `docs/` as project memory at session start or when context is needed.
+- Preserve existing CLI flags, output modes, and terminal behavior unless explicitly changing them.
+- When changing CLI or distribution behavior, trace its consumers across code, tests, scripts,
+  documentation, and CI (where applicable), then verify the affected contracts.
+- Treat release binaries as build artifacts; do not manually patch a compiled binary.
+- Keep the MIT LICENSE intact and preserve attribution to the upstream `posaune0423/mdv` project.
 
-- **Path**: `docs/`
-- **Default files**: `PRODUCT.md`, `TECH.md`, `STRUCTURE.md`
-- **Task memory**: `.agents/memory/todo.md`, `.agents/memory/lessons.md`
-- **Other docs**: Add or manage as needed (domain-specific .md)
+## Read context only when relevant
 
-Use these docs to align decisions with product goals, tech stack, and structure.
+- `docs/TECH.md` — implementation architecture or rendering changes.
+- `docs/STRUCTURE.md` — unfamiliar module boundaries.
+- `docs/DEVELOPMENT.md` — local commands, hooks, and distribution workflow.
+- `.agents/memory/` contains historical work notes, **not** the active task ledger.
+  Do not read it at session start or append to it for routine tasks; consult it only
+  when historical context is specifically needed.
 
----
+Do not preload all project docs or past task logs before a small edit.
 
-## Workflow Orchestration
+## Change and verification policy
 
-### 1. Plan Node Default
+- Keep changes focused. For mechanical, behavior-preserving renames, search callers and
+  references, edit the affected surfaces, then run relevant existing checks.
+  Do not manufacture a failing test for a rename that does not change behavior.
+- For new or changed behavior, add or adjust tests covering the contract and failure cases.
+- For rendering changes, check real TTY output, navigation, and startup behavior when available;
+  a successful unit test or process launch alone does not prove visual correctness.
+- Prefer targeted checks while developing; use broader checks for cross-cutting or risky changes.
+- Formatting: `cargo fmt --all -- --check`
+- Type checking: `cargo check --workspace --all-targets --all-features`
+- Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- Tests: `cargo test --workspace --all-targets --all-features`
+- GitHub Actions is the full-suite PR gate; run `make ci` locally for broad/high-risk changes
+  when feasible. Existing Git hooks remain in effect. Check CLI/distribution contracts as applicable.
+- If a local command is blocked by a sandbox or filesystem restriction, diagnose it once,
+  report the limitation, and use CI results when available. Do not claim a check passed
+  when it did not run successfully.
 
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
+## Review and collaboration
 
-### 2. Subagent Strategy
-
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One tack per subagent for focused execution
-
-### 3. Self-Improvement Loop
-
-- After ANY correction from the user: update `.agents/memory/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes - don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests - then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `.agents/memory/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `.agents/memory/todo.md`
-6. **Capture Lessons**: Update `.agents/memory/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code. YAGNI, KISS, DRY. No backward-compat shims or fallback paths unless they come free without adding cyclomatic complexity.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-- **Video Is Canon**: The reference video is the ultimate authority. If implementation looks different from the video, the implementation is wrong.
+- Review for actionable correctness, compatibility, security, and test gaps.
+- Prefer one whole-change review. After fixes, review only the new diff, unresolved findings,
+  and necessary surrounding context. Repeat a full review only for a material design/risk change.
+  If blocking findings remain after two targeted fix/review attempts, report them and stop
+  rather than starting an unbounded review loop.
+- Planning documents, subagents, cross-model reviews, mutation tests, and model effort
+  are optional execution methods, not mandatory steps for every contributor or edit.
+- Report what changed, what was verified, and any remaining limitations.
