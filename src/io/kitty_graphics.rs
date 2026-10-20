@@ -21,13 +21,37 @@ pub enum DeleteCommand {
     Placement { image_id: u32, placement_id: u32 },
 }
 
+// The Kitty protocol limits Base64 payloads to 4096 bytes per APC command.
+// Large single-APC uploads can be discarded by terminal multiplexers.
+const MAX_GRAPHICS_CHUNK_BYTES: usize = 4096;
+
 #[must_use]
 pub fn encode_transmit_png(image_id: u32, png_bytes: &[u8]) -> String {
     let payload = STANDARD.encode(png_bytes);
-    format!(
-        "\u{1b}_Ga=t,t=d,f=100,i={},q=2;{}\u{1b}\\",
-        image_id, payload
-    )
+    if payload.is_empty() {
+        return format!("\u{1b}_Ga=t,t=d,f=100,i={image_id},q=2,m=0;\u{1b}\\");
+    }
+
+    let mut commands = String::with_capacity(payload.len() + 64 * payload.len().div_ceil(4096));
+    for (index, start) in (0..payload.len())
+        .step_by(MAX_GRAPHICS_CHUNK_BYTES)
+        .enumerate()
+    {
+        let end = start.saturating_add(MAX_GRAPHICS_CHUNK_BYTES).min(payload.len());
+        let more = u8::from(end < payload.len());
+
+        if index == 0 {
+            commands.push_str(&format!(
+                "\u{1b}_Ga=t,t=d,f=100,i={image_id},q=2,m={more};"
+            ));
+        } else {
+            commands.push_str(&format!("\u{1b}_Gm={more};"));
+        }
+        // STANDARD Base64 is ASCII, so its byte boundaries are valid UTF-8 boundaries.
+        commands.push_str(&payload[start..end]);
+        commands.push_str("\u{1b}\\");
+    }
+    commands
 }
 
 #[must_use]

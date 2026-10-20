@@ -88,6 +88,15 @@ cargo install --path . --locked
 
 For development, run `make build` and execute `./bin/doctty`. The `bin/` directory is generated locally and is not committed.
 
+## Herdr panes (experimental)
+
+doctty recognizes `TERM_PROGRAM=herdr` and sends Kitty graphics in chunks for
+compatibility with Herdr panes. Use an outer terminal that supports Kitty graphics,
+such as Ghostty. Herdr's `[terminal] kitty_graphics` option must be enabled
+(it is enabled by default in current Herdr versions). Restart the Herdr server or
+reattach after changing the option. Rendering inside Herdr still needs verification
+in a real terminal session.
+
 ## Troubleshooting
 
 | Symptom                            | What to try                                                                                                          |
