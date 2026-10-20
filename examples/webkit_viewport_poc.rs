@@ -1314,20 +1314,13 @@ mod experiment {
                         last_displayed_id = Some(tile.image_id);
                     }
 
-                    if let Some(origin) = next_tile_origin(
-                        &cached,
-                        position,
-                        viewport,
-                        document_height,
-                        direction,
-                    ) {
+                    if let Some(origin) =
+                        next_tile_origin(&cached, position, viewport, document_height, direction)
+                    {
                         if cached.len() == MAX_TILE_CACHE {
-                            if let Some(evicted) = evict_tile(
-                                &mut cached,
-                                position,
-                                viewport,
-                                last_displayed_id,
-                            ) {
+                            if let Some(evicted) =
+                                evict_tile(&mut cached, position, viewport, last_displayed_id)
+                            {
                                 assert_ne!(Some(evicted.image_id), last_displayed_id);
                                 assert!(!evicted.covers(position, viewport));
                             }
@@ -1349,10 +1342,8 @@ mod experiment {
                     }));
                     let ids: BTreeSet<_> = cached.iter().map(|tile| tile.image_id).collect();
                     assert_eq!(ids.len(), cached.len(), "image ids must not collide");
-                    let origins: BTreeSet<_> = cached
-                        .iter()
-                        .map(|tile| tile.source_y.to_bits())
-                        .collect();
+                    let origins: BTreeSet<_> =
+                        cached.iter().map(|tile| tile.source_y.to_bits()).collect();
                     assert_eq!(origins.len(), cached.len(), "duplicate tile snapshots");
                 }
             }
