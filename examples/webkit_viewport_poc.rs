@@ -49,6 +49,9 @@ mod experiment {
     // and at most one additional in-flight image.
     const MAX_TILE_CACHE: usize = 4;
     const LAST_TILE_IMAGE_ID: u32 = 93_006;
+    const HYBRID_PREVIEW_AFTER: Duration = Duration::from_millis(80);
+    const HYBRID_SETTLE_AFTER: Duration = Duration::from_millis(160);
+    const HYBRID_PREVIEW_FRAME: Duration = Duration::from_millis(33);
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
@@ -515,9 +518,14 @@ mod experiment {
         viewport_height: u32,
         state: &str,
         previous_image: Option<u32>,
+        clear_preview: bool,
     ) -> Result<()> {
         let started = Instant::now();
         let mut out = io::stdout().lock();
+        if clear_preview {
+            // Erase only preview text, not cached Kitty image data.
+            execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::FromCursorDown))?;
+        }
         // Re-place pixels already stored in the terminal: zero PNG encoding/transfer.
         place_image(
             &mut out,
@@ -841,7 +849,10 @@ mod experiment {
         if let Some(image_id) = previously_placed {
             hide_image_placement(&mut out, image_id)?;
         }
-        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+        // CSI 0 J clears text but does not wipe the terminal's image cache.
+        // Full-screen Clear(All) also clears Kitty placements and risks losing
+        // otherwise reusable image data when switching back to WebKit.
+        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::FromCursorDown))?;
         for (row, line) in preview_lines(outline, position, viewport_height, rows) {
             execute!(out, cursor::MoveTo(0, row))?;
             let clean: String = line
@@ -933,6 +944,64 @@ mod experiment {
         Some(cached.remove(index))
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum HybridDisplayMode {
+        Image,
+        Preview,
+        Hold,
+    }
+
+    // Once the user has seen the preview, keep it for the rest of a fast
+    // gesture. Repeated image/text switches at cache boundaries are jarring.
+    // Idle and tile availability are both required to restore WebKit.
+    fn hybrid_display_mode(
+        tile_ready: bool,
+        preview_active: bool,
+        missing_for: Duration,
+        idle_for: Duration,
+    ) -> HybridDisplayMode {
+        if preview_active {
+            if tile_ready && idle_for >= HYBRID_SETTLE_AFTER {
+                HybridDisplayMode::Image
+            } else {
+                HybridDisplayMode::Preview
+            }
+        } else if tile_ready {
+            HybridDisplayMode::Image
+        } else if missing_for >= HYBRID_PREVIEW_AFTER {
+            HybridDisplayMode::Preview
+        } else {
+            HybridDisplayMode::Hold
+        }
+    }
+
+    // At rest, a missing viewport is more important than speculative tiles
+    // ahead or behind it. Use a centered origin rather than a distant grid
+    // tile. This avoids a parked preview whose nearby cache images don't
+    // actually cover the requested viewport.
+    fn recovery_tile_origin(
+        cached: &[ImageCache],
+        position: f64,
+        viewport_height: u32,
+        document_height: f64,
+    ) -> Option<f64> {
+        if select_tile(cached, position, viewport_height).is_some() {
+            return None;
+        }
+        let height = f64::from(viewport_height);
+        let max_origin = (document_height - height * 2.0).max(0.0);
+        let candidates = [
+            (position - height * 0.5).clamp(0.0, max_origin),
+            position.clamp(0.0, max_origin),
+            (position - height * 0.75).clamp(0.0, max_origin),
+        ];
+        candidates.into_iter().find(|origin| {
+            cached
+                .iter()
+                .all(|tile| (tile.source_y - origin).abs() > 1.0)
+        })
+    }
+
     // Independent prototype for comparison with the original single-prefetch
     // viewer. All costly WebKit captures and PNG transfers stay on the worker.
     // The event loop never waits for a snapshot. Images held by Kitty are
@@ -965,6 +1034,8 @@ mod experiment {
         tile_timings.observe_uploaded(&cached[0]);
         let mut showing_preview = false;
         let mut last_preview_position: Option<u64> = None;
+        let mut last_preview_frame: Option<Instant> = None;
+        let mut last_movement_at = Instant::now();
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -1012,17 +1083,20 @@ mod experiment {
             let now = Instant::now();
             let selected = select_tile(&cached, position, viewport_height);
             wait.observe(selected.is_some(), now);
+            let idle_for = now.saturating_duration_since(last_movement_at);
+            let mode = outline.as_ref().map(|_| {
+                hybrid_display_mode(
+                    selected.is_some(),
+                    showing_preview,
+                    wait.elapsed(now),
+                    idle_for,
+                )
+            });
 
-            if let Some(tile) = selected {
+            if selected.is_some() && mode.is_none_or(|value| value == HybridDisplayMode::Image) {
+                let tile = selected.context("tile selection disappeared")?;
                 let fingerprint = (tile.image_id, position.to_bits());
                 if showing_preview || last_displayed != Some(fingerprint) {
-                    if showing_preview {
-                        let mut out = io::stdout().lock();
-                        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
-                        out.flush()?;
-                        showing_preview = false;
-                        last_preview_position = None;
-                    }
                     let status = format!(
                         "TILE snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
                         tile_timings.max_snapshot_ms,
@@ -1040,23 +1114,33 @@ mod experiment {
                         viewport_height,
                         &status,
                         last_displayed.map(|fingerprint| fingerprint.0),
+                        showing_preview,
                     )?;
+                    showing_preview = false;
+                    last_preview_position = None;
+                    last_preview_frame = None;
                     last_displayed = Some(fingerprint);
                 }
                 last_wait_status_at = None;
-            } else if let Some(ref outline) = outline {
-                if last_preview_position != Some(position.to_bits()) {
-                    display_preview(
-                        outline,
-                        position,
-                        columns,
-                        rows,
-                        viewport_height,
-                        last_displayed.map(|fingerprint| fingerprint.0),
-                    )?;
-                    showing_preview = true;
-                    last_displayed = None;
-                    last_preview_position = Some(position.to_bits());
+            } else if mode == Some(HybridDisplayMode::Preview) {
+                if let Some(ref outline) = outline {
+                    let frame_due = last_preview_frame.is_none_or(|last| {
+                        now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME
+                    });
+                    if last_preview_position != Some(position.to_bits()) && frame_due {
+                        display_preview(
+                            outline,
+                            position,
+                            columns,
+                            rows,
+                            viewport_height,
+                            last_displayed.map(|fingerprint| fingerprint.0),
+                        )?;
+                        showing_preview = true;
+                        last_displayed = None;
+                        last_preview_position = Some(position.to_bits());
+                        last_preview_frame = Some(now);
+                    }
                 }
             } else if last_wait_status_at.is_none_or(|previous| {
                 now.saturating_duration_since(previous) >= Duration::from_millis(100)
@@ -1083,13 +1167,21 @@ mod experiment {
             }
 
             if pending.is_none() {
-                if let Some(origin) = next_tile_origin(
-                    &cached,
-                    position,
-                    viewport_height,
-                    document_height,
-                    direction,
-                ) {
+                let recovery = outline.is_some()
+                    && selected.is_none()
+                    && idle_for >= HYBRID_SETTLE_AFTER;
+                let origin = if recovery {
+                    recovery_tile_origin(&cached, position, viewport_height, document_height)
+                } else {
+                    next_tile_origin(
+                        &cached,
+                        position,
+                        viewport_height,
+                        document_height,
+                        direction,
+                    )
+                };
+                if let Some(origin) = origin {
                     if cached.len() >= MAX_TILE_CACHE {
                         if let Some(old) = evict_tile(
                             &mut cached,
@@ -1125,6 +1217,7 @@ mod experiment {
                 let Event::Key(key) = event::read()? else {
                     continue;
                 };
+                let previous_position = position;
                 match apply_key(
                     key,
                     &mut position,
@@ -1135,6 +1228,9 @@ mod experiment {
                     InputAction::Quit => break 'viewer,
                     InputAction::Select => requests.send(WorkerCommand::Select)?,
                     InputAction::Continue => {}
+                }
+                if position != previous_position {
+                    last_movement_at = Instant::now();
                 }
                 // Publish every accepted movement, including reversals, before
                 // returning to the drawing loop.
@@ -1347,7 +1443,7 @@ mod experiment {
                 // Do not send redundant placements every 12 ms when nothing moved.
                 let fingerprint = (active.image_id, position.to_bits());
                 if last_displayed != Some(fingerprint) {
-                    display_cached(&active, position, cols, rows, height, &status, None)?;
+                    display_cached(&active, position, cols, rows, height, &status, None, false)?;
                     last_displayed = Some(fingerprint);
                 }
                 last_wait_status_at = None;
@@ -1441,6 +1537,67 @@ mod experiment {
             assert!(snapshot_is_obsolete(3000.0, 0.0, 3000.0, 1000));
             // Moving rapidly within an overlapping snapshot stays valid.
             assert!(!snapshot_is_obsolete(0.0, 1750.0, 1000.0, 1000));
+        }
+
+        #[test]
+        fn hybrid_preview_does_not_flicker_at_cache_boundaries() {
+            assert_eq!(
+                hybrid_display_mode(
+                    true,
+                    true,
+                    Duration::from_millis(300),
+                    Duration::from_millis(80),
+                ),
+                HybridDisplayMode::Preview
+            );
+            assert_eq!(
+                hybrid_display_mode(
+                    true,
+                    true,
+                    Duration::from_millis(300),
+                    HYBRID_SETTLE_AFTER,
+                ),
+                HybridDisplayMode::Image
+            );
+            assert_eq!(
+                hybrid_display_mode(
+                    false,
+                    false,
+                    Duration::from_millis(50),
+                    Duration::ZERO,
+                ),
+                HybridDisplayMode::Hold
+            );
+            assert_eq!(
+                hybrid_display_mode(
+                    false,
+                    false,
+                    HYBRID_PREVIEW_AFTER,
+                    Duration::ZERO,
+                ),
+                HybridDisplayMode::Preview
+            );
+        }
+
+        #[test]
+        fn idle_cache_miss_prioritizes_exact_position() {
+            let cached = vec![cached_at(0.0), cached_at(1000.0)];
+            assert_eq!(
+                recovery_tile_origin(&cached, 5100.0, 1000, 10_000.0),
+                Some(4600.0),
+            );
+            let mut centered = cached_at(4600.0);
+            centered.image_id = SECOND_IMAGE_ID;
+            let mut extended = cached;
+            extended.push(centered);
+            assert_eq!(
+                recovery_tile_origin(&extended, 5100.0, 1000, 10_000.0),
+                None,
+            );
+            assert_eq!(
+                recovery_tile_origin(&[cached_at(0.0)], 9000.0, 1000, 10_000.0),
+                Some(8000.0),
+            );
         }
 
         #[test]
