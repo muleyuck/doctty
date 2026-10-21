@@ -41,15 +41,19 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Command>(r#"{"type":"resize","width":900,"height":600}"#)
                 .unwrap(),
-            Command::Resize { width: 900, height: 600 }
+            Command::Resize {
+                width: 900,
+                height: 600
+            }
         );
     }
 
     #[test]
     fn render_errors_are_machine_readable() {
         let value = serde_json::to_string(&Response::Error {
-            message: "load failed".into()
-        }).unwrap();
+            message: "load failed".into(),
+        })
+        .unwrap();
         assert!(value.contains(r#""kind":"error""#));
     }
 }
