@@ -1153,7 +1153,11 @@ mod experiment {
         let mut last_wait_status_at: Option<Instant> = None;
 
         let mut exit = ViewerExit::Quit;
-        'viewer: loop {
+        // Always close and join both image workers, even if the event loop
+        // exits early with an I/O/rendering error. Otherwise they could still
+        // write Kitty graphics after TerminalSession restores the shell.
+        let loop_result: Result<ViewerExit> = (|| {
+            'viewer: loop {
             if let Some(ref receiver) = preview_responses {
                 loop {
                     match receiver.try_recv() {
@@ -1446,17 +1450,22 @@ mod experiment {
                 // returning to the drawing loop.
                 latest_position.store(position.to_bits(), Ordering::Relaxed);
             }
-        }
+            }
+            Ok(exit)
+        })();
+
         drop(requests);
         drop(preview_requests);
-        // Workers must finish terminal writes before old image IDs are reused.
-        let swift = webkit_worker
-            .join()
+        // Join *both* even if either the event loop or a worker failed.
+        // The terminal session must never be restored while graphics writes
+        // remain in flight.
+        let webkit_result = webkit_worker.join();
+        let preview_result = preview_worker.map(|worker| worker.join());
+        let exit = loop_result?;
+        let swift = webkit_result
             .map_err(|_| anyhow::anyhow!("WebKit worker panicked while stopping"))?;
-        if let Some(worker) = preview_worker {
-            if worker.join().is_err() {
-                bail!("preview worker panicked while stopping");
-            }
+        if preview_result.is_some_and(|result| result.is_err()) {
+            bail!("preview worker panicked while stopping");
         }
         Ok((exit, swift))
     }
