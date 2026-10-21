@@ -30,6 +30,7 @@ def smoke(binary: Path) -> None:
             encoding="utf-8",
         )
         requests = [
+            {"type": "outline"},
             {"type": "snapshot", "y": 120},
             {"type": "metrics"},
             {"type": "quit"},
@@ -67,11 +68,16 @@ def smoke(binary: Path) -> None:
         if errors:
             raise AssertionError(f"WebKit helper errors: {errors}")
         if [item.get("kind") for item in records] != [
-            "ready", "snapshot", "metrics"
+            "ready", "outline", "snapshot", "metrics"
         ]:
             raise AssertionError(f"unexpected response sequence: {records}")
 
-        ready, snapshot, metrics = records
+        ready, outline, snapshot, metrics = records
+        if outline.get("background") is None or not isinstance(outline.get("items"), list):
+            raise AssertionError(f"invalid outline reply: {outline}")
+        if not any("Rust WebKit snapshot smoke" in item.get("text", "")
+                   for item in outline["items"]):
+            raise AssertionError("expected heading missing from DOM outline")
         if ready["height"] < 2000:
             raise AssertionError(f"DOM unexpectedly short: {ready['height']}")
         if abs(snapshot["requestedY"] - 120) > 1:
