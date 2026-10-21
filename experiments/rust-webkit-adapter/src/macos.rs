@@ -3,7 +3,8 @@
 use std::{env, path::PathBuf, time::{Duration, Instant}};
 
 use anyhow::{Context, Result, bail};
-use objc2::rc::Retained;
+use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
+use crate::protocol;
 use objc2_app_kit::NSApplication;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSDate, NSRunLoop, NSString, NSURL};
@@ -24,14 +25,15 @@ pub(crate) fn run() -> Result<()> {
 
     // Safety: this executable's entrypoint is the macOS process main thread.
     // The NSApplication and WKWebView objects stay on it for their lifetime.
-    let _app = unsafe { NSApplication::sharedApplication() };
-    let configuration = WKWebViewConfiguration::new();
+    let mtm = MainThreadMarker::new().context("WebKit adapter must run on main thread")?;
+    let _app = NSApplication::sharedApplication(mtm);
+    let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
     let frame = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize { width: 800.0, height: 1200.0 },
     };
     let view: Retained<WKWebView> = unsafe {
-        WKWebView::initWithFrame_configuration(WKWebView::alloc(), frame, &configuration)
+        WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &configuration)
     };
 
     let url = NSURL::fileURLWithPath_isDirectory(
