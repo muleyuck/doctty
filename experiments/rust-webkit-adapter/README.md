@@ -1,6 +1,6 @@
 # Rust WebKit adapter — isolated experiment
 
-**Status:** Stage 4 viewport PNG capture implementation (CI pending), **not** a drop-in replacement for the Swift helper.
+**Status:** Stage 4 snapshot implementation with diagnostic macOS CI smoke, **not** a drop-in replacement for the Swift helper.
 
 This package intentionally contains the Objective-C FFI boundary in its own Rust
 crate. The root doctty crate prohibits `unsafe`; that remains unchanged.
@@ -35,6 +35,24 @@ printf '%s\\n' '{"type":"snapshot","y":0}' '{"type":"metrics"}' '{"type":"quit"}
   experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter \\
   /absolute/path/to/page.html /absolute/path/to/resource-dir /tmp/doctty-rust.png 800 600
 ```
+
+## Native snapshot smoke test
+
+Run the same automated smoke test from an **interactive macOS desktop** after
+building the release binary:
+
+```sh
+python3 experiments/rust-webkit-adapter/tests/smoke_snapshot.py \
+  experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter
+```
+
+It loads an isolated local 3500px HTML page, requests a nonzero scroll capture,
+and checks the JSON reply, PNG magic/header, pixel dimensions, byte count and
+snapshot metrics. A successful compilation or unit test cannot prove that WebKit
+completed a snapshot. GitHub-hosted macOS runners may lack an interactive display,
+so their diagnostic smoke step is `continue-on-error`; its status must be
+inspected separately. Failure there does **not** establish a renderer regression,
+and a green workflow does **not** imply that the runtime smoke passed.
 
 ## Safety of the DOM bridge
 
