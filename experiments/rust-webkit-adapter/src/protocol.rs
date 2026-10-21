@@ -2,10 +2,13 @@
 //! The legacy Swift protocol remains authoritative until full parity is proven.
 use serde::{Deserialize, Serialize};
 
+// Staged for the next milestone: this bootstrap does not yet consume stdin.
+#[allow(dead_code)]
 pub const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[allow(dead_code)]
 pub enum Command {
     Dimensions,
     Resize { width: u32, height: u32 },
