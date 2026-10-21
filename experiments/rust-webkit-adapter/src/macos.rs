@@ -71,7 +71,16 @@ pub(crate) fn run() -> Result<()> {
         if Instant::now() >= ready_by {
             bail!("WebKit document was not ready within 15s");
         }
-        let status = evaluate_json(&view, READY_SCRIPT, Duration::from_secs(3))?;
+        let status = match evaluate_json(&view, READY_SCRIPT, Duration::from_secs(3)) {
+            Ok(status) => status,
+            Err(_) if Instant::now() < ready_by => {
+                // The local navigation may not have committed yet. Unlike
+                // isLoading(), this retry does not miss a fast load transition.
+                NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         let height = status["height"]
             .as_f64()
             .context("invalid document height")?;
