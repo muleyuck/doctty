@@ -4,7 +4,7 @@ use std::{
     cell::RefCell,
     env,
     io::{self, BufRead},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::mpsc,
     thread,
@@ -15,10 +15,10 @@ use crate::protocol;
 use anyhow::{Context, Result, bail};
 use block2::RcBlock;
 use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained, runtime::AnyObject};
-use objc2_app_kit::NSApplication;
+use objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSImage};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSDate, NSError, NSRunLoop, NSString, NSURL};
-use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
+use objc2_foundation::{NSDate, NSDictionary, NSError, NSRunLoop, NSString, NSURL};
+use objc2_web_kit::{WKSnapshotConfiguration, WKWebView, WKWebViewConfiguration};
 
 pub(crate) fn run() -> Result<()> {
     let mut args = env::args_os().skip(1);
@@ -30,8 +30,20 @@ pub(crate) fn run() -> Result<()> {
         args.next()
             .context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?,
     );
-    if args.next().is_some() {
-        bail!("too many arguments; expected HTML READ_ROOT");
+    let output = args.next().map(PathBuf::from);
+    let width = args.next().map(|v| v.to_string_lossy().parse::<f64>())
+        .transpose().context("invalid viewport width")?;
+    let height = args.next().map(|v| v.to_string_lossy().parse::<f64>())
+        .transpose().context("invalid viewport height")?;
+    if args.next().is_some() || output.is_some() != width.is_some() || output.is_some() != height.is_some() {
+        bail!("usage: doctty-rust-webkit-adapter HTML READ_ROOT [OUTPUT_PNG WIDTH HEIGHT]");
+    }
+    let viewport_width = width.unwrap_or(800.0);
+    let viewport_height = height.unwrap_or(600.0);
+    if !viewport_width.is_finite() || !viewport_height.is_finite()
+        || viewport_width < 1.0 || viewport_height < 1.0
+        || viewport_width > 16384.0 || viewport_height > 16384.0 {
+        bail!("viewport dimensions must be between 1 and 16384");
     }
     let html = html.canonicalize().context("cannot find HTML file")?;
     let root = root
@@ -49,8 +61,8 @@ pub(crate) fn run() -> Result<()> {
     let frame = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize {
-            width: 800.0,
-            height: 1200.0,
+            width: viewport_width,
+            height: viewport_height * 2.0,
         },
     };
     let view: Retained<WKWebView> = unsafe {
@@ -92,7 +104,7 @@ pub(crate) fn run() -> Result<()> {
         let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
         if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
             emit(&protocol::Response::Ready { height })?;
-            return serve_commands(&view, height);
+            return serve_commands(&view, height, output.as_deref(), viewport_width, viewport_height);
         }
         attempt += 1;
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
@@ -159,9 +171,12 @@ fn emit(response: &protocol::Response) -> Result<()> {
 
 // Read stdin off the AppKit main thread. WKWebView and all JavaScript
 // evaluation remain on the main thread and must keep pumping NSRunLoop.
-fn serve_commands(_view: &WKWebView, document_height: f64) -> Result<()> {
+fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>, width: f64, height: f64) -> Result<()> {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel::<String>();
+    let mut snapshot_requests = 0_u64;
+    let mut snapshot_completed = 0_u64;
+    let mut last_snapshot_at: Option<Instant> = None;
     thread::spawn(move || {
         for line in io::stdin().lock().lines() {
             match line {
@@ -195,15 +210,30 @@ fn serve_commands(_view: &WKWebView, document_height: f64) -> Result<()> {
                     }
                     protocol::Command::Metrics => {
                         emit(&protocol::Response::Metrics {
-                            requests: 0,
-                            completed: 0,
+                            requests: snapshot_requests,
+                            completed: snapshot_completed,
                             uptime_sec: started.elapsed().as_secs_f64(),
-                            seconds_since_snapshot: -1.0,
+                            seconds_since_snapshot: last_snapshot_at.map_or(-1.0, |at| at.elapsed().as_secs_f64()),
                         })?;
                     }
                     protocol::Command::Quit => return Ok(()),
+                    protocol::Command::Snapshot { y } => {
+                        snapshot_requests += 1;
+                        last_snapshot_at = Some(Instant::now());
+                        let result = output
+                            .context("snapshot requires OUTPUT_PNG WIDTH HEIGHT")
+                            .and_then(|path| capture_snapshot(view, path, y, document_height, width, height));
+                        match result {
+                            Ok(response) => {
+                                snapshot_completed += 1;
+                                emit(&response)?;
+                            }
+                            Err(error) => emit(&protocol::Response::Error {
+                                message: error.to_string(),
+                            })?,
+                        }
+                    }
                     protocol::Command::Resize { .. }
-                    | protocol::Command::Snapshot { .. }
                     | protocol::Command::Outline
                     | protocol::Command::Select => {
                         emit(&protocol::Response::Error {
