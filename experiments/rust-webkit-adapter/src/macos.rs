@@ -250,3 +250,69 @@ fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>,
         }
     }
 }
+
+// A viewport is two terminal heights tall, matching the Swift helper.
+fn capture_snapshot(
+    view: &WKWebView, output: &Path, y: f64, document_height: f64, width: f64, height: f64,
+) -> Result<protocol::Response> {
+    if !y.is_finite() { bail!("snapshot y must be finite"); }
+    let requested_y = y.max(0.0).min((document_height - height * 2.0).max(0.0));
+    let started = Instant::now();
+    let script = format!(
+        "JSON.stringify((() => {{ window.scrollTo(0, {requested_y}); return window.scrollY; }})())"
+    );
+    let actual_y = evaluate_json(view, &script, Duration::from_secs(5))?
+        .as_f64().context("invalid scroll position")?;
+
+    let config = unsafe { WKSnapshotConfiguration::new() };
+    unsafe {
+        config.setRect(CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width, height: height * 2.0 },
+        });
+        config.setAfterScreenUpdates(true);
+    }
+
+    let capture_started = Instant::now();
+    let result: Rc<RefCell<Option<Result<Retained<NSImage>>>>> = Rc::new(RefCell::new(None));
+    let slot = Rc::clone(&result);
+    let callback = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+        let finished = if !error.is_null() {
+            Err(anyhow::anyhow!("WebKit snapshot failed"))
+        } else if image.is_null() {
+            Err(anyhow::anyhow!("WebKit snapshot returned no image"))
+        } else {
+            // SAFETY: WKWebView supplies a live NSImage during the callback;
+            // retain before leaving the callback.
+            unsafe { Retained::retain(image) }.context("could not retain image")
+        };
+        *slot.borrow_mut() = Some(finished);
+    });
+    unsafe { view.takeSnapshotWithConfiguration_completionHandler(Some(&config), &callback); }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let image = loop {
+        if let Some(done) = result.borrow_mut().take() { break done?; }
+        if Instant::now() >= deadline { bail!("WebKit snapshot timed out"); }
+        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+    };
+    let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
+    let encode_started = Instant::now();
+    let tiff = image.TIFFRepresentation().context("snapshot has no TIFF data")?;
+    let bitmap = unsafe { NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff) }
+        .context("could not decode snapshot bitmap")?;
+    let properties = NSDictionary::new();
+    let png = bitmap
+        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+        .context("could not encode viewport PNG")?;
+    let bytes = unsafe { std::slice::from_raw_parts(png.bytes().cast::<u8>(), png.length()) };
+    let png_bytes = bytes.len();
+    let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
+    let write_started = Instant::now();
+    std::fs::write(output, bytes).context("could not write viewport PNG")?;
+    let write_ms = write_started.elapsed().as_secs_f64() * 1000.0;
+    Ok(protocol::Response::Snapshot {
+        requested_y, actual_y, height: document_height,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        capture_ms, encode_ms, write_ms, png_bytes,
+    })
+}
