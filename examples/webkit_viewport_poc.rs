@@ -61,6 +61,15 @@ mod experiment {
     const HYBRID_SETTLE_AFTER: Duration = Duration::from_millis(160);
     const HYBRID_PREVIEW_FRAME: Duration = Duration::from_millis(33);
 
+    // In the opt-in eco mode, the raster outline handles uncached movement.
+    // WebKit only fills the settled viewport, not speculative future tiles.
+    fn should_capture_in_eco_mode(
+        idle_for: Duration,
+        tile_ready: bool,
+    ) -> bool {
+        idle_for >= HYBRID_SETTLE_AFTER && !tile_ready
+    }
+
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
         Forward,
@@ -1191,6 +1200,7 @@ mod experiment {
         initial_position: f64,
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
+        eco_snapshots: bool,
     ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
@@ -1450,7 +1460,10 @@ mod experiment {
                     }
                 }
 
-                if pending.is_none() {
+                if pending.is_none()
+                    && (!eco_snapshots
+                        || should_capture_in_eco_mode(idle_for, selected.is_some()))
+                {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
                     let origin = if recovery {
@@ -1580,6 +1593,7 @@ mod experiment {
         source_dir: &Path,
         hybrid: bool,
         hybrid_image: bool,
+        eco_snapshots: bool,
     ) -> Result<()> {
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
@@ -1672,6 +1686,7 @@ mod experiment {
                 initial_position,
                 outline,
                 scene,
+                eco_snapshots,
             )?;
             swift = Some(returned);
             if let ViewerExit::Resized(next_progress) = exit {
@@ -1721,7 +1736,8 @@ mod experiment {
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let hybrid_image = first == "--hybrid-image";
+        let eco_snapshots = first == "--hybrid-image-eco";
+        let hybrid_image = first == "--hybrid-image" || eco_snapshots;
         let hybrid = first == "--hybrid" || hybrid_image;
         let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
@@ -1738,7 +1754,7 @@ mod experiment {
         let dir = document.parent().context("source directory not found")?;
         let (html, _temp_html) = html_input(&document)?;
         if tiled {
-            return run_resizable_tiled(&html, dir, hybrid, hybrid_image);
+            return run_resizable_tiled(&html, dir, hybrid, hybrid_image, eco_snapshots);
         }
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
@@ -1954,6 +1970,18 @@ mod experiment {
             assert_eq!(resumed_position(0.5, 24000.0, 2000), 11000.0);
             assert_eq!(resumed_position(1.0, 24000.0, 2000), 22000.0);
             assert_eq!(resumed_position(1.0, 700.0, 1000), 0.0);
+        }
+
+        #[test]
+        fn eco_mode_captures_only_a_missing_settled_viewport() {
+            assert!(!should_capture_in_eco_mode(Duration::ZERO, false));
+            assert!(!should_capture_in_eco_mode(
+                Duration::from_millis(159),
+                false
+            ));
+            assert!(should_capture_in_eco_mode(HYBRID_SETTLE_AFTER, false));
+            assert!(should_capture_in_eco_mode(Duration::from_secs(2), false));
+            assert!(!should_capture_in_eco_mode(Duration::from_secs(2), true));
         }
 
         #[test]
