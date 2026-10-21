@@ -1230,7 +1230,8 @@ mod experiment {
                     )
                 });
 
-                if selected.is_some() && mode.is_none_or(|value| value == HybridDisplayMode::Image) {
+                if selected.is_some() && mode.is_none_or(|value| value == HybridDisplayMode::Image)
+                {
                     let tile = selected.context("tile selection disappeared")?;
                     let fingerprint = (tile.image_id, position.to_bits());
                     if showing_preview || last_displayed != Some(fingerprint) {
@@ -1262,8 +1263,9 @@ mod experiment {
                     }
                     last_wait_status_at = None;
                 } else if mode == Some(HybridDisplayMode::Preview) {
-                    let frame_due = last_preview_frame
-                        .is_none_or(|last| now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME);
+                    let frame_due = last_preview_frame.is_none_or(|last| {
+                        now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME
+                    });
                     if preview_requests.is_some() {
                         if let Some(tile) =
                             hybrid_image_preview::select(&preview_tiles, position, viewport_height)
@@ -1462,8 +1464,8 @@ mod experiment {
         let webkit_result = webkit_worker.join();
         let preview_result = preview_worker.map(|worker| worker.join());
         let exit = loop_result?;
-        let swift = webkit_result
-            .map_err(|_| anyhow::anyhow!("WebKit worker panicked while stopping"))?;
+        let swift =
+            webkit_result.map_err(|_| anyhow::anyhow!("WebKit worker panicked while stopping"))?;
         if preview_result.is_some_and(|result| result.is_err()) {
             bail!("preview worker panicked while stopping");
         }
