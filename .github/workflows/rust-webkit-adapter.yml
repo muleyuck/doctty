@@ -41,3 +41,14 @@ jobs:
         run: |
           python3 experiments/rust-webkit-adapter/tests/smoke_snapshot.py \
             experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter
+      # The paired run checks that the measurement harness actually works.
+      # These runner timings are diagnostics, not a CPU/FPS acceptance gate.
+      - name: Diagnostic compiled Swift vs Rust helper comparison
+        continue-on-error: true
+        timeout-minutes: 4
+        run: |
+          swiftc -swift-version 5 -O experiments/webkit_viewport.swift -o "$RUNNER_TEMP/doctty-swift-webkit"
+          python3 experiments/rust-webkit-adapter/tests/compare_webkit_helpers.py \
+            --swift-bin "$RUNNER_TEMP/doctty-swift-webkit" \
+            --rust-bin experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter \
+            --samples 8 --repeats 2 --output "$RUNNER_TEMP/doctty-webkit-helper-compare.json"
