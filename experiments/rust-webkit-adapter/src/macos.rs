@@ -1,10 +1,14 @@
 //! All Cocoa/WebKit calls are isolated here. The view is never sent to
 //! another thread: AppKit objects are !Send and belong to the main thread.
-use std::{env, path::PathBuf, time::{Duration, Instant}};
+use std::{
+    env,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
+use crate::protocol;
 use anyhow::{Context, Result, bail};
 use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
-use crate::protocol;
 use objc2_app_kit::NSApplication;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSDate, NSRunLoop, NSString, NSURL};
@@ -12,13 +16,21 @@ use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
 
 pub(crate) fn run() -> Result<()> {
     let mut args = env::args_os().skip(1);
-    let html = PathBuf::from(args.next().context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?);
-    let root = PathBuf::from(args.next().context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?);
+    let html = PathBuf::from(
+        args.next()
+            .context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?,
+    );
+    let root = PathBuf::from(
+        args.next()
+            .context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?,
+    );
     if args.next().is_some() {
         bail!("too many arguments; expected HTML READ_ROOT");
     }
     let html = html.canonicalize().context("cannot find HTML file")?;
-    let root = root.canonicalize().context("cannot find read access directory")?;
+    let root = root
+        .canonicalize()
+        .context("cannot find read access directory")?;
     if !html.is_file() || !root.is_dir() || !html.starts_with(&root) {
         bail!("HTML must be a file inside the read-access root");
     }
@@ -30,20 +42,19 @@ pub(crate) fn run() -> Result<()> {
     let configuration = unsafe { WKWebViewConfiguration::new(mtm) };
     let frame = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
-        size: CGSize { width: 800.0, height: 1200.0 },
+        size: CGSize {
+            width: 800.0,
+            height: 1200.0,
+        },
     };
     let view: Retained<WKWebView> = unsafe {
         WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &configuration)
     };
 
-    let url = NSURL::fileURLWithPath_isDirectory(
-        &NSString::from_str(&html.to_string_lossy()),
-        false,
-    );
-    let access = NSURL::fileURLWithPath_isDirectory(
-        &NSString::from_str(&root.to_string_lossy()),
-        true,
-    );
+    let url =
+        NSURL::fileURLWithPath_isDirectory(&NSString::from_str(&html.to_string_lossy()), false);
+    let access =
+        NSURL::fileURLWithPath_isDirectory(&NSString::from_str(&root.to_string_lossy()), true);
     // Safety: URLs are local filesystem URLs, view stays on main thread,
     // and the access root encloses the HTML file.
     unsafe { view.loadFileURL_allowingReadAccessToURL(&url, &access) };
@@ -58,9 +69,10 @@ pub(crate) fn run() -> Result<()> {
         if unsafe { view.isLoading() } {
             ever_loading = true;
         } else if ever_loading {
-            println!("{}", serde_json::to_string(&protocol::Response::Ready {
-                height: 0.0,
-            })?);
+            println!(
+                "{}",
+                serde_json::to_string(&protocol::Response::Ready { height: 0.0 })?
+            );
             return Ok(());
         }
         let limit = NSDate::dateWithTimeIntervalSinceNow(0.02);
