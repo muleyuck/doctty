@@ -31,18 +31,31 @@ pub(crate) fn run() -> Result<()> {
             .context("usage: doctty-rust-webkit-adapter HTML READ_ROOT")?,
     );
     let output = args.next().map(PathBuf::from);
-    let width = args.next().map(|v| v.to_string_lossy().parse::<f64>())
-        .transpose().context("invalid viewport width")?;
-    let height = args.next().map(|v| v.to_string_lossy().parse::<f64>())
-        .transpose().context("invalid viewport height")?;
-    if args.next().is_some() || output.is_some() != width.is_some() || output.is_some() != height.is_some() {
+    let width = args
+        .next()
+        .map(|v| v.to_string_lossy().parse::<f64>())
+        .transpose()
+        .context("invalid viewport width")?;
+    let height = args
+        .next()
+        .map(|v| v.to_string_lossy().parse::<f64>())
+        .transpose()
+        .context("invalid viewport height")?;
+    if args.next().is_some()
+        || output.is_some() != width.is_some()
+        || output.is_some() != height.is_some()
+    {
         bail!("usage: doctty-rust-webkit-adapter HTML READ_ROOT [OUTPUT_PNG WIDTH HEIGHT]");
     }
     let viewport_width = width.unwrap_or(800.0);
     let viewport_height = height.unwrap_or(600.0);
-    if !viewport_width.is_finite() || !viewport_height.is_finite()
-        || viewport_width < 1.0 || viewport_height < 1.0
-        || viewport_width > 16384.0 || viewport_height > 16384.0 {
+    if !viewport_width.is_finite()
+        || !viewport_height.is_finite()
+        || viewport_width < 1.0
+        || viewport_height < 1.0
+        || viewport_width > 16384.0
+        || viewport_height > 16384.0
+    {
         bail!("viewport dimensions must be between 1 and 16384");
     }
     let html = html.canonicalize().context("cannot find HTML file")?;
@@ -104,7 +117,13 @@ pub(crate) fn run() -> Result<()> {
         let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
         if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
             emit(&protocol::Response::Ready { height })?;
-            return serve_commands(&view, height, output.as_deref(), viewport_width, viewport_height);
+            return serve_commands(
+                &view,
+                height,
+                output.as_deref(),
+                viewport_width,
+                viewport_height,
+            );
         }
         attempt += 1;
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
@@ -171,7 +190,13 @@ fn emit(response: &protocol::Response) -> Result<()> {
 
 // Read stdin off the AppKit main thread. WKWebView and all JavaScript
 // evaluation remain on the main thread and must keep pumping NSRunLoop.
-fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>, width: f64, height: f64) -> Result<()> {
+fn serve_commands(
+    view: &WKWebView,
+    document_height: f64,
+    output: Option<&Path>,
+    width: f64,
+    height: f64,
+) -> Result<()> {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel::<String>();
     let mut snapshot_requests = 0_u64;
@@ -213,7 +238,8 @@ fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>,
                             requests: snapshot_requests,
                             completed: snapshot_completed,
                             uptime_sec: started.elapsed().as_secs_f64(),
-                            seconds_since_snapshot: last_snapshot_at.map_or(-1.0, |at| at.elapsed().as_secs_f64()),
+                            seconds_since_snapshot: last_snapshot_at
+                                .map_or(-1.0, |at| at.elapsed().as_secs_f64()),
                         })?;
                     }
                     protocol::Command::Quit => return Ok(()),
@@ -222,7 +248,9 @@ fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>,
                         last_snapshot_at = Some(Instant::now());
                         let result = output
                             .context("snapshot requires OUTPUT_PNG WIDTH HEIGHT")
-                            .and_then(|path| capture_snapshot(view, path, y, document_height, width, height));
+                            .and_then(|path| {
+                                capture_snapshot(view, path, y, document_height, width, height)
+                            });
                         match result {
                             Ok(response) => {
                                 snapshot_completed += 1;
@@ -253,23 +281,34 @@ fn serve_commands(view: &WKWebView, document_height: f64, output: Option<&Path>,
 
 // A viewport is two terminal heights tall, matching the Swift helper.
 fn capture_snapshot(
-    view: &WKWebView, output: &Path, y: f64, document_height: f64, width: f64, height: f64,
+    view: &WKWebView,
+    output: &Path,
+    y: f64,
+    document_height: f64,
+    width: f64,
+    height: f64,
 ) -> Result<protocol::Response> {
-    if !y.is_finite() { bail!("snapshot y must be finite"); }
+    if !y.is_finite() {
+        bail!("snapshot y must be finite");
+    }
     let requested_y = y.max(0.0).min((document_height - height * 2.0).max(0.0));
     let started = Instant::now();
     let script = format!(
         "JSON.stringify((() => {{ window.scrollTo(0, {requested_y}); return window.scrollY; }})())"
     );
     let actual_y = evaluate_json(view, &script, Duration::from_secs(5))?
-        .as_f64().context("invalid scroll position")?;
+        .as_f64()
+        .context("invalid scroll position")?;
 
     let mtm = MainThreadMarker::new().context("snapshot requires main thread")?;
     let config = unsafe { WKSnapshotConfiguration::new(mtm) };
     unsafe {
         config.setRect(CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
-            size: CGSize { width, height: height * 2.0 },
+            size: CGSize {
+                width,
+                height: height * 2.0,
+            },
         });
         config.setAfterScreenUpdates(true);
     }
@@ -289,18 +328,26 @@ fn capture_snapshot(
         };
         *slot.borrow_mut() = Some(finished);
     });
-    unsafe { view.takeSnapshotWithConfiguration_completionHandler(Some(&config), &callback); }
+    unsafe {
+        view.takeSnapshotWithConfiguration_completionHandler(Some(&config), &callback);
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
     let image = loop {
-        if let Some(done) = result.borrow_mut().take() { break done?; }
-        if Instant::now() >= deadline { bail!("WebKit snapshot timed out"); }
+        if let Some(done) = result.borrow_mut().take() {
+            break done?;
+        }
+        if Instant::now() >= deadline {
+            bail!("WebKit snapshot timed out");
+        }
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
     };
     let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
     let encode_started = Instant::now();
-    let tiff = image.TIFFRepresentation().context("snapshot has no TIFF data")?;
-    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
-        .context("could not decode snapshot bitmap")?;
+    let tiff = image
+        .TIFFRepresentation()
+        .context("snapshot has no TIFF data")?;
+    let bitmap =
+        NSBitmapImageRep::imageRepWithData(&tiff).context("could not decode snapshot bitmap")?;
     let properties = NSDictionary::new();
     // Safety: bitmap and the empty immutable properties dictionary are valid
     // Objective-C objects retained for the duration of PNG conversion.
@@ -315,8 +362,13 @@ fn capture_snapshot(
     std::fs::write(output, &bytes).context("could not write viewport PNG")?;
     let write_ms = write_started.elapsed().as_secs_f64() * 1000.0;
     Ok(protocol::Response::Snapshot {
-        requested_y, actual_y, height: document_height,
+        requested_y,
+        actual_y,
+        height: document_height,
         elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
-        capture_ms, encode_ms, write_ms, png_bytes,
+        capture_ms,
+        encode_ms,
+        write_ms,
+        png_bytes,
     })
 }
