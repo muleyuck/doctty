@@ -987,6 +987,72 @@ mod experiment {
             })
     }
 
+    // A 2-viewport initial/idle-recovery tile need not sit on the regular
+    // 1-viewport grid. It may occupy one of the four cache slots while all
+    // four prefetch origins compete for the other three. Without a priority
+    // check the fourth candidate evicts the third, which is immediately
+    // requested again even when the user has stopped scrolling.
+    fn prefetch_rank(
+        origin: f64,
+        position: f64,
+        viewport_height: u32,
+        document_height: f64,
+        direction: ScrollDirection,
+    ) -> usize {
+        let height = f64::from(viewport_height);
+        let max_origin = (document_height - height * 2.0).max(0.0);
+        let index = (position / height).floor() as i64;
+        let offsets: [i64; 4] = match direction {
+            ScrollDirection::Forward => [0, 1, 2, -1],
+            ScrollDirection::Backward => [0, -1, -2, 1],
+        };
+        offsets
+            .into_iter()
+            .enumerate()
+            .filter_map(|(rank, delta)| index.checked_add(delta).map(|value| (rank, value)))
+            .filter(|(_, value)| *value >= 0)
+            .find(|(_, value)| {
+                (((*value as f64) * height).min(max_origin) - origin).abs() <= 1.0
+            })
+            .map_or(usize::MAX, |(rank, _)| rank)
+    }
+
+    fn should_admit_tile(
+        cached: &[ImageCache],
+        position: f64,
+        viewport_height: u32,
+        document_height: f64,
+        direction: ScrollDirection,
+        origin: f64,
+        displayed_id: Option<u32>,
+    ) -> bool {
+        if cached.len() < MAX_TILE_CACHE {
+            return true;
+        }
+        // Match evict_tile's actual selection, then admit only if the new
+        // tile outranks the victim. Otherwise stop at a stable cache set.
+        let victim = cached
+            .iter()
+            .filter(|tile| {
+                Some(tile.image_id) != displayed_id && !tile.covers(position, viewport_height)
+            })
+            .max_by(|a, b| {
+                (a.source_y - position)
+                    .abs()
+                    .total_cmp(&(b.source_y - position).abs())
+            });
+        victim.is_some_and(|old| {
+            prefetch_rank(origin, position, viewport_height, document_height, direction)
+                < prefetch_rank(
+                    old.source_y,
+                    position,
+                    viewport_height,
+                    document_height,
+                    direction,
+                )
+        })
+    }
+
     fn tile_image_id(cached: &[ImageCache]) -> Option<u32> {
         (FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID)
             .find(|id| cached.iter().all(|entry| entry.image_id != *id))
@@ -1395,7 +1461,17 @@ mod experiment {
                             direction,
                         )
                     };
-                    if let Some(origin) = origin {
+                    if let Some(origin) = origin.filter(|candidate| {
+                        should_admit_tile(
+                            &cached,
+                            position,
+                            viewport_height,
+                            document_height,
+                            direction,
+                            *candidate,
+                            last_displayed.map(|v| v.0),
+                        )
+                    }) {
                         if cached.len() >= MAX_TILE_CACHE {
                             if let Some(old) = evict_tile(
                                 &mut cached,
@@ -1872,6 +1948,52 @@ mod experiment {
             assert_eq!(resumed_position(0.5, 24000.0, 2000), 11000.0);
             assert_eq!(resumed_position(1.0, 24000.0, 2000), 22000.0);
             assert_eq!(resumed_position(1.0, 700.0, 1000), 0.0);
+        }
+
+        #[test]
+        fn idle_prefetch_does_not_evict_higher_priority_cached_tiles() {
+            let position = 5000.0;
+            let h = 1000;
+            let total = 50_000.0;
+            let mut cached = vec![
+                cached_at(4500.0),
+                cached_at(5000.0),
+                cached_at(6000.0),
+                cached_at(7000.0),
+            ];
+            for (index, tile) in cached.iter_mut().enumerate() {
+                tile.image_id = FIRST_IMAGE_ID + index as u32;
+            }
+            // The initial off-grid tile covers the viewport and is pinned.
+            // A naive admission loop repeatedly swaps 6000/7000 for 4000.
+            let next = next_tile_origin(
+                &cached,
+                position,
+                h,
+                total,
+                ScrollDirection::Forward,
+            );
+            assert_eq!(next, Some(4000.0));
+            assert!(!should_admit_tile(
+                &cached,
+                position,
+                h,
+                total,
+                ScrollDirection::Forward,
+                4000.0,
+                Some(FIRST_IMAGE_ID),
+            ));
+            // Moving forward must still allow required tiles to replace
+            // lower-priority cache entries.
+            assert!(should_admit_tile(
+                &cached,
+                8000.0,
+                h,
+                total,
+                ScrollDirection::Forward,
+                8000.0,
+                Some(FIRST_IMAGE_ID),
+            ));
         }
 
         #[test]
