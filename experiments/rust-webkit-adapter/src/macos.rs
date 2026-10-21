@@ -153,112 +153,6 @@ fn ready_document_height(status: &serde_json::Value, attempt: usize) -> Option<f
         .then_some(height)
 }
 
-#[cfg(test)]
-mod readiness_tests {
-    use super::ready_document_height;
-    use serde_json::json;
-
-    #[test]
-    fn blank_page_must_not_emit_ready_even_with_positive_height() {
-        let about_blank = json!({
-            "height": 800.0,
-            "fileLoaded": false,
-            "fontsReady": true,
-            "imagesReady": true
-        });
-        assert_eq!(ready_document_height(&about_blank, 0), None);
-        assert_eq!(ready_document_height(&about_blank, 100), None);
-    }
-
-    #[test]
-    fn file_must_be_loaded_and_resources_settled() {
-        let loading = json!({
-            "height": 3500.0,
-            "fileLoaded": true,
-            "fontsReady": false,
-            "imagesReady": true
-        });
-        assert_eq!(ready_document_height(&loading, 0), None);
-        assert_eq!(ready_document_height(&loading, 40), Some(3500.0));
-        let ready = json!({
-            "height": 3500.0,
-            "fileLoaded": true,
-            "fontsReady": true,
-            "imagesReady": true
-        });
-        assert_eq!(ready_document_height(&ready, 0), Some(3500.0));
-        assert_eq!(ready_document_height(&json!({"height": 0.0}), 40), None);
-    }
-}
-
-// Keep the DOM block selection, text prefixes and style fields aligned with
-// the working Swift hybrid preview until visual equivalence is demonstrated.
-const OUTLINE_SCRIPT: &str = r#"JSON.stringify(
-(() => {
-  const root = document.querySelector('article, .markdown-body') || document.body;
-  const elements = Array.from(
-    root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,pre,table,img')
-  );
-  const stride = Math.max(1, Math.ceil(elements.length / 12000));
-  const items = [];
-  for (let i = 0; i < elements.length; i += stride) {
-    const el = elements[i];
-    // Parent list/code/table blocks already contain child content.
-    const parent = el.parentElement;
-    if (parent && parent.closest('li,pre,table')) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.height < 1 || rect.width < 1) continue;
-    const tag = el.tagName.toLowerCase();
-    let text = tag === 'img'
-      ? '[image] ' + (el.getAttribute('alt') || '')
-      : (el.textContent || '');
-    text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
-    if (!text) continue;
-    if (/^h[1-6]$/.test(tag)) {
-      text = '#'.repeat(Number(tag[1])) + ' ' + text;
-    } else if (tag === 'li') {
-      text = '• ' + text;
-    } else if (tag === 'pre') {
-      text = '[code] ' + text;
-    } else if (tag === 'table') {
-      text = '[table] ' + text;
-    }
-    const style = window.getComputedStyle(el);
-    const normalizedColor = value => {
-      if (value.startsWith('rgba(') &&
-          Number(value.slice(value.lastIndexOf(',') + 1).replace(')', '').trim()) === 0) {
-        return '';
-      }
-      const match = value.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      return match ? '#' + [match[1], match[2], match[3]]
-        .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
-    };
-    items.push({
-      y: Math.round(rect.top + window.scrollY),
-      x: Math.round(rect.left + window.scrollX),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      text,
-      tag,
-      fontSize: parseFloat(style.fontSize) || 16,
-      lineHeight: parseFloat(style.lineHeight) || 24,
-      weight: parseInt(style.fontWeight, 10) || 400,
-      color: normalizedColor(style.color),
-      background: normalizedColor(style.backgroundColor)
-    });
-  }
-  return {
-    background: (() => {
-      const background = window.getComputedStyle(document.body).backgroundColor;
-      const match = background.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      return match ? '#' + [match[1], match[2], match[3]]
-        .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '#ffffff';
-    })(),
-    items
-  };
-})()
-)"#;
-
 // WebKit promises to call the completion handler on the main thread.
 // The run loop is pumped on that thread; no Objective-C object moves to
 // a Rust worker. Evaluate a JSON *string* to keep the FFI type explicit.
@@ -423,38 +317,6 @@ fn outline_response(value: serde_json::Value) -> Result<protocol::Response> {
     Ok(protocol::Response::Outline { background, items })
 }
 
-#[cfg(test)]
-mod outline_tests {
-    use super::outline_response;
-    use serde_json::json;
-
-    #[test]
-    fn preserves_dom_coordinates_and_style_keys() {
-        let response = outline_response(json!({
-            "background": "#0d1117",
-            "items": [{
-                "y": 40, "x": 12, "width": 480, "height": 50,
-                "text": "# Heading", "tag": "h1", "fontSize": 28,
-                "lineHeight": 32, "weight": 700, "color": "#f0f6fc",
-                "background": ""
-            }]
-        }))
-        .unwrap();
-        let json = serde_json::to_value(response).unwrap();
-        assert_eq!(json["kind"], "outline");
-        assert_eq!(json["background"], "#0d1117");
-        assert_eq!(json["items"][0]["y"], 40);
-        assert_eq!(json["items"][0]["fontSize"], 28);
-        assert_eq!(json["items"][0]["text"], "# Heading");
-    }
-
-    #[test]
-    fn rejects_incomplete_outline_payloads() {
-        assert!(outline_response(json!({"background": "#fff"})).is_err());
-        assert!(outline_response(json!({"items": []})).is_err());
-    }
-}
-
 // A viewport is two terminal heights tall, matching the Swift helper.
 fn capture_snapshot(
     view: &WKWebView,
@@ -547,4 +409,142 @@ fn capture_snapshot(
         write_ms,
         png_bytes,
     })
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::ready_document_height;
+    use serde_json::json;
+
+    #[test]
+    fn blank_page_must_not_emit_ready_even_with_positive_height() {
+        let about_blank = json!({
+            "height": 800.0,
+            "fileLoaded": false,
+            "fontsReady": true,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&about_blank, 0), None);
+        assert_eq!(ready_document_height(&about_blank, 100), None);
+    }
+
+    #[test]
+    fn file_must_be_loaded_and_resources_settled() {
+        let loading = json!({
+            "height": 3500.0,
+            "fileLoaded": true,
+            "fontsReady": false,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&loading, 0), None);
+        assert_eq!(ready_document_height(&loading, 40), Some(3500.0));
+        let ready = json!({
+            "height": 3500.0,
+            "fileLoaded": true,
+            "fontsReady": true,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&ready, 0), Some(3500.0));
+        assert_eq!(ready_document_height(&json!({"height": 0.0}), 40), None);
+    }
+}
+
+// Keep the DOM block selection, text prefixes and style fields aligned with
+// the working Swift hybrid preview until visual equivalence is demonstrated.
+const OUTLINE_SCRIPT: &str = r#"JSON.stringify(
+(() => {
+  const root = document.querySelector('article, .markdown-body') || document.body;
+  const elements = Array.from(
+    root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,pre,table,img')
+  );
+  const stride = Math.max(1, Math.ceil(elements.length / 12000));
+  const items = [];
+  for (let i = 0; i < elements.length; i += stride) {
+    const el = elements[i];
+    // Parent list/code/table blocks already contain child content.
+    const parent = el.parentElement;
+    if (parent && parent.closest('li,pre,table')) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.height < 1 || rect.width < 1) continue;
+    const tag = el.tagName.toLowerCase();
+    let text = tag === 'img'
+      ? '[image] ' + (el.getAttribute('alt') || '')
+      : (el.textContent || '');
+    text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
+    if (!text) continue;
+    if (/^h[1-6]$/.test(tag)) {
+      text = '#'.repeat(Number(tag[1])) + ' ' + text;
+    } else if (tag === 'li') {
+      text = '• ' + text;
+    } else if (tag === 'pre') {
+      text = '[code] ' + text;
+    } else if (tag === 'table') {
+      text = '[table] ' + text;
+    }
+    const style = window.getComputedStyle(el);
+    const normalizedColor = value => {
+      if (value.startsWith('rgba(') &&
+          Number(value.slice(value.lastIndexOf(',') + 1).replace(')', '').trim()) === 0) {
+        return '';
+      }
+      const match = value.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      return match ? '#' + [match[1], match[2], match[3]]
+        .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
+    };
+    items.push({
+      y: Math.round(rect.top + window.scrollY),
+      x: Math.round(rect.left + window.scrollX),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      text,
+      tag,
+      fontSize: parseFloat(style.fontSize) || 16,
+      lineHeight: parseFloat(style.lineHeight) || 24,
+      weight: parseInt(style.fontWeight, 10) || 400,
+      color: normalizedColor(style.color),
+      background: normalizedColor(style.backgroundColor)
+    });
+  }
+  return {
+    background: (() => {
+      const background = window.getComputedStyle(document.body).backgroundColor;
+      const match = background.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      return match ? '#' + [match[1], match[2], match[3]]
+        .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '#ffffff';
+    })(),
+    items
+  };
+})()
+)"#;
+
+#[cfg(test)]
+mod outline_tests {
+    use super::outline_response;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_dom_coordinates_and_style_keys() {
+        let response = outline_response(json!({
+            "background": "#0d1117",
+            "items": [{
+                "y": 40, "x": 12, "width": 480, "height": 50,
+                "text": "# Heading", "tag": "h1", "fontSize": 28,
+                "lineHeight": 32, "weight": 700, "color": "#f0f6fc",
+                "background": ""
+            }]
+        }))
+        .unwrap();
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["kind"], "outline");
+        assert_eq!(json["background"], "#0d1117");
+        assert_eq!(json["items"][0]["y"], 40);
+        assert_eq!(json["items"][0]["fontSize"], 28);
+        assert_eq!(json["items"][0]["text"], "# Heading");
+    }
+
+    #[test]
+    fn rejects_incomplete_outline_payloads() {
+        assert!(outline_response(json!({"background": "#fff"})).is_err());
+        assert!(outline_response(json!({"items": []})).is_err());
+    }
 }
