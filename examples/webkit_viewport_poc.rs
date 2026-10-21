@@ -1465,15 +1465,18 @@ mod experiment {
                         )
                     };
                     if let Some(origin) = origin.filter(|candidate| {
-                        should_admit_tile(
-                            &cached,
-                            position,
-                            viewport_height,
-                            document_height,
-                            direction,
-                            *candidate,
-                            last_displayed.map(|v| v.0),
-                        )
+                        // The exact viewport recovery tile must not be blocked
+                        // by the speculative prefetch priority guard.
+                        recovery
+                            || should_admit_tile(
+                                &cached,
+                                position,
+                                viewport_height,
+                                document_height,
+                                direction,
+                                *candidate,
+                                last_displayed.map(|v| v.0),
+                            )
                     }) {
                         if cached.len() >= MAX_TILE_CACHE {
                             if let Some(old) = evict_tile(
