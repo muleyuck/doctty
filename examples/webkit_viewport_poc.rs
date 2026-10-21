@@ -1011,9 +1011,7 @@ mod experiment {
             .enumerate()
             .filter_map(|(rank, delta)| index.checked_add(delta).map(|value| (rank, value)))
             .filter(|(_, value)| *value >= 0)
-            .find(|(_, value)| {
-                (((*value as f64) * height).min(max_origin) - origin).abs() <= 1.0
-            })
+            .find(|(_, value)| (((*value as f64) * height).min(max_origin) - origin).abs() <= 1.0)
             .map_or(usize::MAX, |(rank, _)| rank)
     }
 
@@ -1042,14 +1040,19 @@ mod experiment {
                     .total_cmp(&(b.source_y - position).abs())
             });
         victim.is_some_and(|old| {
-            prefetch_rank(origin, position, viewport_height, document_height, direction)
-                < prefetch_rank(
-                    old.source_y,
-                    position,
-                    viewport_height,
-                    document_height,
-                    direction,
-                )
+            prefetch_rank(
+                origin,
+                position,
+                viewport_height,
+                document_height,
+                direction,
+            ) < prefetch_rank(
+                old.source_y,
+                position,
+                viewport_height,
+                document_height,
+                direction,
+            )
         })
     }
 
@@ -1966,13 +1969,7 @@ mod experiment {
             }
             // The initial off-grid tile covers the viewport and is pinned.
             // A naive admission loop repeatedly swaps 6000/7000 for 4000.
-            let next = next_tile_origin(
-                &cached,
-                position,
-                h,
-                total,
-                ScrollDirection::Forward,
-            );
+            let next = next_tile_origin(&cached, position, h, total, ScrollDirection::Forward);
             assert_eq!(next, Some(4000.0));
             assert!(!should_admit_tile(
                 &cached,
