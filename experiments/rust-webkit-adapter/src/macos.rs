@@ -286,21 +286,19 @@ fn serve_commands(
                     protocol::Command::Resize {
                         width: next_width,
                         height: next_height,
-                    } => {
-                        match resize_viewport(view, next_width, next_height) {
-                            Ok(next_document_height) => {
-                                width = f64::from(next_width);
-                                height = f64::from(next_height);
-                                document_height = next_document_height;
-                                emit(&protocol::Response::Resized {
-                                    height: document_height,
-                                })?;
-                            }
-                            Err(error) => emit(&protocol::Response::Error {
-                                message: error.to_string(),
-                            })?,
+                    } => match resize_viewport(view, next_width, next_height) {
+                        Ok(next_document_height) => {
+                            width = f64::from(next_width);
+                            height = f64::from(next_height);
+                            document_height = next_document_height;
+                            emit(&protocol::Response::Resized {
+                                height: document_height,
+                            })?;
                         }
-                    }
+                        Err(error) => emit(&protocol::Response::Error {
+                            message: error.to_string(),
+                        })?,
+                    },
                     protocol::Command::Select => {
                         emit(&protocol::Response::Error {
                             message: "command not yet implemented in Rust adapter".into(),
@@ -621,7 +619,10 @@ mod resize_tests {
 
     #[test]
     fn validates_dimensions_before_touching_webkit() {
-        assert_eq!(validate_resize_dimensions(480, 320).unwrap(), (480.0, 320.0));
+        assert_eq!(
+            validate_resize_dimensions(480, 320).unwrap(),
+            (480.0, 320.0)
+        );
         assert!(validate_resize_dimensions(0, 320).is_err());
         assert!(validate_resize_dimensions(480, 0).is_err());
         assert!(validate_resize_dimensions(16_385, 320).is_err());
