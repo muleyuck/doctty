@@ -300,9 +300,14 @@ fn serve_commands(
                         })?,
                     },
                     protocol::Command::Select => {
-                        emit(&protocol::Response::Error {
-                            message: "command not yet implemented in Rust adapter".into(),
-                        })?;
+                        let result = evaluate_json(view, SELECT_SCRIPT, Duration::from_secs(5))
+                            .and_then(selection_response);
+                        match result {
+                            Ok(response) => emit(&response)?,
+                            Err(error) => emit(&protocol::Response::Error {
+                                message: error.to_string(),
+                            })?,
+                        }
                     }
                 }
             }
@@ -379,6 +384,28 @@ fn outline_response(value: serde_json::Value) -> Result<protocol::Response> {
         bail!("WebKit returned too many outline items");
     }
     Ok(protocol::Response::Outline { background, items })
+}
+
+// Match Swift's intentional DOM selection / OSC52 clipboard bridge.
+// This is not pointer-driven mouse selection. The JS returns a JSON string,
+// just like the existing evaluate_json contract requires.
+const SELECT_SCRIPT: &str = r#"JSON.stringify((() => {
+  const node = document.querySelector("article p, p, h1, body");
+  if (!node) return "";
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return selection.toString().slice(0, 4096);
+})())"#;
+
+fn selection_response(value: serde_json::Value) -> Result<protocol::Response> {
+    let text = value
+        .as_str()
+        .context("DOM selection must be a JSON string")?
+        .to_owned();
+    Ok(protocol::Response::Selection { text })
 }
 
 // A viewport is two terminal heights tall, matching the Swift helper.
@@ -627,5 +654,25 @@ mod resize_tests {
         assert!(validate_resize_dimensions(480, 0).is_err());
         assert!(validate_resize_dimensions(16_385, 320).is_err());
         assert!(validate_resize_dimensions(480, 16_385).is_err());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::selection_response;
+    use serde_json::json;
+
+    #[test]
+    fn encodes_swift_selection_response() {
+        let response = selection_response(json!("Rust WebKit snapshot smoke")).unwrap();
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["kind"], "selection");
+        assert_eq!(json["text"], "Rust WebKit snapshot smoke");
+    }
+
+    #[test]
+    fn rejects_wrong_selection_payload() {
+        assert!(selection_response(json!({"text": "invalid"})).is_err());
+        assert!(selection_response(serde_json::Value::Null).is_err());
     }
 }
