@@ -375,7 +375,7 @@ mod experiment {
     ) -> (
         Sender<WorkerCommand>,
         Receiver<WorkerEvent>,
-        thread::JoinHandle<()>,
+        thread::JoinHandle<SwiftProcess>,
     ) {
         let (requests, incoming) = mpsc::channel::<WorkerCommand>();
         let (outgoing, responses) = mpsc::channel::<WorkerEvent>();
@@ -473,7 +473,8 @@ mod experiment {
                     break;
                 }
             }
-            // Closing the channel eventually drops SwiftProcess and kills the helper.
+            // Hand the live WKWebView process back to the resize coordinator.
+            swift
         });
         (requests, responses, worker)
     }
@@ -1099,7 +1100,7 @@ mod experiment {
         initial_position: f64,
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
-    ) -> Result<ViewerExit> {
+    ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
         let (requests, responses, webkit_worker) = spawn_worker(
@@ -1437,15 +1438,15 @@ mod experiment {
         drop(requests);
         drop(preview_requests);
         // Workers must finish terminal writes before old image IDs are reused.
-        if webkit_worker.join().is_err() {
-            bail!("WebKit worker panicked while stopping");
-        }
+        let swift = webkit_worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("WebKit worker panicked while stopping"))?;
         if let Some(worker) = preview_worker {
             if worker.join().is_err() {
                 bail!("preview worker panicked while stopping");
             }
         }
-        Ok(exit)
+        Ok((exit, swift))
     }
 
     // Recreate WebKit with the new CSS width after a resize. Unlike the
@@ -1461,20 +1462,36 @@ mod experiment {
         let _session = TerminalSession::enter()?;
         let mut progress = 0.0;
 
+        let mut swift: Option<SwiftProcess> = None;
+        let mut last_geometry: Option<(u16, u16)> = None;
         loop {
             let (columns, total_rows) = terminal::size()?;
             let rows = total_rows.saturating_sub(1).max(1);
             let width = u32::from(columns.max(1)).saturating_mul(8);
             let height = u32::from(rows).saturating_mul(16);
-            let mut swift = SwiftProcess::start(html, source_dir, &output, width, height)?;
-            let ready = swift.response()?;
-            if ready["kind"] != "ready" {
-                bail!("expected WebKit readiness response: {ready}");
-            }
-            let document_height = ready["height"].as_f64().unwrap_or(0.0);
-            let initial_position = resumed_position(progress, document_height, height);
+            let mut helper = if let Some(mut existing) = swift.take() {
+                if last_geometry != Some((columns, rows)) {
+                    let response = existing.request(&json!({
+                        "type": "resize", "width": width, "height": height
+                    }))?;
+                    if response["kind"] != "resized" {
+                        bail!("unexpected WebKit resize reply: {response}");
+                    }
+                }
+                existing
+            } else {
+                let mut process = SwiftProcess::start(html, source_dir, &output, width, height)?;
+                let ready = process.response()?;
+                if ready["kind"] != "ready" {
+                    bail!("expected WebKit readiness response: {ready}");
+                }
+                process
+            };
+            last_geometry = Some((columns, rows));
+            // DOM metrics and preview coordinates must be regenerated after
+            // WebKit's CSS reflow, even though the WKWebView process is reused.
             let outline_reply = if hybrid {
-                Some(swift.request(&json!({"type": "outline"}))?)
+                Some(helper.request(&json!({"type": "outline"}))?)
             } else {
                 None
             };
@@ -1490,9 +1507,15 @@ mod experiment {
             } else {
                 None
             };
+            let geometry = helper.request(&json!({"type": "dimensions"}))?;
+            if geometry["kind"] != "dimensions" {
+                bail!("unexpected WebKit dimensions reply: {geometry}");
+            }
+            let document_height = geometry["height"].as_f64().unwrap_or(0.0);
+            let initial_position = resumed_position(progress, document_height, height);
             let mut cached = None;
             let _ = render_scroll(
-                &mut swift,
+                &mut helper,
                 &output,
                 initial_position,
                 columns,
@@ -1503,8 +1526,8 @@ mod experiment {
                 &mut cached,
             )?;
             let active = cached.context("initial snapshot did not create a cache")?;
-            let result = run_tiled(
-                swift,
+            let (exit, returned) = run_tiled(
+                helper,
                 output.clone(),
                 columns,
                 rows,
@@ -1515,7 +1538,8 @@ mod experiment {
                 outline,
                 scene,
             )?;
-            if let ViewerExit::Resized(next_progress) = result {
+            swift = Some(returned);
+            if let ViewerExit::Resized(next_progress) = exit {
                 progress = next_progress;
                 clear_session_images()?;
                 continue;
