@@ -1,6 +1,6 @@
 # Rust WebKit adapter — isolated experiment
 
-**Status:** Stage 7 native DOM-selection parity, resize/reflow and diagnostic PNG smoke, **not** a drop-in replacement for the Swift helper.
+**Status:** Stage 7 native DOM-selection parity, resize/reflow and required PNG smoke, **not** a drop-in replacement for the Swift helper.
 
 This package intentionally contains the Objective-C FFI boundary in its own Rust
 crate. The root doctty crate prohibits `unsafe`; that remains unchanged.
@@ -55,11 +55,12 @@ resizes the **same** WKWebView to a narrower viewport, checks that the DOM
 height reflows and that `dimensions` and outline stay consistent, then makes
 a nonzero scroll capture and checks JSON, PNG header, pixel dimensions, byte
 count and snapshot metrics, plus bounded text selection. Readiness must
-wait for the actual file URL, not the initial `about:blank` document. A successful compilation or unit test cannot prove that WebKit
-completed a snapshot. GitHub-hosted macOS runners may lack an interactive display,
-so their diagnostic smoke step is `continue-on-error`; its status must be
-inspected separately. Failure there does **not** establish a renderer regression,
-and a green workflow does **not** imply that the runtime smoke passed.
+wait for the actual file URL, not the initial `about:blank` document.
+A successful compilation or unit test alone cannot prove that WebKit completed
+a snapshot. The smoke has passed on hosted `macos-15` and is now a **required**
+CI check: green adapter CI means this fixture's load, outline, responsive
+resize, selection, scroll, and PNG validations passed. It is **not** proof of
+Ghostty visual parity, realistic scrolling performance, or CPU/memory usage.
 
 ## Safety of the DOM bridge
 
