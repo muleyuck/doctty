@@ -1,6 +1,6 @@
 # Rust WebKit adapter — isolated experiment
 
-**Status:** Stage 4 snapshot implementation with diagnostic macOS CI smoke, **not** a drop-in replacement for the Swift helper.
+**Status:** Stage 5 native readiness/DOM-outline experiment and diagnostic PNG smoke, **not** a drop-in replacement for the Swift helper.
 
 This package intentionally contains the Objective-C FFI boundary in its own Rust
 crate. The root doctty crate prohibits `unsafe`; that remains unchanged.
@@ -15,10 +15,11 @@ The known-good `--hybrid-image` mode and its Swift implementation remain intact.
 - Return the actual document height once fonts/images have loaded (or after bounded retries).
 - Exercise the shared JSON protocol with unit tests.
 - Keep stdin reading on a background thread while AppKit remains on the main thread.
-- After readiness, handle `dimensions`, `metrics`, and `quit` over newline-delimited JSON.
-- An opt-in 5-argument invocation also accepts `snapshot` requests, scrolls the DOM, captures twice the viewport height, encodes a PNG, and returns Swift-compatible timings. This code still requires macOS compilation and runtime validation.
+- After readiness, handle `dimensions`, `metrics`, `outline`, and `quit` over newline-delimited JSON.
+- Guard against a WebKit startup race: `about:blank` can report a plausible height before the requested `file:` document finishes loading.
+- An opt-in 5-argument invocation also accepts `snapshot` requests, scrolls the DOM, captures twice the viewport height, encodes a PNG, and returns Swift-compatible timings. CI compiles this code, but matching native screenshot contents and scroll behavior still requires runtime validation.
 
-**Not yet implemented:** DOM outline/selection, incremental resize, full protocol integration.
+**Not yet implemented:** DOM text selection, incremental resize, full protocol integration.
 Snapshot and PNG code is experimental and must not be used until the macOS CI check and an interactive runtime smoke test pass.
 The adapter must not be configured as `DOCTTY_WEBKIT_HELPER_BIN` yet.
 
@@ -31,7 +32,7 @@ experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter \
   /absolute/path/to/page.html /absolute/path/to/resource-dir
 
 # Experimental snapshot protocol (stdin JSON-lines):
-printf '%s\\n' '{"type":"snapshot","y":0}' '{"type":"metrics"}' '{"type":"quit"}' | \\
+printf '%s\n' '{"type":"snapshot","y":0}' '{"type":"metrics"}' '{"type":"quit"}' | \\
   experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter \\
   /absolute/path/to/page.html /absolute/path/to/resource-dir /tmp/doctty-rust.png 800 600
 ```
@@ -46,9 +47,10 @@ python3 experiments/rust-webkit-adapter/tests/smoke_snapshot.py \
   experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter
 ```
 
-It loads an isolated local 3500px HTML page, requests a nonzero scroll capture,
-and checks the JSON reply, PNG magic/header, pixel dimensions, byte count and
-snapshot metrics. A successful compilation or unit test cannot prove that WebKit
+It loads an isolated local 3500px HTML page, requests the DOM outline and a
+nonzero scroll capture, and checks the JSON reply sequence, heading text, PNG
+magic/header, pixel dimensions, byte count and snapshot metrics. Readiness must
+wait for the actual file URL, not the initial `about:blank` document. A successful compilation or unit test cannot prove that WebKit
 completed a snapshot. GitHub-hosted macOS runners may lack an interactive display,
 so their diagnostic smoke step is `continue-on-error`; its status must be
 inspected separately. Failure there does **not** establish a renderer regression,
