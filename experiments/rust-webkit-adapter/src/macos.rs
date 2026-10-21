@@ -159,7 +159,7 @@ fn emit(response: &protocol::Response) -> Result<()> {
 
 // Read stdin off the AppKit main thread. WKWebView and all JavaScript
 // evaluation remain on the main thread and must keep pumping NSRunLoop.
-fn serve_commands(view: &WKWebView, document_height: f64) -> Result<()> {
+fn serve_commands(_view: &WKWebView, document_height: f64) -> Result<()> {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel::<String>();
     thread::spawn(move || {
@@ -214,7 +214,6 @@ fn serve_commands(view: &WKWebView, document_height: f64) -> Result<()> {
             }
             Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             Err(mpsc::TryRecvError::Empty) => {
-                let _ = view;
                 NSRunLoop::currentRunLoop()
                     .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
             }
