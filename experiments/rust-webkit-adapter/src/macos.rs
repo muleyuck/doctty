@@ -302,9 +302,12 @@ fn capture_snapshot(
     let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
         .context("could not decode snapshot bitmap")?;
     let properties = NSDictionary::new();
-    let png = bitmap
-        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
-        .context("could not encode viewport PNG")?;
+    // Safety: bitmap and the empty immutable properties dictionary are valid
+    // Objective-C objects retained for the duration of PNG conversion.
+    let png = unsafe {
+        bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+    }
+    .context("could not encode viewport PNG")?;
     let bytes = png.to_vec();
     let png_bytes = bytes.len();
     let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
