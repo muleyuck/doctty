@@ -14,6 +14,8 @@ from pathlib import Path
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 VIEWPORT_WIDTH = 640
 VIEWPORT_HEIGHT = 400
+RESIZED_WIDTH = 480
+RESIZED_HEIGHT = 320
 
 
 def smoke(binary: Path) -> None:
@@ -25,11 +27,15 @@ def smoke(binary: Path) -> None:
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<style>body{margin:0;background:#fff} "
             "main{height:3500px;background:linear-gradient(#fef3c7,#1d4ed8)} "
+            "@media(max-width:520px){main{height:4200px}} "
             "h1{padding:60px;color:#111}</style></head>"
             "<body><main><h1>Rust WebKit snapshot smoke</h1></main></body></html>",
             encoding="utf-8",
         )
         requests = [
+            {"type": "outline"},
+            {"type": "resize", "width": RESIZED_WIDTH, "height": RESIZED_HEIGHT},
+            {"type": "dimensions"},
             {"type": "outline"},
             {"type": "snapshot", "y": 120},
             {"type": "metrics"},
@@ -68,18 +74,27 @@ def smoke(binary: Path) -> None:
         if errors:
             raise AssertionError(f"WebKit helper errors: {errors}")
         if [item.get("kind") for item in records] != [
-            "ready", "outline", "snapshot", "metrics"
+            "ready", "outline", "resized", "dimensions", "outline", "snapshot", "metrics"
         ]:
             raise AssertionError(f"unexpected response sequence: {records}")
 
-        ready, outline, snapshot, metrics = records
+        ready, outline, resized, dimensions, resized_outline, snapshot, metrics = records
         if outline.get("background") is None or not isinstance(outline.get("items"), list):
             raise AssertionError(f"invalid outline reply: {outline}")
         if not any("Rust WebKit snapshot smoke" in item.get("text", "")
                    for item in outline["items"]):
             raise AssertionError("expected heading missing from DOM outline")
-        if ready["height"] < 2000:
-            raise AssertionError(f"DOM unexpectedly short: {ready['height']}")
+        if ready["height"] < 3000 or ready["height"] > 4000:
+            raise AssertionError(f"unexpected initial DOM height: {ready['height']}")
+        if resized["height"] < 4000:
+            raise AssertionError(f"DOM did not reflow at narrow width: {resized}")
+        if abs(dimensions["height"] - resized["height"]) > 1:
+            raise AssertionError("dimensions did not update after resize")
+        if not any("Rust WebKit snapshot smoke" in item.get("text", "")
+                   for item in resized_outline.get("items", [])):
+            raise AssertionError("outline missing heading after reflow")
+        if abs(snapshot["height"] - resized["height"]) > 1:
+            raise AssertionError("snapshot still reports stale document height")
         if abs(snapshot["requestedY"] - 120) > 1:
             raise AssertionError(f"incorrect snapshot origin: {snapshot}")
         if abs(snapshot["actualY"] - 120) > 2:
@@ -89,7 +104,7 @@ def smoke(binary: Path) -> None:
         if data[:8] != PNG_MAGIC or data[12:16] != b"IHDR":
             raise AssertionError("invalid PNG header")
         width, height = struct.unpack(">II", data[16:24])
-        if width < VIEWPORT_WIDTH or height < VIEWPORT_HEIGHT * 2:
+        if width < RESIZED_WIDTH or height < RESIZED_HEIGHT * 2:
             raise AssertionError(f"unexpected PNG dimensions: {width}x{height}")
         if snapshot["pngBytes"] != len(data):
             raise AssertionError("reported PNG bytes differ from saved file")
@@ -103,6 +118,7 @@ def smoke(binary: Path) -> None:
                     "png_height": height,
                     "png_bytes": len(data),
                     "document_height": ready["height"],
+                    "resized_document_height": resized["height"],
                     "capture_ms": snapshot["captureMs"],
                     "encode_ms": snapshot["encodeMs"],
                     "write_ms": snapshot["writeMs"],
