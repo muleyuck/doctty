@@ -72,7 +72,9 @@ pub(crate) fn run() -> Result<()> {
             bail!("WebKit document was not ready within 15s");
         }
         let status = evaluate_json(&view, READY_SCRIPT, Duration::from_secs(3))?;
-        let height = status["height"].as_f64().context("invalid document height")?;
+        let height = status["height"]
+            .as_f64()
+            .context("invalid document height")?;
         let fonts_ready = status["fontsReady"].as_bool().unwrap_or(true);
         let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
         if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
@@ -83,8 +85,7 @@ pub(crate) fn run() -> Result<()> {
             return Ok(());
         }
         attempt += 1;
-        NSRunLoop::currentRunLoop()
-            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
+        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
     }
 }
 
@@ -126,10 +127,8 @@ fn evaluate_json(
     // Safety: the block has an owned heap lifetime and matches the
     // WKWebView API signature. The view and run loop stay on the main thread.
     unsafe {
-        webview.evaluateJavaScript_completionHandler(
-            &NSString::from_str(javascript),
-            Some(&callback),
-        );
+        webview
+            .evaluateJavaScript_completionHandler(&NSString::from_str(javascript), Some(&callback));
     }
     let deadline = Instant::now() + timeout;
     loop {
@@ -139,7 +138,6 @@ fn evaluate_json(
         if Instant::now() >= deadline {
             bail!("JavaScript callback timed out after {timeout:?}");
         }
-        NSRunLoop::currentRunLoop()
-            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
     }
 }
