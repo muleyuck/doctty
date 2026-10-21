@@ -728,7 +728,10 @@ mod experiment {
                 bail!("cached image smaller than viewport: {image_width}x{image_height}");
             }
             let new_id = initial_image_id.unwrap_or_else(|| {
-                if cache.as_ref().is_some_and(|entry| entry.image_id == FIRST_IMAGE_ID) {
+                if cache
+                    .as_ref()
+                    .is_some_and(|entry| entry.image_id == FIRST_IMAGE_ID)
+                {
                     SECOND_IMAGE_ID
                 } else {
                     FIRST_IMAGE_ID
