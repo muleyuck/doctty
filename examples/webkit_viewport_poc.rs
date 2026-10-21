@@ -54,6 +54,9 @@ mod experiment {
     // and at most one additional in-flight image.
     const MAX_TILE_CACHE: usize = 4;
     const LAST_TILE_IMAGE_ID: u32 = 93_006;
+    // Alternating IDs let a resized frame arrive before the old placement is deleted.
+    const FIRST_RESIZE_IMAGE_ID: u32 = 93_007;
+    const SECOND_RESIZE_IMAGE_ID: u32 = 93_008;
     const HYBRID_PREVIEW_AFTER: Duration = Duration::from_millis(80);
     const HYBRID_SETTLE_AFTER: Duration = Duration::from_millis(160);
     const HYBRID_PREVIEW_FRAME: Duration = Duration::from_millis(33);
@@ -246,7 +249,7 @@ mod experiment {
         fn drop(&mut self) {
             let mut stdout = io::stdout().lock();
             // Free both of this PoC's fixed image IDs, even on early exit.
-            for id in FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID {
+            for id in FIRST_IMAGE_ID..=SECOND_RESIZE_IMAGE_ID {
                 let _ = delete_image(&mut stdout, id);
             }
             for id in hybrid_image_preview::FIRST_PREVIEW_ID..=hybrid_image_preview::LAST_PREVIEW_ID
@@ -698,6 +701,7 @@ mod experiment {
         viewport_width: u32,
         viewport_height: u32,
         document_height_hint: f64,
+        initial_image_id: Option<u32>,
         cache: &mut Option<ImageCache>,
     ) -> Result<f64> {
         let started = Instant::now();
@@ -723,10 +727,13 @@ mod experiment {
             if scale <= 0.0 || f64::from(image_height) < f64::from(viewport_height) * scale {
                 bail!("cached image smaller than viewport: {image_width}x{image_height}");
             }
-            let new_id = match cache.as_ref().map(|entry| entry.image_id) {
-                Some(FIRST_IMAGE_ID) => SECOND_IMAGE_ID,
-                _ => FIRST_IMAGE_ID,
-            };
+            let new_id = initial_image_id.unwrap_or_else(|| {
+                if cache.as_ref().is_some_and(|entry| entry.image_id == FIRST_IMAGE_ID) {
+                    SECOND_IMAGE_ID
+                } else {
+                    FIRST_IMAGE_ID
+                }
+            });
             let new_cache = ImageCache {
                 image_id: new_id,
                 source_y: result["actualY"].as_f64().unwrap_or(0.0),
@@ -1076,15 +1083,17 @@ mod experiment {
         fraction.clamp(0.0, 1.0) * (height - f64::from(viewport_height)).max(0.0)
     }
 
-    fn clear_session_images() -> Result<()> {
+    fn clear_session_images_except(keep_image_id: u32) -> Result<()> {
         let mut out = io::stdout().lock();
-        for id in FIRST_IMAGE_ID..=LAST_TILE_IMAGE_ID {
-            delete_image(&mut out, id)?;
+        for id in FIRST_IMAGE_ID..=SECOND_RESIZE_IMAGE_ID {
+            if id != keep_image_id {
+                delete_image(&mut out, id)?;
+            }
         }
         for id in hybrid_image_preview::FIRST_PREVIEW_ID..=hybrid_image_preview::LAST_PREVIEW_ID {
             delete_image(&mut out, id)?;
         }
-        execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+        // Do not clear the terminal: the newly placed image is already visible.
         out.flush()?;
         Ok(())
     }
@@ -1464,6 +1473,7 @@ mod experiment {
 
         let mut swift: Option<SwiftProcess> = None;
         let mut last_geometry: Option<(u16, u16)> = None;
+        let mut resize_count = 0_usize;
         loop {
             let (columns, total_rows) = terminal::size()?;
             let rows = total_rows.saturating_sub(1).max(1);
@@ -1514,6 +1524,13 @@ mod experiment {
             let document_height = geometry["height"].as_f64().unwrap_or(0.0);
             let initial_position = resumed_position(progress, document_height, height);
             let mut cached = None;
+            let initial_id = if resize_count == 0 {
+                FIRST_IMAGE_ID
+            } else if resize_count.is_multiple_of(2) {
+                FIRST_RESIZE_IMAGE_ID
+            } else {
+                SECOND_RESIZE_IMAGE_ID
+            };
             let _ = render_scroll(
                 &mut helper,
                 &output,
@@ -1523,8 +1540,11 @@ mod experiment {
                 width,
                 height,
                 document_height,
+                Some(initial_id),
                 &mut cached,
             )?;
+            // New placement is now complete. Old cached image bytes may be freed.
+            clear_session_images_except(initial_id)?;
             let active = cached.context("initial snapshot did not create a cache")?;
             let (exit, returned) = run_tiled(
                 helper,
@@ -1541,7 +1561,7 @@ mod experiment {
             swift = Some(returned);
             if let ViewerExit::Resized(next_progress) = exit {
                 progress = next_progress;
-                clear_session_images()?;
+                resize_count += 1;
                 continue;
             }
             return Ok(());
@@ -1630,6 +1650,7 @@ mod experiment {
             width,
             height,
             ready["height"].as_f64().unwrap_or(0.0),
+            None,
             &mut cache,
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
