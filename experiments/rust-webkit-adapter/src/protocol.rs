@@ -2,7 +2,7 @@
 //! The legacy Swift protocol remains authoritative until full parity is proven.
 use serde::{Deserialize, Serialize};
 
-// Staged for the next milestone: this bootstrap does not yet consume stdin.
+// Version is reserved for a future negotiated protocol handshake.
 #[allow(dead_code)]
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -22,9 +22,32 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Response {
-    Ready { height: f64 },
-    Dimensions { height: f64 },
-    Resized { height: f64 },
+    Ready {
+        height: f64,
+    },
+    Dimensions {
+        height: f64,
+    },
+    Resized {
+        height: f64,
+    },
+    Snapshot {
+        #[serde(rename = "requestedY")]
+        requested_y: f64,
+        #[serde(rename = "actualY")]
+        actual_y: f64,
+        height: f64,
+        #[serde(rename = "elapsedMs")]
+        elapsed_ms: f64,
+        #[serde(rename = "captureMs")]
+        capture_ms: f64,
+        #[serde(rename = "encodeMs")]
+        encode_ms: f64,
+        #[serde(rename = "writeMs")]
+        write_ms: f64,
+        #[serde(rename = "pngBytes")]
+        png_bytes: usize,
+    },
     Outline {
         background: String,
         items: Vec<serde_json::Value>,
@@ -40,7 +63,9 @@ pub enum Response {
         #[serde(rename = "secondsSinceSnapshot")]
         seconds_since_snapshot: f64,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[cfg(test)]
@@ -99,6 +124,38 @@ mod tests {
         assert_eq!(metrics["uptimeSec"], 3.5);
         assert_eq!(metrics["secondsSinceSnapshot"], -1.0);
         assert!(metrics.get("uptime_sec").is_none());
+    }
+
+    #[test]
+    fn snapshot_response_matches_swift_json_keys() {
+        let json = serde_json::to_value(Response::Snapshot {
+            requested_y: 64.0,
+            actual_y: 63.5,
+            height: 4000.0,
+            elapsed_ms: 30.0,
+            capture_ms: 20.0,
+            encode_ms: 8.0,
+            write_ms: 2.0,
+            png_bytes: 12345,
+        })
+        .unwrap();
+        for key in [
+            "kind",
+            "requestedY",
+            "actualY",
+            "height",
+            "elapsedMs",
+            "captureMs",
+            "encodeMs",
+            "writeMs",
+            "pngBytes",
+        ] {
+            assert!(json.get(key).is_some(), "missing {key}");
+        }
+        assert_eq!(json["kind"], "snapshot");
+        assert!(json.get("requested_y").is_none());
+        let decoded: Response = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), json);
     }
 
     #[test]
