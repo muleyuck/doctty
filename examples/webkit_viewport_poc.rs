@@ -1480,11 +1480,13 @@ mod experiment {
             bail!("preview worker panicked while stopping");
         }
         // Capture metrics once at teardown, not inside the idle/render loop.
-        if std::env::var_os("DOCTTY_WEBKIT_METRICS").is_some() {
-            match swift.request(&json!({"type": "metrics"})) {
-                Ok(metrics) => eprintln!("doctty WebKit metrics: {metrics} (session={exit:?})"),
-                Err(error) => eprintln!("doctty WebKit metrics unavailable: {error}"),
-            }
+        if let Some(path) = std::env::var_os("DOCTTY_WEBKIT_METRICS_FILE") {
+            let metrics = swift.request(&json!({"type": "metrics"}))?;
+            let mut report = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
+            writeln!(report, "{metrics} (session={exit:?})")?;
         }
         Ok((exit, swift))
     }
