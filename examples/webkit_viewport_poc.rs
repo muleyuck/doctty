@@ -1158,298 +1158,298 @@ mod experiment {
         // write Kitty graphics after TerminalSession restores the shell.
         let loop_result: Result<ViewerExit> = (|| {
             'viewer: loop {
-            if let Some(ref receiver) = preview_responses {
+                if let Some(ref receiver) = preview_responses {
+                    loop {
+                        match receiver.try_recv() {
+                            Ok(hybrid_image_preview::Response::Ready(tile)) => {
+                                preview_pending = false;
+                                preview_tiles.push(tile);
+                            }
+                            Ok(hybrid_image_preview::Response::Skipped) => {
+                                preview_pending = false;
+                            }
+                            Ok(hybrid_image_preview::Response::Failed(error)) => {
+                                bail!("raster preview worker: {error}");
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => {
+                                bail!("raster preview worker disconnected");
+                            }
+                        }
+                    }
+                }
                 loop {
-                    match receiver.try_recv() {
-                        Ok(hybrid_image_preview::Response::Ready(tile)) => {
-                            preview_pending = false;
-                            preview_tiles.push(tile);
+                    match responses.try_recv() {
+                        Ok(WorkerEvent::Snapshot(next)) => {
+                            pending = None;
+                            document_height = next.document_height;
+                            tile_timings.observe_uploaded(&next);
+                            // Skip images too far behind a quick direction reversal.
+                            if (next.source_y - position).abs() > f64::from(viewport_height) * 4.0 {
+                                let mut out = io::stdout().lock();
+                                delete_image(&mut out, next.image_id)?;
+                                out.flush()?;
+                            } else {
+                                cached.push(next);
+                            }
                         }
-                        Ok(hybrid_image_preview::Response::Skipped) => {
-                            preview_pending = false;
+                        Ok(WorkerEvent::Skipped {
+                            snapshot_ms,
+                            capture_ms,
+                            encode_ms,
+                            write_ms,
+                        }) => {
+                            pending = None;
+                            skipped_uploads += 1;
+                            tile_timings.observe_snapshot(snapshot_ms);
+                            tile_timings.observe_stages(capture_ms, encode_ms, write_ms);
                         }
-                        Ok(hybrid_image_preview::Response::Failed(error)) => {
-                            bail!("raster preview worker: {error}");
+                        Ok(WorkerEvent::Selection(text)) => {
+                            if !text.is_empty() {
+                                let mut out = io::stdout().lock();
+                                write!(out, "\x1b]52;c;{}\x07", STANDARD.encode(text))?;
+                                out.flush()?;
+                            }
                         }
+                        Ok(WorkerEvent::Error(error)) => bail!("WebKit tile: {error}"),
                         Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => {
-                            bail!("raster preview worker disconnected");
-                        }
+                        Err(TryRecvError::Disconnected) => bail!("WebKit tile worker disconnected"),
                     }
                 }
-            }
-            loop {
-                match responses.try_recv() {
-                    Ok(WorkerEvent::Snapshot(next)) => {
-                        pending = None;
-                        document_height = next.document_height;
-                        tile_timings.observe_uploaded(&next);
-                        // Skip images too far behind a quick direction reversal.
-                        if (next.source_y - position).abs() > f64::from(viewport_height) * 4.0 {
-                            let mut out = io::stdout().lock();
-                            delete_image(&mut out, next.image_id)?;
-                            out.flush()?;
-                        } else {
-                            cached.push(next);
-                        }
-                    }
-                    Ok(WorkerEvent::Skipped {
-                        snapshot_ms,
-                        capture_ms,
-                        encode_ms,
-                        write_ms,
-                    }) => {
-                        pending = None;
-                        skipped_uploads += 1;
-                        tile_timings.observe_snapshot(snapshot_ms);
-                        tile_timings.observe_stages(capture_ms, encode_ms, write_ms);
-                    }
-                    Ok(WorkerEvent::Selection(text)) => {
-                        if !text.is_empty() {
-                            let mut out = io::stdout().lock();
-                            write!(out, "\x1b]52;c;{}\x07", STANDARD.encode(text))?;
-                            out.flush()?;
-                        }
-                    }
-                    Ok(WorkerEvent::Error(error)) => bail!("WebKit tile: {error}"),
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => bail!("WebKit tile worker disconnected"),
-                }
-            }
 
-            let now = Instant::now();
-            let selected = select_tile(&cached, position, viewport_height);
-            wait.observe(selected.is_some(), now);
-            let idle_for = now.saturating_duration_since(last_movement_at);
-            let mode = outline.as_ref().map(|_| {
-                hybrid_display_mode(
-                    selected.is_some(),
-                    showing_preview,
-                    wait.elapsed(now),
-                    idle_for,
-                )
-            });
+                let now = Instant::now();
+                let selected = select_tile(&cached, position, viewport_height);
+                wait.observe(selected.is_some(), now);
+                let idle_for = now.saturating_duration_since(last_movement_at);
+                let mode = outline.as_ref().map(|_| {
+                    hybrid_display_mode(
+                        selected.is_some(),
+                        showing_preview,
+                        wait.elapsed(now),
+                        idle_for,
+                    )
+                });
 
-            if selected.is_some() && mode.is_none_or(|value| value == HybridDisplayMode::Image) {
-                let tile = selected.context("tile selection disappeared")?;
-                let fingerprint = (tile.image_id, position.to_bits());
-                if showing_preview || last_displayed != Some(fingerprint) {
-                    let status = format!(
-                        "TILE snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
-                        tile_timings.max_snapshot_ms,
-                        tile_timings.max_capture_ms,
-                        tile_timings.max_encode_ms,
-                        tile_timings.max_write_ms,
-                        tile_timings.max_upload_ms,
-                        wait.worst(now).as_secs_f64() * 1000.0
-                    );
-                    display_cached(
-                        tile,
-                        position,
-                        columns,
-                        rows,
-                        viewport_height,
-                        &status,
-                        placed_preview_id
-                            .or_else(|| last_displayed.map(|fingerprint| fingerprint.0)),
-                        showing_preview && placed_preview_id.is_none(),
-                    )?;
-                    placed_preview_id = None;
-                    showing_preview = false;
-                    last_preview_position = None;
-                    last_preview_frame = None;
-                    last_displayed = Some(fingerprint);
-                }
-                last_wait_status_at = None;
-            } else if mode == Some(HybridDisplayMode::Preview) {
-                let frame_due = last_preview_frame
-                    .is_none_or(|last| now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME);
-                if preview_requests.is_some() {
-                    if let Some(tile) =
-                        hybrid_image_preview::select(&preview_tiles, position, viewport_height)
-                    {
+                if selected.is_some() && mode.is_none_or(|value| value == HybridDisplayMode::Image) {
+                    let tile = selected.context("tile selection disappeared")?;
+                    let fingerprint = (tile.image_id, position.to_bits());
+                    if showing_preview || last_displayed != Some(fingerprint) {
+                        let status = format!(
+                            "TILE snapMax={:.0} capMax={:.0} encMax={:.0} wrMax={:.0} upMax={:.0} wait={:.0}ms",
+                            tile_timings.max_snapshot_ms,
+                            tile_timings.max_capture_ms,
+                            tile_timings.max_encode_ms,
+                            tile_timings.max_write_ms,
+                            tile_timings.max_upload_ms,
+                            wait.worst(now).as_secs_f64() * 1000.0
+                        );
+                        display_cached(
+                            tile,
+                            position,
+                            columns,
+                            rows,
+                            viewport_height,
+                            &status,
+                            placed_preview_id
+                                .or_else(|| last_displayed.map(|fingerprint| fingerprint.0)),
+                            showing_preview && placed_preview_id.is_none(),
+                        )?;
+                        placed_preview_id = None;
+                        showing_preview = false;
+                        last_preview_position = None;
+                        last_preview_frame = None;
+                        last_displayed = Some(fingerprint);
+                    }
+                    last_wait_status_at = None;
+                } else if mode == Some(HybridDisplayMode::Preview) {
+                    let frame_due = last_preview_frame
+                        .is_none_or(|last| now.saturating_duration_since(last) >= HYBRID_PREVIEW_FRAME);
+                    if preview_requests.is_some() {
+                        if let Some(tile) =
+                            hybrid_image_preview::select(&preview_tiles, position, viewport_height)
+                        {
+                            if last_preview_position != Some(position.to_bits()) && frame_due {
+                                let mut out = io::stdout().lock();
+                                place_image(
+                                    &mut out,
+                                    tile.id,
+                                    columns,
+                                    rows,
+                                    tile.width,
+                                    hybrid_image_preview::Tile::viewport_height_px(viewport_height),
+                                    tile.source_y(position, viewport_height),
+                                )?;
+                                if let Some(old_id) = placed_preview_id
+                                    .or_else(|| last_displayed.map(|v| v.0))
+                                    .filter(|id| *id != tile.id)
+                                {
+                                    hide_image_placement(&mut out, old_id)?;
+                                }
+                                out.flush()?;
+                                placed_preview_id = Some(tile.id);
+                                showing_preview = true;
+                                last_displayed = None;
+                                last_preview_position = Some(position.to_bits());
+                                last_preview_frame = Some(now);
+                            }
+                        }
+                    } else if let Some(ref outline) = outline {
                         if last_preview_position != Some(position.to_bits()) && frame_due {
-                            let mut out = io::stdout().lock();
-                            place_image(
-                                &mut out,
-                                tile.id,
+                            display_preview(
+                                outline,
+                                position,
                                 columns,
                                 rows,
-                                tile.width,
-                                hybrid_image_preview::Tile::viewport_height_px(viewport_height),
-                                tile.source_y(position, viewport_height),
+                                viewport_height,
+                                last_displayed.map(|fingerprint| fingerprint.0),
                             )?;
-                            if let Some(old_id) = placed_preview_id
-                                .or_else(|| last_displayed.map(|v| v.0))
-                                .filter(|id| *id != tile.id)
-                            {
-                                hide_image_placement(&mut out, old_id)?;
-                            }
-                            out.flush()?;
-                            placed_preview_id = Some(tile.id);
                             showing_preview = true;
                             last_displayed = None;
                             last_preview_position = Some(position.to_bits());
                             last_preview_frame = Some(now);
                         }
                     }
-                } else if let Some(ref outline) = outline {
-                    if last_preview_position != Some(position.to_bits()) && frame_due {
-                        display_preview(
-                            outline,
+                } else if last_wait_status_at.is_none_or(|previous| {
+                    now.saturating_duration_since(previous) >= Duration::from_millis(100)
+                }) {
+                    // No image can cover this position yet. Keep the previous
+                    // placement until the worker publishes the missing tile.
+                    let last = cached
+                        .iter()
+                        .find(|entry| Some(entry.image_id) == last_displayed.map(|v| v.0));
+                    if let Some(tile) = last.or_else(|| cached.first()) {
+                        display_cache_wait(
+                            tile,
                             position,
                             columns,
                             rows,
                             viewport_height,
-                            last_displayed.map(|fingerprint| fingerprint.0),
+                            pending.is_some(),
+                            &wait,
+                            now,
+                            Some(&tile_timings),
                         )?;
-                        showing_preview = true;
-                        last_displayed = None;
-                        last_preview_position = Some(position.to_bits());
-                        last_preview_frame = Some(now);
                     }
+                    last_wait_status_at = Some(now);
                 }
-            } else if last_wait_status_at.is_none_or(|previous| {
-                now.saturating_duration_since(previous) >= Duration::from_millis(100)
-            }) {
-                // No image can cover this position yet. Keep the previous
-                // placement until the worker publishes the missing tile.
-                let last = cached
-                    .iter()
-                    .find(|entry| Some(entry.image_id) == last_displayed.map(|v| v.0));
-                if let Some(tile) = last.or_else(|| cached.first()) {
-                    display_cache_wait(
-                        tile,
-                        position,
-                        columns,
-                        rows,
-                        viewport_height,
-                        pending.is_some(),
-                        &wait,
-                        now,
-                        Some(&tile_timings),
-                    )?;
-                }
-                last_wait_status_at = Some(now);
-            }
 
-            if let Some(ref sender) = preview_requests {
-                if !preview_pending
-                    && mode == Some(HybridDisplayMode::Preview)
-                    && hybrid_image_preview::select(&preview_tiles, position, viewport_height)
-                        .is_none()
-                {
-                    if preview_tiles.len() >= hybrid_image_preview::MAX_PREVIEW_CACHE {
-                        if let Some(old) = hybrid_image_preview::evict(
-                            &mut preview_tiles,
-                            position,
-                            viewport_height,
-                            placed_preview_id,
-                        ) {
-                            let mut out = io::stdout().lock();
-                            delete_image(&mut out, old.id)?;
-                            out.flush()?;
-                        }
-                    }
-                    if preview_tiles.len() < hybrid_image_preview::MAX_PREVIEW_CACHE {
-                        if let Some(image_id) = hybrid_image_preview::free_id(&preview_tiles) {
-                            let origin = hybrid_image_preview::tile_origin(
+                if let Some(ref sender) = preview_requests {
+                    if !preview_pending
+                        && mode == Some(HybridDisplayMode::Preview)
+                        && hybrid_image_preview::select(&preview_tiles, position, viewport_height)
+                            .is_none()
+                    {
+                        if preview_tiles.len() >= hybrid_image_preview::MAX_PREVIEW_CACHE {
+                            if let Some(old) = hybrid_image_preview::evict(
+                                &mut preview_tiles,
                                 position,
                                 viewport_height,
-                                document_height,
-                            );
-                            sender.send(hybrid_image_preview::Request {
-                                origin,
-                                image_id,
-                                requested_at: position,
-                            })?;
-                            preview_pending = true;
+                                placed_preview_id,
+                            ) {
+                                let mut out = io::stdout().lock();
+                                delete_image(&mut out, old.id)?;
+                                out.flush()?;
+                            }
+                        }
+                        if preview_tiles.len() < hybrid_image_preview::MAX_PREVIEW_CACHE {
+                            if let Some(image_id) = hybrid_image_preview::free_id(&preview_tiles) {
+                                let origin = hybrid_image_preview::tile_origin(
+                                    position,
+                                    viewport_height,
+                                    document_height,
+                                );
+                                sender.send(hybrid_image_preview::Request {
+                                    origin,
+                                    image_id,
+                                    requested_at: position,
+                                })?;
+                                preview_pending = true;
+                            }
                         }
                     }
                 }
-            }
 
-            if pending.is_none() {
-                let recovery =
-                    outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
-                let origin = if recovery {
-                    recovery_tile_origin(&cached, position, viewport_height, document_height)
-                } else {
-                    next_tile_origin(
-                        &cached,
-                        position,
-                        viewport_height,
+                if pending.is_none() {
+                    let recovery =
+                        outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
+                    let origin = if recovery {
+                        recovery_tile_origin(&cached, position, viewport_height, document_height)
+                    } else {
+                        next_tile_origin(
+                            &cached,
+                            position,
+                            viewport_height,
+                            document_height,
+                            direction,
+                        )
+                    };
+                    if let Some(origin) = origin {
+                        if cached.len() >= MAX_TILE_CACHE {
+                            if let Some(old) = evict_tile(
+                                &mut cached,
+                                position,
+                                viewport_height,
+                                last_displayed.map(|v| v.0),
+                            ) {
+                                let mut out = io::stdout().lock();
+                                delete_image(&mut out, old.image_id)?;
+                                out.flush()?;
+                            }
+                        }
+                        if cached.len() < MAX_TILE_CACHE {
+                            if let Some(image_id) = tile_image_id(&cached) {
+                                requests.send(WorkerCommand::Snapshot {
+                                    origin,
+                                    image_id,
+                                    requested_at: position,
+                                })?;
+                                pending = Some(image_id);
+                            }
+                        }
+                    }
+                }
+
+                if !event::poll(Duration::from_millis(12))? {
+                    continue;
+                }
+                for index in 0..MAX_INPUT_BATCH {
+                    if index > 0 && !event::poll(Duration::ZERO)? {
+                        break;
+                    }
+                    let key = match event::read()? {
+                        Event::Resize(new_cols, new_rows) => {
+                            if (new_cols, new_rows) != (columns, rows.saturating_add(1)) {
+                                exit = ViewerExit::Resized(reading_fraction(
+                                    position,
+                                    document_height,
+                                    viewport_height,
+                                ));
+                                break 'viewer;
+                            }
+                            continue;
+                        }
+                        Event::Key(key) => key,
+                        _ => continue,
+                    };
+                    let previous_position = position;
+                    match apply_key(
+                        key,
+                        &mut position,
+                        &mut direction,
                         document_height,
-                        direction,
-                    )
-                };
-                if let Some(origin) = origin {
-                    if cached.len() >= MAX_TILE_CACHE {
-                        if let Some(old) = evict_tile(
-                            &mut cached,
-                            position,
-                            viewport_height,
-                            last_displayed.map(|v| v.0),
-                        ) {
-                            let mut out = io::stdout().lock();
-                            delete_image(&mut out, old.image_id)?;
-                            out.flush()?;
-                        }
+                        viewport_height,
+                    ) {
+                        InputAction::Quit => break 'viewer,
+                        InputAction::Select => requests.send(WorkerCommand::Select)?,
+                        InputAction::Continue => {}
                     }
-                    if cached.len() < MAX_TILE_CACHE {
-                        if let Some(image_id) = tile_image_id(&cached) {
-                            requests.send(WorkerCommand::Snapshot {
-                                origin,
-                                image_id,
-                                requested_at: position,
-                            })?;
-                            pending = Some(image_id);
-                        }
+                    if position != previous_position {
+                        last_movement_at = Instant::now();
                     }
+                    // Publish every accepted movement, including reversals, before
+                    // returning to the drawing loop.
+                    latest_position.store(position.to_bits(), Ordering::Relaxed);
                 }
-            }
-
-            if !event::poll(Duration::from_millis(12))? {
-                continue;
-            }
-            for index in 0..MAX_INPUT_BATCH {
-                if index > 0 && !event::poll(Duration::ZERO)? {
-                    break;
-                }
-                let key = match event::read()? {
-                    Event::Resize(new_cols, new_rows) => {
-                        if (new_cols, new_rows) != (columns, rows.saturating_add(1)) {
-                            exit = ViewerExit::Resized(reading_fraction(
-                                position,
-                                document_height,
-                                viewport_height,
-                            ));
-                            break 'viewer;
-                        }
-                        continue;
-                    }
-                    Event::Key(key) => key,
-                    _ => continue,
-                };
-                let previous_position = position;
-                match apply_key(
-                    key,
-                    &mut position,
-                    &mut direction,
-                    document_height,
-                    viewport_height,
-                ) {
-                    InputAction::Quit => break 'viewer,
-                    InputAction::Select => requests.send(WorkerCommand::Select)?,
-                    InputAction::Continue => {}
-                }
-                if position != previous_position {
-                    last_movement_at = Instant::now();
-                }
-                // Publish every accepted movement, including reversals, before
-                // returning to the drawing loop.
-                latest_position.store(position.to_bits(), Ordering::Relaxed);
-            }
             }
             Ok(exit)
         })();
