@@ -1,6 +1,6 @@
 # Rust WebKit adapter — isolated experiment
 
-**Status:** Stage 2 DOM-readiness experiment, **not** a drop-in replacement for the Swift helper.
+**Status:** Stage 3 basic JSON-command loop experiment, **not** a drop-in replacement for the Swift helper.
 
 This package intentionally contains the Objective-C FFI boundary in its own Rust
 crate. The root doctty crate prohibits `unsafe`; that remains unchanged.
@@ -14,9 +14,11 @@ The known-good `--hybrid-image` mode and its Swift implementation remain intact.
 - Evaluate the Swift-compatible document readiness probe with an Objective-C completion block on the main thread.
 - Return the actual document height once fonts/images have loaded (or after bounded retries).
 - Exercise the shared JSON protocol with unit tests.
+- Keep stdin reading on a background thread while AppKit remains on the main thread.
+- After readiness, handle `dimensions`, `metrics`, and `quit` over newline-delimited JSON; reject unsupported commands explicitly.
 
-**Not yet implemented:** Interactive JSON commands, DOM outline, screenshots, PNG encoding,
-incremental resize, resource lifecycle parity, full protocol integration.
+**Not yet implemented:** DOM outline/selection, screenshots, PNG encoding,
+incremental resize, snapshot metrics, full protocol integration.
 The adapter must not be configured as `DOCTTY_WEBKIT_HELPER_BIN` yet.
 
 ## macOS build and smoke test
