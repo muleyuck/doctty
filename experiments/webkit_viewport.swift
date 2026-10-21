@@ -85,6 +85,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     func handle(_ request: [String: Any]) {
         guard let action = request["type"] as? String else { return }
         switch action {
+        case "dimensions":
+            emit(["kind": "dimensions", "height": documentHeight])
         case "resize":
             guard loaded else {
                 emit(["kind": "error", "message": "document is not loaded"])
