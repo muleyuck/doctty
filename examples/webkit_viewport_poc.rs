@@ -63,10 +63,7 @@ mod experiment {
 
     // In the opt-in eco mode, the raster outline handles uncached movement.
     // WebKit only fills the settled viewport, not speculative future tiles.
-    fn should_capture_in_eco_mode(
-        idle_for: Duration,
-        tile_ready: bool,
-    ) -> bool {
+    fn should_capture_in_eco_mode(idle_for: Duration, tile_ready: bool) -> bool {
         idle_for >= HYBRID_SETTLE_AFTER && !tile_ready
     }
 
@@ -1461,8 +1458,7 @@ mod experiment {
                 }
 
                 if pending.is_none()
-                    && (!eco_snapshots
-                        || should_capture_in_eco_mode(idle_for, selected.is_some()))
+                    && (!eco_snapshots || should_capture_in_eco_mode(idle_for, selected.is_some()))
                 {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
