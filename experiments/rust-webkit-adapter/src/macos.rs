@@ -5,9 +5,9 @@ use std::{
     env,
     io::{self, BufRead},
     path::PathBuf,
+    rc::Rc,
     sync::mpsc,
     thread,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
