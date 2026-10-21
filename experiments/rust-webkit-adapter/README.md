@@ -1,6 +1,6 @@
 # Rust WebKit adapter — isolated experiment
 
-**Status:** Stage 7 native DOM-selection parity, resize/reflow and required PNG smoke, **not** a drop-in replacement for the Swift helper.
+**Status:** Stage 8 benchmark harness, Stage 7 DOM-selection parity and required PNG smoke. **Not** a production drop-in.
 
 This package intentionally contains the Objective-C FFI boundary in its own Rust
 crate. The root doctty crate prohibits `unsafe`; that remains unchanged.
@@ -61,6 +61,46 @@ a snapshot. The smoke has passed on hosted `macos-15` and is now a **required**
 CI check: green adapter CI means this fixture's load, outline, responsive
 resize, selection, scroll, and PNG validations passed. It is **not** proof of
 Ghostty visual parity, realistic scrolling performance, or CPU/memory usage.
+
+## Stage 8: reproducible Swift/Rust helper comparison (macOS only)
+
+Before changing the terminal viewer, compare the two **compiled native** WebKit
+helpers on the same local HTML and the same scroll requests. Running the old
+Swift helper through the `swift` interpreter would include compilation and
+skew any `swift-frontend` CPU comparison; build it once first:
+
+```sh
+cargo build --release --manifest-path experiments/rust-webkit-adapter/Cargo.toml
+SWIFT_HELPER="$(mktemp -d)/doctty-swift-webkit"
+swiftc -swift-version 5 -O experiments/webkit_viewport.swift -o "$SWIFT_HELPER"
+
+python3 experiments/rust-webkit-adapter/tests/compare_webkit_helpers.py \
+  --swift-bin "$SWIFT_HELPER" \
+  --rust-bin experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter \
+  --samples 12 --repeats 2 --output /tmp/doctty-webkit-comparison.json
+```
+
+The default fixture is deterministic and stored in a temporary directory.
+For a more representative rendered Markdown HTML, supply both
+`--html /absolute/path/to/rendered.html` and
+`--read-root /absolute/path/to/assets-root`. The HTML must be inside the
+resource root, and **both** backends will use that exact file.
+
+The harness alternates Swift/Rust, then Rust/Swift to reduce warmup/thermal
+order bias, sends two warmup captures, and records median/p95/max snapshot,
+capture, encode and write times, document heights, PNG dimensions and byte
+counts. It reports per-helper direct child process CPU time and session wall
+time as additional rough diagnostics. It is not run as a performance gate in
+GitHub Actions: hosted runner load can vary.
+
+**Limitations:** Helper CPU seconds exclude WebKit content/GPU processes and
+Ghostty itself; protocol snapshot latency is not terminal scroll FPS or
+end-to-end UI latency. Inspect Activity Monitor on the same Mac during
+matched `README.md` scroll sequences (idle, repeated j/k, fast wheel,
+full top-to-bottom, resize). Record the WebKit and Ghostty processes alongside
+the helper, including `swift-frontend` only for interpreter-based Swift runs.
+No Swift-to-Rust default switch should occur before a visually matched
+Ghostty test and stable CPU/RSS readings.
 
 ## Safety of the DOM bridge
 
