@@ -13,6 +13,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private let webView: WKWebView
     private var documentHeight: Double = 0
     private var loaded = false
+    private let metricsStartedAt = Date()
+    private var snapshotRequests = 0
+    private var snapshotCompleted = 0
+    private var lastSnapshotRequestedAt: Date?
 
     init(htmlURL: URL, readRoot: URL, outputURL: URL, width: CGFloat, height: CGFloat) {
         self.htmlURL = htmlURL
@@ -87,6 +91,16 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         switch action {
         case "dimensions":
             emit(["kind": "dimensions", "height": documentHeight])
+        case "metrics":
+            emit([
+                "kind": "metrics",
+                "requests": snapshotRequests,
+                "completed": snapshotCompleted,
+                "uptimeSec": Date().timeIntervalSince(metricsStartedAt),
+                "secondsSinceSnapshot": lastSnapshotRequestedAt.map {
+                    Date().timeIntervalSince($0)
+                } ?? -1
+            ])
         case "resize":
             guard loaded else {
                 emit(["kind": "error", "message": "document is not loaded"])
@@ -123,6 +137,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 }
             }
         case "snapshot":
+            snapshotRequests += 1
+            lastSnapshotRequestedAt = Date()
             guard loaded else {
                 emit(["kind": "error", "message": "document is not loaded"])
                 return
@@ -275,6 +291,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 let writeStarted = Date()
                 try png.write(to: self.outputURL, options: .atomic)
                 let writeMs = Date().timeIntervalSince(writeStarted) * 1000
+                self.snapshotCompleted += 1
                 self.emit([
                     "kind": "snapshot",
                     "requestedY": requestedY,
