@@ -1,17 +1,20 @@
 //! All Cocoa/WebKit calls are isolated here. The view is never sent to
 //! another thread: AppKit objects are !Send and belong to the main thread.
 use std::{
+    cell::RefCell,
     env,
     path::PathBuf,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
 use crate::protocol;
 use anyhow::{Context, Result, bail};
-use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
+use block2::RcBlock;
+use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::NSApplication;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSDate, NSRunLoop, NSString, NSURL};
+use objc2_foundation::{NSDate, NSError, NSRunLoop, NSString, NSURL};
 use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
 
 pub(crate) fn run() -> Result<()> {
@@ -59,24 +62,84 @@ pub(crate) fn run() -> Result<()> {
     // and the access root encloses the HTML file.
     unsafe { view.loadFileURL_allowingReadAccessToURL(&url, &access) };
 
-    // First-stage smoke check only: this proves navigation stops loading.
-    // A navigation delegate + font/image readiness checks are mandatory
-    // before using the existing viewer's 'ready' contract.
-    let timeout = Instant::now() + Duration::from_secs(15);
-    let loop_ = NSRunLoop::currentRunLoop();
-    let mut ever_loading = false;
-    while Instant::now() < timeout {
-        if unsafe { view.isLoading() } {
-            ever_loading = true;
-        } else if ever_loading {
+    // Navigation may finish before the first isLoading() observation, so
+    // do not use an ever-loading flag as the completion criterion. Instead,
+    // ask the loaded document for the same layout/fonts/image state as Swift.
+    let ready_by = Instant::now() + Duration::from_secs(15);
+    let mut attempt = 0;
+    loop {
+        if Instant::now() >= ready_by {
+            bail!("WebKit document was not ready within 15s");
+        }
+        let status = evaluate_json(&view, READY_SCRIPT, Duration::from_secs(3))?;
+        let height = status["height"].as_f64().context("invalid document height")?;
+        let fonts_ready = status["fontsReady"].as_bool().unwrap_or(true);
+        let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
+        if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
             println!(
                 "{}",
-                serde_json::to_string(&protocol::Response::Ready { height: 0.0 })?
+                serde_json::to_string(&protocol::Response::Ready { height })?
             );
             return Ok(());
         }
-        let limit = NSDate::dateWithTimeIntervalSinceNow(0.02);
-        loop_.runUntilDate(&limit);
+        attempt += 1;
+        NSRunLoop::currentRunLoop()
+            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
     }
-    bail!("WebKit did not complete initial navigation within 15s")
+}
+
+const READY_SCRIPT: &str = r#"JSON.stringify((() => ({
+  height: Math.max(
+    document.documentElement.scrollHeight,
+    document.body ? document.body.scrollHeight : 0,
+    document.documentElement.offsetHeight,
+    window.innerHeight
+  ),
+  fontsReady: !document.fonts || document.fonts.status === "loaded",
+  imagesReady: Array.from(document.images).every(img => img.complete)
+}))())"#;
+
+// WebKit promises to call the completion handler on the main thread.
+// The run loop is pumped on that thread; no Objective-C object moves to
+// a Rust worker. Evaluate a JSON *string* to keep the FFI type explicit.
+fn evaluate_json(
+    webview: &WKWebView,
+    javascript: &str,
+    timeout: Duration,
+) -> Result<serde_json::Value> {
+    let result: Rc<RefCell<Option<Result<String>>>> = Rc::new(RefCell::new(None));
+    let slot = Rc::clone(&result);
+    let callback = RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
+        let finished = if !error.is_null() {
+            Err(anyhow::anyhow!("WKWebView JavaScript evaluation failed"))
+        } else if value.is_null() {
+            Err(anyhow::anyhow!("WKWebView JavaScript produced no result"))
+        } else {
+            // Safety: READY_SCRIPT always returns a JSON.stringify string;
+            // WebKit bridges JavaScript strings to Foundation NSString.
+            // The callback's object remains alive throughout this call.
+            let text = unsafe { &*value.cast::<NSString>() };
+            Ok(text.to_string())
+        };
+        *slot.borrow_mut() = Some(finished);
+    });
+    // Safety: the block has an owned heap lifetime and matches the
+    // WKWebView API signature. The view and run loop stay on the main thread.
+    unsafe {
+        webview.evaluateJavaScript_completionHandler(
+            &NSString::from_str(javascript),
+            Some(&callback),
+        );
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(finished) = result.borrow_mut().take() {
+            return Ok(serde_json::from_str(&finished?)?);
+        }
+        if Instant::now() >= deadline {
+            bail!("JavaScript callback timed out after {timeout:?}");
+        }
+        NSRunLoop::currentRunLoop()
+            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+    }
 }
