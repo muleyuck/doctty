@@ -32,6 +32,10 @@ jobs:
       # required regression gate; Ghostty visual/CPU parity remains manual.
       - name: Validate native smoke script syntax
         run: python3 -m py_compile experiments/rust-webkit-adapter/tests/smoke_snapshot.py
+      - name: Validate paired benchmark harness
+        run: |
+          python3 -m py_compile experiments/rust-webkit-adapter/tests/compare_webkit_helpers.py
+          python3 experiments/rust-webkit-adapter/tests/compare_webkit_helpers.py --help > /dev/null
       - name: Native WebKit protocol and PNG smoke
         timeout-minutes: 2
         run: |
