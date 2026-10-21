@@ -204,10 +204,10 @@ fn emit(response: &protocol::Response) -> Result<()> {
 // evaluation remain on the main thread and must keep pumping NSRunLoop.
 fn serve_commands(
     view: &WKWebView,
-    document_height: f64,
+    mut document_height: f64,
     output: Option<&Path>,
-    width: f64,
-    height: f64,
+    mut width: f64,
+    mut height: f64,
 ) -> Result<()> {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel::<String>();
@@ -283,7 +283,25 @@ fn serve_commands(
                             })?,
                         }
                     }
-                    protocol::Command::Resize { .. } | protocol::Command::Select => {
+                    protocol::Command::Resize {
+                        width: next_width,
+                        height: next_height,
+                    } => {
+                        match resize_viewport(view, next_width, next_height) {
+                            Ok(next_document_height) => {
+                                width = f64::from(next_width);
+                                height = f64::from(next_height);
+                                document_height = next_document_height;
+                                emit(&protocol::Response::Resized {
+                                    height: document_height,
+                                })?;
+                            }
+                            Err(error) => emit(&protocol::Response::Error {
+                                message: error.to_string(),
+                            })?,
+                        }
+                    }
+                    protocol::Command::Select => {
                         emit(&protocol::Response::Error {
                             message: "command not yet implemented in Rust adapter".into(),
                         })?;
@@ -297,6 +315,55 @@ fn serve_commands(
             }
         }
     }
+}
+
+// Resize the same WKWebView instead of replacing its WebKit process.
+// The caller commits new geometry only after DOM metrics succeed.
+fn resize_viewport(view: &WKWebView, width: u32, height: u32) -> Result<f64> {
+    let (width, height) = validate_resize_dimensions(width, height)?;
+    let previous_frame = view.frame();
+    view.setFrame(CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: CGSize {
+            width,
+            height: height * 2.0,
+        },
+    });
+    view.setNeedsLayout(true);
+    view.layoutSubtreeIfNeeded();
+
+    // Allow WebKit to apply the resized viewport before reading new DOM metrics.
+    NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+    let document_height = evaluate_json(view, HEIGHT_SCRIPT, Duration::from_secs(5))
+        .and_then(|value| value.as_f64().context("invalid resized document height"))
+        .and_then(|value| {
+            if value.is_finite() && value > 0.0 {
+                Ok(value)
+            } else {
+                bail!("resized document height must be positive and finite");
+            }
+        });
+    if document_height.is_err() {
+        // Keep the previous dimensions usable after a failed resize response.
+        view.setFrame(previous_frame);
+        view.setNeedsLayout(true);
+        view.layoutSubtreeIfNeeded();
+    }
+    document_height
+}
+
+const HEIGHT_SCRIPT: &str = r#"JSON.stringify(Math.max(
+  document.documentElement.scrollHeight,
+  document.body ? document.body.scrollHeight : 0,
+  document.documentElement.offsetHeight,
+  window.innerHeight
+))"#;
+
+fn validate_resize_dimensions(width: u32, height: u32) -> Result<(f64, f64)> {
+    if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
+        bail!("viewport dimensions must be between 1 and 16384");
+    }
+    Ok((f64::from(width), f64::from(height)))
 }
 
 // Transform the JavaScript response to the same JSON-line shape as Swift.
@@ -545,5 +612,19 @@ mod outline_tests {
     fn rejects_incomplete_outline_payloads() {
         assert!(outline_response(json!({"background": "#fff"})).is_err());
         assert!(outline_response(json!({"items": []})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::validate_resize_dimensions;
+
+    #[test]
+    fn validates_dimensions_before_touching_webkit() {
+        assert_eq!(validate_resize_dimensions(480, 320).unwrap(), (480.0, 320.0));
+        assert!(validate_resize_dimensions(0, 320).is_err());
+        assert!(validate_resize_dimensions(480, 0).is_err());
+        assert!(validate_resize_dimensions(16_385, 320).is_err());
+        assert!(validate_resize_dimensions(480, 16_385).is_err());
     }
 }
