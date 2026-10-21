@@ -1,0 +1,29 @@
+name: Rust WebKit Adapter PoC
+
+on:
+  push:
+    branches:
+      - experiment/rust-webkit-adapter
+  pull_request:
+    paths:
+      - 'experiments/rust-webkit-adapter/**'
+      - '.github/workflows/rust-webkit-adapter.yml'
+
+jobs:
+  native-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check isolated WebKit crate
+        run: cargo check --manifest-path experiments/rust-webkit-adapter/Cargo.toml --all-targets
+      - name: Unit tests (protocol)
+        run: cargo test --manifest-path experiments/rust-webkit-adapter/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path experiments/rust-webkit-adapter/Cargo.toml --all-targets -- -D warnings
+      - name: Rustfmt
+        run: cargo fmt --manifest-path experiments/rust-webkit-adapter/Cargo.toml --all -- --check
+      - name: Compile release binary (no GUI runner interaction)
+        run: cargo build --release --manifest-path experiments/rust-webkit-adapter/Cargo.toml
