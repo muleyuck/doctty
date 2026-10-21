@@ -264,7 +264,8 @@ fn capture_snapshot(
     let actual_y = evaluate_json(view, &script, Duration::from_secs(5))?
         .as_f64().context("invalid scroll position")?;
 
-    let config = unsafe { WKSnapshotConfiguration::new() };
+    let mtm = MainThreadMarker::new().context("snapshot requires main thread")?;
+    let config = unsafe { WKSnapshotConfiguration::new(mtm) };
     unsafe {
         config.setRect(CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
@@ -298,17 +299,17 @@ fn capture_snapshot(
     let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
     let encode_started = Instant::now();
     let tiff = image.TIFFRepresentation().context("snapshot has no TIFF data")?;
-    let bitmap = unsafe { NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff) }
+    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
         .context("could not decode snapshot bitmap")?;
     let properties = NSDictionary::new();
     let png = bitmap
         .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
         .context("could not encode viewport PNG")?;
-    let bytes = unsafe { std::slice::from_raw_parts(png.bytes().cast::<u8>(), png.length()) };
+    let bytes = png.to_vec();
     let png_bytes = bytes.len();
     let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
     let write_started = Instant::now();
-    std::fs::write(output, bytes).context("could not write viewport PNG")?;
+    std::fs::write(output, &bytes).context("could not write viewport PNG")?;
     let write_ms = write_started.elapsed().as_secs_f64() * 1000.0;
     Ok(protocol::Response::Snapshot {
         requested_y, actual_y, height: document_height,
