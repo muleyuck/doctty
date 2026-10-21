@@ -283,8 +283,7 @@ fn serve_commands(
                             })?,
                         }
                     }
-                    protocol::Command::Resize { .. }
-                    | protocol::Command::Select => {
+                    protocol::Command::Resize { .. } | protocol::Command::Select => {
                         emit(&protocol::Response::Error {
                             message: "command not yet implemented in Rust adapter".into(),
                         })?;
