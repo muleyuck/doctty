@@ -3,7 +3,10 @@
 use std::{
     cell::RefCell,
     env,
+    io::{self, BufRead},
     path::PathBuf,
+    sync::mpsc,
+    thread,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -76,7 +79,8 @@ pub(crate) fn run() -> Result<()> {
             Err(_) if Instant::now() < ready_by => {
                 // The local navigation may not have committed yet. Unlike
                 // isLoading(), this retry does not miss a fast load transition.
-                NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
+                NSRunLoop::currentRunLoop()
+                    .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
                 continue;
             }
             Err(error) => return Err(error),
@@ -87,11 +91,8 @@ pub(crate) fn run() -> Result<()> {
         let fonts_ready = status["fontsReady"].as_bool().unwrap_or(true);
         let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
         if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
-            println!(
-                "{}",
-                serde_json::to_string(&protocol::Response::Ready { height })?
-            );
-            return Ok(());
+            emit(&protocol::Response::Ready { height })?;
+            return serve_commands(&view, height);
         }
         attempt += 1;
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
@@ -148,5 +149,75 @@ fn evaluate_json(
             bail!("JavaScript callback timed out after {timeout:?}");
         }
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+    }
+}
+
+fn emit(response: &protocol::Response) -> Result<()> {
+    println!("{}", serde_json::to_string(response)?);
+    Ok(())
+}
+
+// Read stdin off the AppKit main thread. WKWebView and all JavaScript
+// evaluation remain on the main thread and must keep pumping NSRunLoop.
+fn serve_commands(view: &WKWebView, document_height: f64) -> Result<()> {
+    let started = Instant::now();
+    let (tx, rx) = mpsc::channel::<String>();
+    thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            match line {
+                Ok(line) => {
+                    if tx.send(line).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => return,
+            }
+        }
+    });
+
+    loop {
+        match rx.try_recv() {
+            Ok(line) => {
+                let command = match serde_json::from_str::<protocol::Command>(&line) {
+                    Ok(command) => command,
+                    Err(error) => {
+                        emit(&protocol::Response::Error {
+                            message: format!("invalid command: {error}"),
+                        })?;
+                        continue;
+                    }
+                };
+                match command {
+                    protocol::Command::Dimensions => {
+                        emit(&protocol::Response::Dimensions {
+                            height: document_height,
+                        })?;
+                    }
+                    protocol::Command::Metrics => {
+                        emit(&protocol::Response::Metrics {
+                            requests: 0,
+                            completed: 0,
+                            uptime_sec: started.elapsed().as_secs_f64(),
+                            seconds_since_snapshot: -1.0,
+                        })?;
+                    }
+                    protocol::Command::Quit => return Ok(()),
+                    protocol::Command::Resize { .. }
+                    | protocol::Command::Snapshot { .. }
+                    | protocol::Command::Outline
+                    | protocol::Command::Select => {
+                        emit(&protocol::Response::Error {
+                            message: "command not yet implemented in Rust adapter".into(),
+                        })?;
+                    }
+                }
+            }
+            Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(mpsc::TryRecvError::Empty) => {
+                let _ = view;
+                NSRunLoop::currentRunLoop()
+                    .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+            }
+        }
     }
 }
