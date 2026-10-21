@@ -278,10 +278,20 @@ mod experiment {
         ) -> Result<Self> {
             let helper =
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("experiments/webkit_viewport.swift");
-            let mut child = Command::new("swift")
-                .arg("-swift-version")
-                .arg("5")
-                .arg(helper)
+            // Compare the interpreter with a compiled executable without
+            // changing the image production or cache algorithm.
+            let mut command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
+                let path = PathBuf::from(binary);
+                if !path.is_file() {
+                    bail!("DOCTTY_WEBKIT_HELPER_BIN is not a file: {}", path.display());
+                }
+                Command::new(path)
+            } else {
+                let mut command = Command::new("swift");
+                command.arg("-swift-version").arg("5").arg(helper);
+                command
+            };
+            let mut child = command
                 .arg(html)
                 .arg(source_dir)
                 .arg(png)
@@ -1464,10 +1474,17 @@ mod experiment {
         let webkit_result = webkit_worker.join();
         let preview_result = preview_worker.map(|worker| worker.join());
         let exit = loop_result?;
-        let swift =
+        let mut swift =
             webkit_result.map_err(|_| anyhow::anyhow!("WebKit worker panicked while stopping"))?;
         if preview_result.is_some_and(|result| result.is_err()) {
             bail!("preview worker panicked while stopping");
+        }
+        // Capture metrics once at teardown, not inside the idle/render loop.
+        if std::env::var_os("DOCTTY_WEBKIT_METRICS").is_some() {
+            match swift.request(&json!({"type": "metrics"})) {
+                Ok(metrics) => eprintln!("doctty WebKit metrics: {metrics} (session={exit:?})"),
+                Err(error) => eprintln!("doctty WebKit metrics unavailable: {error}"),
+            }
         }
         Ok((exit, swift))
     }
