@@ -8,8 +8,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private let htmlURL: URL
     private let readRoot: URL
     private let outputURL: URL
-    private let width: CGFloat
-    private let height: CGFloat
+    private var width: CGFloat
+    private var height: CGFloat
     private let webView: WKWebView
     private var documentHeight: Double = 0
     private var loaded = false
@@ -85,6 +85,41 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     func handle(_ request: [String: Any]) {
         guard let action = request["type"] as? String else { return }
         switch action {
+        case "resize":
+            guard loaded else {
+                emit(["kind": "error", "message": "document is not loaded"])
+                return
+            }
+            let nextWidth = max(1, (request["width"] as? NSNumber)?.doubleValue ?? Double(width))
+            let nextHeight = max(1, (request["height"] as? NSNumber)?.doubleValue ?? Double(height))
+            width = CGFloat(nextWidth)
+            height = CGFloat(nextHeight)
+            // Reflow the *same* loaded WKWebView. Do not compile/start a new
+            // Swift process or reload the document on every terminal resize.
+            webView.frame = CGRect(x: 0, y: 0, width: width, height: height * 2)
+            webView.needsLayout = true
+            webView.layoutSubtreeIfNeeded()
+            // Let the resized viewport's DOM metrics settle before the next
+            // outline query/snapshot. The snapshot itself has afterScreenUpdates.
+            DispatchQueue.main.async {
+                let probe = """
+                (() => Math.max(
+                  document.documentElement.scrollHeight,
+                  document.body ? document.body.scrollHeight : 0,
+                  document.documentElement.offsetHeight,
+                  window.innerHeight
+                ))()
+                """
+                self.webView.evaluateJavaScript(probe) { result, error in
+                    if let error {
+                        self.emit(["kind": "error", "message": error.localizedDescription])
+                        return
+                    }
+                    self.documentHeight =
+                        (result as? NSNumber)?.doubleValue ?? Double(self.height)
+                    self.emit(["kind": "resized", "height": self.documentHeight])
+                }
+            }
         case "snapshot":
             guard loaded else {
                 emit(["kind": "error", "message": "document is not loaded"])
