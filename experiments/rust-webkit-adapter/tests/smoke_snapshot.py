@@ -37,6 +37,7 @@ def smoke(binary: Path) -> None:
             {"type": "resize", "width": RESIZED_WIDTH, "height": RESIZED_HEIGHT},
             {"type": "dimensions"},
             {"type": "outline"},
+            {"type": "select"},
             {"type": "snapshot", "y": 120},
             {"type": "metrics"},
             {"type": "quit"},
@@ -74,11 +75,16 @@ def smoke(binary: Path) -> None:
         if errors:
             raise AssertionError(f"WebKit helper errors: {errors}")
         if [item.get("kind") for item in records] != [
-            "ready", "outline", "resized", "dimensions", "outline", "snapshot", "metrics"
+            "ready", "outline", "resized", "dimensions", "outline", "selection",
+            "snapshot", "metrics"
         ]:
             raise AssertionError(f"unexpected response sequence: {records}")
 
-        ready, outline, resized, dimensions, resized_outline, snapshot, metrics = records
+        ready, outline, resized, dimensions, resized_outline, selection, snapshot, metrics = records
+        if "Rust WebKit snapshot smoke" not in selection.get("text", ""):
+            raise AssertionError(f"expected text missing from selection: {selection}")
+        if len(selection["text"]) > 4096:
+            raise AssertionError("DOM selection exceeded Swift's 4096-character bound")
         if outline.get("background") is None or not isinstance(outline.get("items"), list):
             raise AssertionError(f"invalid outline reply: {outline}")
         if not any("Rust WebKit snapshot smoke" in item.get("text", "")
