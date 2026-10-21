@@ -110,12 +110,10 @@ pub(crate) fn run() -> Result<()> {
             }
             Err(error) => return Err(error),
         };
-        let height = status["height"]
-            .as_f64()
-            .context("invalid document height")?;
-        let fonts_ready = status["fontsReady"].as_bool().unwrap_or(true);
-        let images_ready = status["imagesReady"].as_bool().unwrap_or(true);
-        if height.is_finite() && height > 0.0 && ((fonts_ready && images_ready) || attempt >= 40) {
+        // A fresh WKWebView may evaluate JS against about:blank before
+        // loadFileURL has committed. Do not treat its viewport height as
+        // proof that the requested local HTML document has loaded.
+        if let Some(height) = ready_document_height(&status, attempt) {
             emit(&protocol::Response::Ready { height })?;
             return serve_commands(
                 &view,
@@ -137,9 +135,61 @@ const READY_SCRIPT: &str = r#"JSON.stringify((() => ({
     document.documentElement.offsetHeight,
     window.innerHeight
   ),
+  // about:blank is immediately scriptable but is not the requested file.
+  fileLoaded: location.protocol === "file:" && document.readyState === "complete",
   fontsReady: !document.fonts || document.fonts.status === "loaded",
   imagesReady: Array.from(document.images).every(img => img.complete)
 }))())"#;
+
+fn ready_document_height(status: &serde_json::Value, attempt: usize) -> Option<f64> {
+    let height = status["height"].as_f64()?;
+    let file_loaded = status["fileLoaded"].as_bool().unwrap_or(false);
+    let fonts_ready = status["fontsReady"].as_bool().unwrap_or(false);
+    let images_ready = status["imagesReady"].as_bool().unwrap_or(false);
+    (height.is_finite()
+        && height > 0.0
+        && file_loaded
+        && ((fonts_ready && images_ready) || attempt >= 40))
+        .then_some(height)
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::ready_document_height;
+    use serde_json::json;
+
+    #[test]
+    fn blank_page_must_not_emit_ready_even_with_positive_height() {
+        let about_blank = json!({
+            "height": 800.0,
+            "fileLoaded": false,
+            "fontsReady": true,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&about_blank, 0), None);
+        assert_eq!(ready_document_height(&about_blank, 100), None);
+    }
+
+    #[test]
+    fn file_must_be_loaded_and_resources_settled() {
+        let loading = json!({
+            "height": 3500.0,
+            "fileLoaded": true,
+            "fontsReady": false,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&loading, 0), None);
+        assert_eq!(ready_document_height(&loading, 40), Some(3500.0));
+        let ready = json!({
+            "height": 3500.0,
+            "fileLoaded": true,
+            "fontsReady": true,
+            "imagesReady": true
+        });
+        assert_eq!(ready_document_height(&ready, 0), Some(3500.0));
+        assert_eq!(ready_document_height(&json!({"height": 0.0}), 40), None);
+    }
+}
 
 // WebKit promises to call the completion handler on the main thread.
 // The run loop is pumped on that thread; no Objective-C object moves to
