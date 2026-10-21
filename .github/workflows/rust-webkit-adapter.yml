@@ -27,17 +27,13 @@ jobs:
         run: cargo fmt --manifest-path experiments/rust-webkit-adapter/Cargo.toml --all -- --check
       - name: Compile release binary
         run: cargo build --release --manifest-path experiments/rust-webkit-adapter/Cargo.toml
-      # WKWebView graphics may require an interactive user session. Record the
-      # result without marking the isolated adapter production-ready.
-      - name: Validate diagnostic smoke script syntax
+      # The macOS-15 runner successfully captured native WKWebView PNGs,
+      # including a responsive resize, in earlier commits. Keep this as a
+      # required regression gate; Ghostty visual/CPU parity remains manual.
+      - name: Validate native smoke script syntax
         run: python3 -m py_compile experiments/rust-webkit-adapter/tests/smoke_snapshot.py
-      - name: Diagnostic native WebKit PNG smoke
-        id: webkit-smoke
-        continue-on-error: true
+      - name: Native WebKit protocol and PNG smoke
         timeout-minutes: 2
         run: |
           python3 experiments/rust-webkit-adapter/tests/smoke_snapshot.py \
             experiments/rust-webkit-adapter/target/release/doctty-rust-webkit-adapter
-      - name: Flag missing interactive runtime validation
-        if: always() && steps.webkit-smoke.outcome == 'failure'
-        run: echo "::warning::WKWebView smoke did not pass on this runner. Test on a signed-in macOS desktop before integrating."
