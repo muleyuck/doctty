@@ -29,6 +29,8 @@ jobs:
         run: cargo build --release --manifest-path experiments/rust-webkit-adapter/Cargo.toml
       # WKWebView graphics may require an interactive user session. Record the
       # result without marking the isolated adapter production-ready.
+      - name: Validate diagnostic smoke script syntax
+        run: python3 -m py_compile experiments/rust-webkit-adapter/tests/smoke_snapshot.py
       - name: Diagnostic native WebKit PNG smoke
         id: webkit-smoke
         continue-on-error: true
