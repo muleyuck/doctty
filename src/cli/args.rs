@@ -16,6 +16,11 @@ pub struct DocttyArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Use the experimental bundled low-CPU Eco WebKit viewer (macOS).
+    /// Requires a separately packaged companion executable.
+    #[arg(long, hide = true)]
+    pub experimental_eco: bool,
+
     /// Color theme used by the viewer.
     #[arg(long, value_enum, default_value_t = Theme::System)]
     pub theme: Theme,
