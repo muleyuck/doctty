@@ -38,9 +38,13 @@ the neighboring Rust viewer, without invoking local Swift or Cargo.
 It supports `--theme light`, `--theme dark`, and `--theme system` using
 resolved GitHub CSS colors in the Eco preview. The standalone PoC stays
 light by default unless `DOCTTY_WEBKIT_THEME=dark` is explicitly set.
-The bridge still does not preserve watch mode, link navigation, or all
-other production viewer features. It rejects `--watch` in interactive mode
-and keeps the usual headless/plain-text fallback on pipes. This is a transitional bridge, not feature parity.
+The Eco bridge supports `--watch`, polling the source Markdown's modification
+time/size at most once every 150 ms and waiting at least 250 ms for edits to
+settle. Reload stops the old WebKit and raster workers, regenerates HTML,
+and rebuilds the bounded image caches while preserving relative scroll
+progress. It keeps the last valid HTML render if rebuilding temporarily fails.
+It still does not provide link navigation or all other production viewer
+features. Existing headless/plain-text fallback is unchanged. This is a transitional bridge, not feature parity.
 
 The standalone `doctty-hybrid` launcher also locates the helper next to
 itself using
@@ -63,9 +67,9 @@ dependency on the end-user computer.
 
 ## Before an official macOS release
 
-- Complete the Eco integration into the production CLI, preserving watch,
-  theme, link-navigation, headless and other interactive contracts, then
-  remove the temporary `--experimental-eco` switch.
+- Complete the Eco integration into the production CLI, preserving
+  link-navigation and other interactive contracts, then remove the temporary
+  `--experimental-eco` switch.
 - Choose a predictable location for version-matched compiled Swift helpers;
   remove runtime Swift compilation and interpreter fallback from release builds.
 - Build/test native Apple Silicon and Intel artifacts (or a tested universal
