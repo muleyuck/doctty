@@ -48,6 +48,12 @@ the normal viewer's system-browser command and displays a short status
 message. This link is re-parsed on `--watch` reload, not while scrolling.
 The `g` / `G` keys jump to document top / last scrollable viewport,
 matching the normal viewer, and reuse the Eco settle-and-capture schedule.
+Press `r` to manually reload the Markdown without needing `--watch`.
+This uses the same worker teardown, HTML regeneration, bounded cache reset,
+and relative scroll progress preservation as the `--watch` reload path.
+If `--watch` is active, a successful manual reload acknowledges the
+document revision to avoid immediately reloading it again. Missing or
+transiently unreadable sources preserve the old rendered state.
 Other viewer behavior may still differ. Existing headless/plain-text
 fallback is unchanged. This is a transitional bridge, not feature parity.
 
