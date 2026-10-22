@@ -71,16 +71,19 @@ From an unpacked directory in Ghostty or Kitty:
       normal viewer, existing behavior
   ./doctty --experimental-eco /absolute/path/to/README.md
       opt-in Eco renderer via bundled native Swift, no compilation
+  ./doctty --experimental-eco --theme dark /absolute/path/to/README.md
+      opt-in Eco with dark GitHub theme (light and system also supported)
   ./doctty-hybrid /absolute/path/to/README.md
       direct standalone Eco experiment
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
       previous eager prefetch comparison
 
-The Eco bridge does not yet support --watch, custom --theme or the
-normal viewer's full link/navigation behavior. Existing non-Eco CLI and
+The Eco bridge does not yet support --watch or the normal viewer's full
+link/navigation behavior. Explicit --theme light/dark/system works.
+Existing non-Eco CLI and
 piped/headless operation are unchanged.
 
-Keep the three executables together. Do not rename the bundle contents.
+Keep the bundled executables together. Do not rename the bundle contents.
 This is a non-notarized PREVIEW archive and is NOT a signed or
 notarized public release. Source-build fallback paths in the example are
 not intended to be used from this archive. Do not bypass Gatekeeper
