@@ -119,6 +119,14 @@ mod experiment {
             }
         }
 
+        // A manual 'r' reload uses the same HTML/WebKit replacement path as
+        // --watch. Mark the *pre-read* file revision as rendered to avoid a
+        // redundant watch reload while still noticing subsequent edits.
+        fn acknowledge_loaded(&mut self, revision: WatchRevision) {
+            self.applied = revision;
+            self.candidate = None;
+        }
+
         fn observe(&mut self, revision: WatchRevision, now: Instant) -> bool {
             if revision == self.applied {
                 self.candidate = None;
@@ -156,6 +164,7 @@ mod experiment {
         Continue,
         Select,
         OpenLink,
+        Reload,
         Quit,
     }
 
@@ -189,6 +198,9 @@ mod experiment {
             KeyCode::Char('y') => return InputAction::Select,
             KeyCode::Char('o') if key.kind == KeyEventKind::Press => {
                 return InputAction::OpenLink;
+            }
+            KeyCode::Char('r') if key.kind == KeyEventKind::Press => {
+                return InputAction::Reload;
             }
             _ => return InputAction::Continue,
         };
@@ -1697,6 +1709,14 @@ mod experiment {
                         InputAction::OpenLink => {
                             open_document_link(first_link, columns, rows)?;
                         }
+                        InputAction::Reload => {
+                            exit = ViewerExit::Reload(reading_fraction(
+                                position,
+                                document_height,
+                                viewport_height,
+                            ));
+                            break 'viewer;
+                        }
                         InputAction::Continue => {}
                     }
                     if position != previous_position {
@@ -1859,8 +1879,16 @@ mod experiment {
                     // Rebuild the HTML from the updated Markdown before
                     // switching helpers. Keep the last valid render if the
                     // document is temporarily unreadable or incomplete.
+                    // Take the revision before reading HTML, so an edit
+                    // racing with the reload is still detected by --watch.
+                    let revision_to_ack = WatchRevision::read(document).ok();
                     match html_input(document, theme) {
                         Ok((new_html, new_temp_html, new_first_link)) => {
+                            if let (Some(state), Some(revision)) =
+                                (watcher.as_mut(), revision_to_ack)
+                            {
+                                state.acknowledge_loaded(revision);
+                            }
                             drop(returned);
                             // Old temporary HTML stays alive until the old
                             // Swift process has exited.
@@ -2151,6 +2179,12 @@ mod experiment {
                     InputAction::Select => requests.send(WorkerCommand::Select)?,
                     InputAction::OpenLink => {
                         open_document_link(first_link.as_deref(), cols, rows)?;
+                    }
+                    InputAction::Reload => {
+                        let mut out = io::stdout().lock();
+                        execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
+                        write!(out, "manual reload is available with --hybrid-image")?;
+                        out.flush()?;
                     }
                     InputAction::Continue => {}
                 }
@@ -2841,6 +2875,56 @@ mod experiment {
                 InputAction::Continue
             );
             assert_eq!(position, 0.0);
+        }
+
+        #[test]
+        fn manual_reload_requires_a_press_and_preserves_scroll_position() {
+            let mut position = 630.0;
+            let mut direction = ScrollDirection::Forward;
+            let pressed = key(KeyCode::Char('r'));
+            assert_eq!(
+                apply_key(pressed, &mut position, &mut direction, 10_000.0, 1000),
+                InputAction::Reload
+            );
+            assert_eq!(position, 630.0);
+            assert_eq!(direction, ScrollDirection::Forward);
+            assert_eq!(reading_fraction(position, 10_000.0, 1000), 0.07);
+
+            let mut repeated = pressed;
+            repeated.kind = KeyEventKind::Repeat;
+            assert_eq!(
+                apply_key(repeated, &mut position, &mut direction, 10_000.0, 1000),
+                InputAction::Continue
+            );
+            let mut released = pressed;
+            released.kind = KeyEventKind::Release;
+            assert_eq!(
+                apply_key(released, &mut position, &mut direction, 10_000.0, 1000),
+                InputAction::Continue
+            );
+            assert_eq!(position, 630.0);
+        }
+
+        #[test]
+        fn manual_reload_acknowledges_revision_without_masking_later_writes() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let source = dir.path().join("document.md");
+            fs::write(&source, "old")?;
+            let mut state = WatchState::new(&source)?;
+            let start = Instant::now();
+            let loaded = WatchRevision {
+                modified: Some(SystemTime::UNIX_EPOCH),
+                len: 10,
+            };
+            state.acknowledge_loaded(loaded);
+            assert!(!state.observe(loaded, start));
+            let later = WatchRevision {
+                modified: Some(SystemTime::UNIX_EPOCH),
+                len: 12,
+            };
+            assert!(!state.observe(later, start + WATCH_SETTLE_DELAY));
+            assert!(state.observe(later, start + WATCH_SETTLE_DELAY * 2));
+            Ok(())
         }
 
         #[test]
