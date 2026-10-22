@@ -36,4 +36,10 @@ fn experimental_eco_is_explicit_and_off_by_default() {
     let eco = DocttyArgs::parse_from(["doctty", "--experimental-eco", "sample.md"]);
     assert!(eco.experimental_eco);
     assert_eq!(eco.path.as_deref(), Some(std::path::Path::new("sample.md")));
+
+    let themed = DocttyArgs::parse_from([
+        "doctty", "--experimental-eco", "--theme", "dark", "sample.md",
+    ]);
+    assert!(themed.experimental_eco);
+    assert_eq!(themed.theme, Theme::Dark);
 }
