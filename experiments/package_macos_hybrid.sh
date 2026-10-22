@@ -75,8 +75,9 @@ From an unpacked directory in Ghostty or Kitty:
       opt-in Eco with dark GitHub theme (light and system also supported)
   ./doctty --experimental-eco --watch /absolute/path/to/README.md
       opt-in Eco with debounced source file reload and scroll progress preserved
-  Press 'g' to jump to the top, 'G' to the bottom, and 'o' to open
-  the first Markdown link. Link targets update when --watch reloads.
+  Press 'g' to jump to the top, 'G' to the bottom, 'o' to open
+  the first Markdown link, and 'r' to manually reload. With --watch,
+  link targets also update automatically on file saves.
   ./doctty-hybrid /absolute/path/to/README.md
       direct standalone Eco experiment
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
@@ -84,8 +85,9 @@ From an unpacked directory in Ghostty or Kitty:
 
 The Eco bridge supports --watch, --theme light/dark/system, and pressing
 'o' to open the first Markdown link in the system browser (like the normal
-viewer). The g/G navigation keys also match the normal viewer. Other
-interactive behavior is still experimental. Existing non-Eco CLI and
+viewer). The g/G navigation and manual 'r' reload keys also match
+the normal viewer. Other interactive behavior is still experimental.
+Existing non-Eco CLI and
 piped/headless operation are unchanged.
 
 Keep the bundled executables together. Do not rename the bundle contents.
