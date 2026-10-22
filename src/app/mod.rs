@@ -18,9 +18,10 @@ use crate::{
 };
 
 pub fn run(args: DocttyArgs) -> Result<()> {
-    // The Eco experiment is opt-in until it preserves the full production
-    // viewer contract (link interaction and layout behavior).
-    let experimental_eco = args.experimental_eco;
+    // Prebuilt macOS distributions use the optimized Eco renderer by
+    // default. Only explicit developer --legacy-renderer opts back into the
+    // old one-shot Swift interpreter path.
+    let use_eco = eco_companion::use_eco(args.experimental_eco, args.legacy_renderer);
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
@@ -46,8 +47,13 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         ) {
             bail!("interactive mode requires Ghostty or Kitty");
         }
-        if experimental_eco {
-            return eco_companion::run(&config.path, config.theme, config.watch);
+        if use_eco {
+            return eco_companion::run(
+                &config.path,
+                config.theme,
+                config.watch,
+                config.mermaid_mode,
+            );
         }
         let mut viewer = {
             let _span = info_span!("startup.create_viewer").entered();
