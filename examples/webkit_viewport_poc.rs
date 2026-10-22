@@ -179,6 +179,13 @@ mod experiment {
             KeyCode::Char('k') | KeyCode::Up => *position - step,
             KeyCode::Char('J') | KeyCode::PageDown => *position + page,
             KeyCode::Char('K') | KeyCode::PageUp => *position - page,
+            // Match the production CLI: g jumps to top and G to the
+            // last scrollable viewport. Jumps use the existing redraw and
+            // Eco capture-after-settle path; do not force WebKit prefetch.
+            KeyCode::Char('g') if key.kind == KeyEventKind::Press => 0.0,
+            KeyCode::Char('G') if key.kind == KeyEventKind::Press => {
+                (document_height - f64::from(viewport_height)).max(0.0)
+            }
             KeyCode::Char('y') => return InputAction::Select,
             KeyCode::Char('o') if key.kind == KeyEventKind::Press => {
                 return InputAction::OpenLink;
@@ -2752,6 +2759,82 @@ mod experiment {
             );
             assert_eq!(position, 100.0);
             assert_eq!(direction, ScrollDirection::Forward);
+        }
+
+        #[test]
+        fn g_and_capital_g_jump_to_document_edges_without_changing_scroll_contract() {
+            let mut position = 320.0;
+            let mut direction = ScrollDirection::Forward;
+            assert_eq!(
+                apply_key(
+                    key(KeyCode::Char('G')),
+                    &mut position,
+                    &mut direction,
+                    10_000.0,
+                    1000
+                ),
+                InputAction::Continue
+            );
+            assert_eq!(position, 9000.0);
+            assert_eq!(direction, ScrollDirection::Forward);
+
+            assert_eq!(
+                apply_key(
+                    key(KeyCode::Char('g')),
+                    &mut position,
+                    &mut direction,
+                    10_000.0,
+                    1000
+                ),
+                InputAction::Continue
+            );
+            assert_eq!(position, 0.0);
+            assert_eq!(direction, ScrollDirection::Backward);
+
+            // A jump followed by a normal scroll in the same input batch
+            // must retain navigation order and existing 16 px step size.
+            let _ = apply_key(
+                key(KeyCode::Char('G')),
+                &mut position,
+                &mut direction,
+                10_000.0,
+                1000,
+            );
+            let _ = apply_key(key(KeyCode::Char('k')), &mut position, &mut direction, 10_000.0, 1000);
+            assert_eq!(position, 8984.0);
+            assert_eq!(direction, ScrollDirection::Backward);
+        }
+
+        #[test]
+        fn g_and_capital_g_ignore_repeat_and_clamp_short_documents() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            let mut repeat = key(KeyCode::Char('G'));
+            repeat.kind = KeyEventKind::Repeat;
+            assert_eq!(
+                apply_key(repeat, &mut position, &mut direction, 10_000.0, 1000),
+                InputAction::Continue
+            );
+            assert_eq!(position, 0.0);
+
+            let mut released = key(KeyCode::Char('g'));
+            released.kind = KeyEventKind::Release;
+            assert_eq!(
+                apply_key(released, &mut position, &mut direction, 10_000.0, 1000),
+                InputAction::Continue
+            );
+            assert_eq!(position, 0.0);
+            assert_eq!(
+                apply_key(
+                    key(KeyCode::Char('G')),
+                    &mut position,
+                    &mut direction,
+                    400.0,
+                    1000
+                ),
+                InputAction::Continue
+            );
+            assert_eq!(position, 0.0);
         }
 
         #[test]
