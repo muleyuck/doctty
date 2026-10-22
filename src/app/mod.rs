@@ -49,7 +49,9 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         }
         if experimental_eco {
             if incompatible_eco_options {
-                bail!("experimental Eco mode does not yet support --watch or --theme; use the standard viewer for those options");
+                bail!(
+                    "experimental Eco mode does not yet support --watch or --theme; use the standard viewer for those options"
+                );
             }
             return eco_companion::run(&config.path);
         }
