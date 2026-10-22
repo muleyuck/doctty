@@ -35,8 +35,5 @@ fn experimental_eco_is_explicit_and_off_by_default() {
 
     let eco = DocttyArgs::parse_from(["doctty", "--experimental-eco", "sample.md"]);
     assert!(eco.experimental_eco);
-    assert_eq!(
-        eco.path.as_deref(),
-        Some(std::path::Path::new("sample.md"))
-    );
+    assert_eq!(eco.path.as_deref(), Some(std::path::Path::new("sample.md")));
 }
