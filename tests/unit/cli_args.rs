@@ -27,3 +27,16 @@ fn defaults_theme_to_system() {
 
     assert_eq!(args.theme, Theme::System);
 }
+
+#[test]
+fn experimental_eco_is_explicit_and_off_by_default() {
+    let normal = DocttyArgs::parse_from(["doctty", "sample.md"]);
+    assert!(!normal.experimental_eco);
+
+    let eco = DocttyArgs::parse_from(["doctty", "--experimental-eco", "sample.md"]);
+    assert!(eco.experimental_eco);
+    assert_eq!(
+        eco.path.as_deref(),
+        Some(std::path::Path::new("sample.md"))
+    );
+}
