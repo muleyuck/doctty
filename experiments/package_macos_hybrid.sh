@@ -75,13 +75,15 @@ From an unpacked directory in Ghostty or Kitty:
       opt-in Eco with dark GitHub theme (light and system also supported)
   ./doctty --experimental-eco --watch /absolute/path/to/README.md
       opt-in Eco with debounced source file reload and scroll progress preserved
+  Press 'o' to open the first Markdown link; changes follow --watch reloads.
   ./doctty-hybrid /absolute/path/to/README.md
       direct standalone Eco experiment
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
       previous eager prefetch comparison
 
-The Eco bridge supports --watch and --theme light/dark/system.
-It does not yet provide full link/navigation parity with the standard viewer.
+The Eco bridge supports --watch, --theme light/dark/system, and pressing
+'o' to open the first Markdown link in the system browser (like the normal
+viewer). Other navigation shortcuts are not yet at full parity.
 Existing non-Eco CLI and
 piped/headless operation are unchanged.
 
