@@ -41,7 +41,12 @@ mod experiment {
         execute,
         terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     };
-    use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+    use doctty::{
+        cli::Theme,
+        core::config::MermaidMode,
+        io::browser,
+        render::{github_html::build_github_html, markdown::parse_document},
+    };
     use image::{ImageDecoder, codecs::png::PngDecoder};
     use serde_json::{Value, json};
 
@@ -150,6 +155,7 @@ mod experiment {
     enum InputAction {
         Continue,
         Select,
+        OpenLink,
         Quit,
     }
 
@@ -174,6 +180,9 @@ mod experiment {
             KeyCode::Char('J') | KeyCode::PageDown => *position + page,
             KeyCode::Char('K') | KeyCode::PageUp => *position - page,
             KeyCode::Char('y') => return InputAction::Select,
+            KeyCode::Char('o') if key.kind == KeyEventKind::Press => {
+                return InputAction::OpenLink;
+            }
             _ => return InputAction::Continue,
         };
         let max_pos = (document_height - f64::from(viewport_height)).max(0.0);
@@ -730,16 +739,26 @@ mod experiment {
         }
     }
 
-    fn html_input(path: &Path, theme: Theme) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
+    fn html_input(
+        path: &Path,
+        theme: Theme,
+    ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, Option<String>)> {
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
         {
-            return Ok((path.to_path_buf(), None));
+            return Ok((path.to_path_buf(), None, None));
         }
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
         let root = path.parent().context("source directory unavailable")?;
         let html = build_github_html(&source, root, theme, MermaidMode::Disabled)?;
+        // Match production 'o': open the first link from Markdown document
+        // metadata. Keep this parse off the input/scroll hot path.
+        let first_link = parse_document(path.to_path_buf(), &source)?
+            .meta
+            .links
+            .into_iter()
+            .next();
         let mut file = tempfile::Builder::new()
             .prefix(".doctty-poc-")
             .suffix(".html")
@@ -747,7 +766,30 @@ mod experiment {
             .context("unable to create temporary HTML alongside Markdown")?;
         file.write_all(html.as_bytes())?;
         file.flush()?;
-        Ok((file.path().to_path_buf(), Some(file)))
+        Ok((file.path().to_path_buf(), Some(file), first_link))
+    }
+
+    // Open links only on explicit 'o' presses. This intentionally reuses the
+    // production viewer's browser dispatch; it never calls WebKit or changes
+    // the image/tile cache during scrolling.
+    fn open_document_link(first_link: Option<&str>, columns: u16, rows: u16) -> Result<()> {
+        let message = match first_link {
+            Some(url) => match browser::open_url(url) {
+                Ok(()) => format!("opened {url}"),
+                Err(error) => format!("open failed: {error}"),
+            },
+            None => "no link in document".to_string(),
+        };
+        let clean: String = message
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(usize::from(columns))
+            .collect();
+        let mut out = io::stdout().lock();
+        execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
+        write!(out, "{clean}")?;
+        out.flush()?;
+        Ok(())
     }
 
     fn upload_png(out: &mut impl Write, image_id: u32, png: &[u8]) -> Result<()> {
@@ -1286,6 +1328,7 @@ mod experiment {
         image_scene: Option<hybrid_image_preview::Scene>,
         eco_snapshots: bool,
         watcher: Option<&mut WatchState>,
+        first_link: Option<&str>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
@@ -1644,6 +1687,9 @@ mod experiment {
                     ) {
                         InputAction::Quit => break 'viewer,
                         InputAction::Select => requests.send(WorkerCommand::Select)?,
+                        InputAction::OpenLink => {
+                            open_document_link(first_link, columns, rows)?;
+                        }
                         InputAction::Continue => {}
                     }
                     if position != previous_position {
@@ -1693,7 +1739,7 @@ mod experiment {
         watch: bool,
     ) -> Result<()> {
         let source_dir = document.parent().context("source directory unavailable")?;
-        let (mut html, mut _temp_html) = html_input(document, theme)?;
+        let (mut html, mut _temp_html, mut first_link) = html_input(document, theme)?;
         let mut watcher = if watch {
             Some(WatchState::new(document)?)
         } else {
@@ -1792,6 +1838,7 @@ mod experiment {
                 scene,
                 eco_snapshots,
                 watcher.as_mut(),
+                first_link.as_deref(),
             )?;
             match exit {
                 ViewerExit::Resized(next_progress) => {
@@ -1806,12 +1853,13 @@ mod experiment {
                     // switching helpers. Keep the last valid render if the
                     // document is temporarily unreadable or incomplete.
                     match html_input(document, theme) {
-                        Ok((new_html, new_temp_html)) => {
+                        Ok((new_html, new_temp_html, new_first_link)) => {
                             drop(returned);
                             // Old temporary HTML stays alive until the old
                             // Swift process has exited.
                             html = new_html;
                             _temp_html = new_temp_html;
+                            first_link = new_first_link;
                             swift = None;
                         }
                         Err(_) => {
@@ -1906,7 +1954,7 @@ mod experiment {
                 watch,
             );
         }
-        let (html, _temp_html) = html_input(&document, theme)?;
+        let (html, _temp_html, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
         let (cols, total_rows) = terminal::size()?;
@@ -2094,6 +2142,9 @@ mod experiment {
                 match apply_key(key, &mut position, &mut direction, document_height, height) {
                     InputAction::Quit => break 'viewer,
                     InputAction::Select => requests.send(WorkerCommand::Select)?,
+                    InputAction::OpenLink => {
+                        open_document_link(first_link.as_deref(), cols, rows)?;
+                    }
                     InputAction::Continue => {}
                 }
             }
@@ -2161,13 +2212,56 @@ mod experiment {
             let root = tempfile::tempdir()?;
             let md = root.path().join("test-theme.md");
             fs::write(&md, "# Theme preview")?;
-            let (light_path, _light_temp) = html_input(&md, Theme::Light)?;
+            let (light_path, _light_temp, light_link) = html_input(&md, Theme::Light)?;
+            assert_eq!(light_link, None);
             let light_html = fs::read_to_string(light_path)?;
             assert!(light_html.contains("data-color-mode=\"light\""));
-            let (dark_path, _dark_temp) = html_input(&md, Theme::Dark)?;
+            let (dark_path, _dark_temp, dark_link) = html_input(&md, Theme::Dark)?;
+            assert_eq!(dark_link, None);
             let dark_html = fs::read_to_string(dark_path)?;
             assert!(dark_html.contains("data-color-mode=\"dark\""));
             Ok(())
+        }
+
+        #[test]
+        fn markdown_link_metadata_matches_production_and_tracks_reload() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let md = dir.path().join("links.md");
+            fs::write(
+                &md,
+                "# Links\n\n[first](https://example.com/first) [second](https://example.org/)\n",
+            )?;
+            let (_, _initial_html, first_link) = html_input(&md, Theme::Light)?;
+            assert_eq!(first_link.as_deref(), Some("https://example.com/first"));
+
+            fs::write(&md, "# Updated\n\n[new](https://example.com/new)\n")?;
+            let (_, _updated_html, updated_link) = html_input(&md, Theme::Dark)?;
+            assert_eq!(updated_link.as_deref(), Some("https://example.com/new"));
+            Ok(())
+        }
+
+        #[test]
+        fn link_action_only_fires_on_press_not_key_repeat_or_release() {
+            let mut position = 0.0;
+            let mut direction = ScrollDirection::Forward;
+            let pressed = key(KeyCode::Char('o'));
+            assert_eq!(
+                apply_key(pressed, &mut position, &mut direction, 2000.0, 1000),
+                InputAction::OpenLink
+            );
+            let mut repeated = pressed;
+            repeated.kind = KeyEventKind::Repeat;
+            assert_eq!(
+                apply_key(repeated, &mut position, &mut direction, 2000.0, 1000),
+                InputAction::Continue
+            );
+            let mut released = pressed;
+            released.kind = KeyEventKind::Release;
+            assert_eq!(
+                apply_key(released, &mut position, &mut direction, 2000.0, 1000),
+                InputAction::Continue
+            );
+            assert_eq!(position, 0.0);
         }
 
         #[test]
