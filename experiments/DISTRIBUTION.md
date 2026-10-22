@@ -43,8 +43,11 @@ time/size at most once every 150 ms and waiting at least 250 ms for edits to
 settle. Reload stops the old WebKit and raster workers, regenerates HTML,
 and rebuilds the bounded image caches while preserving relative scroll
 progress. It keeps the last valid HTML render if rebuilding temporarily fails.
-It still does not provide link navigation or all other production viewer
-features. Existing headless/plain-text fallback is unchanged. This is a transitional bridge, not feature parity.
+Pressing `o` in the Eco viewer now opens the first Markdown link using
+the normal viewer's system-browser command, and displays a short status
+message. This link is re-parsed on `--watch` reload, not while scrolling.
+Other viewer navigation features may still differ. Existing
+headless/plain-text fallback is unchanged. This is a transitional bridge, not feature parity.
 
 The standalone `doctty-hybrid` launcher also locates the helper next to
 itself using
@@ -67,8 +70,8 @@ dependency on the end-user computer.
 
 ## Before an official macOS release
 
-- Complete the Eco integration into the production CLI, preserving
-  link-navigation and other interactive contracts, then remove the temporary
+- Complete the Eco integration into the production CLI, preserving the
+  remaining navigation and interactive contracts, then remove the temporary
   `--experimental-eco` switch.
 - Choose a predictable location for version-matched compiled Swift helpers;
   remove runtime Swift compilation and interpreter fallback from release builds.
