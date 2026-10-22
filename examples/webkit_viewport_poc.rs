@@ -645,7 +645,20 @@ mod experiment {
         Ok(())
     }
 
-    fn html_input(path: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
+    // The regular doctty CLI resolves --theme system and passes light/dark
+    // to the experimental companion. Standalone PoC launches retain the
+    // historical light-theme default unless this variable is supplied.
+    fn webkit_theme(value: Option<&OsStr>) -> Result<Theme> {
+        match value {
+            None => Ok(Theme::Light),
+            Some(v) if v == "light" => Ok(Theme::Light),
+            Some(v) if v == "dark" => Ok(Theme::Dark),
+            Some(v) if v == "system" => Ok(Theme::System.resolve()),
+            Some(v) => bail!("invalid DOCTTY_WEBKIT_THEME: {v:?} (expected light or dark)"),
+        }
+    }
+
+    fn html_input(path: &Path, theme: Theme) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
@@ -654,7 +667,7 @@ mod experiment {
         }
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
         let root = path.parent().context("source directory unavailable")?;
-        let html = build_github_html(&source, root, Theme::Light, MermaidMode::Disabled)?;
+        let html = build_github_html(&source, root, theme, MermaidMode::Disabled)?;
         let mut file = tempfile::Builder::new()
             .prefix(".doctty-poc-")
             .suffix(".html")
@@ -1758,7 +1771,8 @@ mod experiment {
             .canonicalize()
             .context("source file not found")?;
         let dir = document.parent().context("source directory not found")?;
-        let (html, _temp_html) = html_input(&document)?;
+        let theme = webkit_theme(std::env::var_os("DOCTTY_WEBKIT_THEME").as_deref())?;
+        let (html, _temp_html) = html_input(&document, theme)?;
         if tiled {
             return run_resizable_tiled(&html, dir, hybrid, hybrid_image, eco_snapshots);
         }
@@ -1995,6 +2009,34 @@ mod experiment {
             assert_eq!(hybrid_image_flags(OsStr::new("--hybrid")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("--tiled")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("README.md")), (false, false));
+        }
+
+        #[test]
+        fn webkit_theme_preserves_standalone_default_and_rejects_bad_values() {
+            assert_eq!(webkit_theme(None).ok(), Some(Theme::Light));
+            assert_eq!(
+                webkit_theme(Some(OsStr::new("light"))).ok(),
+                Some(Theme::Light)
+            );
+            assert_eq!(
+                webkit_theme(Some(OsStr::new("dark"))).ok(),
+                Some(Theme::Dark)
+            );
+            assert!(webkit_theme(Some(OsStr::new("neon"))).is_err());
+        }
+
+        #[test]
+        fn markdown_html_uses_requested_theme() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let md = root.path().join("test-theme.md");
+            fs::write(&md, "# Theme preview")?;
+            let (light_path, _light_temp) = html_input(&md, Theme::Light)?;
+            let light_html = fs::read_to_string(light_path)?;
+            assert!(light_html.contains("data-color-mode=\"light\""));
+            let (dark_path, _dark_temp) = html_input(&md, Theme::Dark)?;
+            let dark_html = fs::read_to_string(dark_path)?;
+            assert!(dark_html.contains("data-color-mode=\"dark\""));
+            Ok(())
         }
 
         #[test]
