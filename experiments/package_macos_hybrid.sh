@@ -24,7 +24,8 @@ mkdir -p "$BUNDLE"
 
 # Reuse the existing optimized helper build and source/toolchain cache.
 SWIFT_BIN="$(bash "$ROOT/experiments/run_compiled_swift_hybrid.sh" --build-only)"
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --example webkit_viewport_poc
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --bin doctty --example webkit_viewport_poc
+install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
 install -m 0755 "$ROOT/target/release/examples/webkit_viewport_poc" "$BUNDLE/webkit_viewport_poc"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
 
@@ -56,7 +57,8 @@ Experimental doctty hybrid preview — macOS
 ============================================
 
 This archive bundles:
-  doctty-hybrid         launcher (default: Eco hybrid-image preview)
+  doctty                normal Rust CLI, plus opt-in --experimental-eco
+  doctty-hybrid         direct preview launcher (default Eco)
   webkit_viewport_poc   compiled Rust preview executable
   doctty-webkit-swift   optimized, compiled Swift/WebKit helper
   SHA256SUMS            file integrity checks
@@ -65,23 +67,33 @@ No Swift compiler, Cargo, Rust toolchain, or repository checkout is needed
 to run the bundled preview. macOS WebKit is supplied by the operating system.
 
 From an unpacked directory in Ghostty or Kitty:
+  ./doctty /absolute/path/to/README.md
+      normal viewer, existing behavior
+  ./doctty --experimental-eco /absolute/path/to/README.md
+      opt-in Eco renderer via bundled native Swift, no compilation
   ./doctty-hybrid /absolute/path/to/README.md
-For comparison with eager image prefetch:
+      direct standalone Eco experiment
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
+      previous eager prefetch comparison
+
+The Eco bridge does not yet support --watch, custom --theme or the
+normal viewer's full link/navigation behavior. Existing non-Eco CLI and
+piped/headless operation are unchanged.
 
 Keep the three executables together. Do not rename the bundle contents.
-This is NOT the production doctty binary and it is NOT a signed or
+This is a non-notarized PREVIEW archive and is NOT a signed or
 notarized public release. Source-build fallback paths in the example are
 not intended to be used from this archive. Do not bypass Gatekeeper
 protections to run untrusted downloads.
 
-A future release must integrate the Eco renderer into the production CLI,
-codesign/notarize the macOS distribution, and verify installation/upgrades.
+A future release must remove the experimental Eco flag, reach feature
+parity with the production CLI, codesign/notarize the macOS distribution,
+and verify installation/upgrades.
 DOC
 
 (
   cd "$BUNDLE"
-  shasum -a 256 doctty-hybrid webkit_viewport_poc doctty-webkit-swift README.txt > SHA256SUMS
+  shasum -a 256 doctty doctty-hybrid webkit_viewport_poc doctty-webkit-swift README.txt > SHA256SUMS
 )
 ARCHIVE="$OUT_DIR/$NAME.tar.gz"
 tar -C "$STAGING" -czf "$ARCHIVE" "$NAME"
