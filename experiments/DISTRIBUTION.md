@@ -17,6 +17,7 @@ The archive has this structure:
 
 ```text
 doctty-hybrid-macos-arm64/             # name matches CI runner architecture
+  doctty                              # normal CLI + opt-in Eco bridge
   doctty-hybrid                       # launch wrapper; default Eco mode
   webkit_viewport_poc                 # compiled Rust experiment
   doctty-webkit-swift                 # compiled, optimized native Swift helper
@@ -34,10 +35,12 @@ The normal `./doctty /absolute/path/to/README.md` command still runs the
 existing production viewer, which has NOT yet switched to Eco. The
 `--experimental-eco` mode uses the bundled native Swift helper through
 the neighboring Rust viewer, without invoking local Swift or Cargo.
-It currently does not preserve watch mode, custom themes, link navigation,
-or all other production viewer features. It rejects `--watch` and custom
-`--theme` when interactive, and keeps the usual headless/plain-text
-fallback on pipes. This is a transitional bridge, not feature parity.
+It supports `--theme light`, `--theme dark`, and `--theme system` using
+resolved GitHub CSS colors in the Eco preview. The standalone PoC stays
+light by default unless `DOCTTY_WEBKIT_THEME=dark` is explicitly set.
+The bridge still does not preserve watch mode, link navigation, or all
+other production viewer features. It rejects `--watch` in interactive mode
+and keeps the usual headless/plain-text fallback on pipes. This is a transitional bridge, not feature parity.
 
 The standalone `doctty-hybrid` launcher also locates the helper next to
 itself using
