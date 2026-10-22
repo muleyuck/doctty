@@ -11,8 +11,8 @@ for tool in cargo swiftc install tar shasum mktemp; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 2; }
 done
 
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="\${DOCTTY_HYBRID_DIST_DIR:-$ROOT/target/dist}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="${DOCTTY_HYBRID_DIST_DIR:-$ROOT/target/dist}"
 ARCH="$(uname -m)"
 NAME="doctty-hybrid-macos-$ARCH"
 mkdir -p "$OUT_DIR"
@@ -33,7 +33,7 @@ install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
 cat > "$BUNDLE/doctty-hybrid" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -x "$ROOT/doctty-webkit-swift" || ! -x "$ROOT/webkit_viewport_poc" ]]; then
   echo "Incomplete doctty-hybrid bundle: expected helper and viewer alongside launcher" >&2
   exit 2
