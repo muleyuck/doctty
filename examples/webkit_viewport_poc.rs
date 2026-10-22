@@ -1333,7 +1333,10 @@ mod experiment {
         // write Kitty graphics after TerminalSession restores the shell.
         let loop_result: Result<ViewerExit> = (|| {
             'viewer: loop {
-                if watcher.as_mut().is_some_and(|state| state.should_reload(Instant::now())) {
+                if watcher
+                    .as_mut()
+                    .is_some_and(|state| state.should_reload(Instant::now()))
+                {
                     exit = ViewerExit::Reload(reading_fraction(
                         position,
                         document_height,
@@ -2185,7 +2188,10 @@ mod experiment {
             assert!(!state.observe(first, start));
             assert!(!state.observe(first, start + WATCH_SETTLE_DELAY / 2));
             assert!(!state.observe(second, start + WATCH_SETTLE_DELAY));
-            assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 2 - Duration::from_millis(1)));
+            assert!(!state.observe(
+                second,
+                start + WATCH_SETTLE_DELAY * 2 - Duration::from_millis(1)
+            ));
             assert!(state.observe(second, start + WATCH_SETTLE_DELAY * 2));
             assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 3));
             assert_eq!(state.applied, second);
