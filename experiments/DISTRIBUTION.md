@@ -24,33 +24,45 @@ doctty-hybrid-macos-arm64/             # name matches CI runner architecture
   README.txt
 ```
 
-Once unpacked, the test invocation in Ghostty or Kitty is:
+Once unpacked, the integration test invocation in Ghostty or Kitty is:
 
 ```sh
-./doctty-hybrid /absolute/path/to/README.md
+./doctty --experimental-eco /absolute/path/to/README.md
 ```
 
-The launcher locates the helper next to itself using
+The normal `./doctty /absolute/path/to/README.md` command still runs the
+existing production viewer, which has NOT yet switched to Eco. The
+`--experimental-eco` mode uses the bundled native Swift helper through
+the neighboring Rust viewer, without invoking local Swift or Cargo.
+It currently does not preserve watch mode, custom themes, link navigation,
+or all other production viewer features. It rejects `--watch` and custom
+`--theme` when interactive, and keeps the usual headless/plain-text
+fallback on pipes. This is a transitional bridge, not feature parity.
+
+The standalone `doctty-hybrid` launcher also locates the helper next to
+itself using
 `DOCTTY_WEBKIT_HELPER_BIN`; it never runs `swift`, `swiftc`, or Cargo.
 The opt-in previous prefetch mode is still available via
 `./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md`.
 
 ## Important distinction: production doctty still differs
 
-The stable `doctty` CLI currently renders with the separate one-shot
-snapshot helper embedded in `src/io/webkit_snapshot/script.rs`. It runs
-that Swift script through `swift` at runtime. The persistent hybrid/Eco
-renderer lives in `examples/webkit_viewport_poc.rs`, **not** in the main CLI.
+The default `doctty` viewer still renders with the separate one-shot
+snapshot helper embedded in `src/io/webkit_snapshot/script.rs`. That
+legacy mode invokes the Swift interpreter at runtime. Only the
+`--experimental-eco` branch delegates to the bundled native Swift helper
+through `examples/webkit_viewport_poc.rs`.
 
-Thus the preview archive is only a distribution proof-of-concept. Shipping
-the general-purpose `doctty` command without requiring a local compiler
-will also require integrating the chosen rendering architecture into
-the main application and building/bundling its helper on CI.
+This is a reversible first CLI-integration step, but **not** the release-ready
+default. We must finish feature parity and replace the legacy runtime script
+before claiming the general-purpose `doctty` command has no Swift toolchain
+dependency on the end-user computer.
 
 ## Before an official macOS release
 
-- Integrate the accepted Swift/Eco rendering mode into the production CLI,
-  preserving existing flags, headless behavior, and navigation contracts.
+- Complete the Eco integration into the production CLI, preserving watch,
+  theme, link-navigation, headless and other interactive contracts, then
+  remove the temporary `--experimental-eco` switch.
 - Choose a predictable location for version-matched compiled Swift helpers;
   remove runtime Swift compilation and interpreter fallback from release builds.
 - Build/test native Apple Silicon and Intel artifacts (or a tested universal
