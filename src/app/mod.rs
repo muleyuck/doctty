@@ -9,7 +9,7 @@ use tracing::info_span;
 mod eco_companion;
 
 use crate::{
-    cli::{DocttyArgs, Theme},
+    cli::DocttyArgs,
     core::config::AppConfig,
     io::fs::FileSystemDocumentSource,
     render::{markdown::parse_document, text::render_plain_text},
@@ -19,9 +19,9 @@ use crate::{
 
 pub fn run(args: DocttyArgs) -> Result<()> {
     // The Eco experiment is opt-in until it preserves the full production
-    // viewer contract (watch, themes, link interaction and layout behavior).
+    // viewer contract (watch, link interaction and layout behavior).
     let experimental_eco = args.experimental_eco;
-    let incompatible_eco_options = args.watch || args.theme != Theme::System;
+    let incompatible_eco_options = args.watch;
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
@@ -50,10 +50,10 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         if experimental_eco {
             if incompatible_eco_options {
                 bail!(
-                    "experimental Eco mode does not yet support --watch or --theme; use the standard viewer for those options"
+                    "experimental Eco mode does not yet support --watch; use the standard viewer with --watch"
                 );
             }
-            return eco_companion::run(&config.path);
+            return eco_companion::run(&config.path, config.theme);
         }
         let mut viewer = {
             let _span = info_span!("startup.create_viewer").entered();
