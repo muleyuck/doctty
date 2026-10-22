@@ -29,7 +29,7 @@ mod experiment {
             mpsc::{self, Receiver, Sender, TryRecvError},
         },
         thread,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime},
     };
 
     use super::hybrid_image_preview;
@@ -61,6 +61,78 @@ mod experiment {
     const HYBRID_PREVIEW_AFTER: Duration = Duration::from_millis(80);
     const HYBRID_SETTLE_AFTER: Duration = Duration::from_millis(160);
     const HYBRID_PREVIEW_FRAME: Duration = Duration::from_millis(33);
+    // Watch only metadata at a bounded cadence. Debounce atomic saves to
+    // avoid starting a new WKWebView while the editor is still writing.
+    const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(150);
+    const WATCH_SETTLE_DELAY: Duration = Duration::from_millis(250);
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct WatchRevision {
+        modified: Option<SystemTime>,
+        len: u64,
+    }
+
+    impl WatchRevision {
+        fn read(path: &Path) -> Result<Self> {
+            let metadata = fs::metadata(path)?;
+            Ok(Self {
+                modified: metadata.modified().ok(),
+                len: metadata.len(),
+            })
+        }
+    }
+
+    struct WatchState {
+        path: PathBuf,
+        applied: WatchRevision,
+        candidate: Option<(WatchRevision, Instant)>,
+        last_poll: Instant,
+    }
+
+    impl WatchState {
+        fn new(path: &Path) -> Result<Self> {
+            Ok(Self {
+                path: path.to_path_buf(),
+                applied: WatchRevision::read(path)?,
+                candidate: None,
+                last_poll: Instant::now(),
+            })
+        }
+
+        fn should_reload(&mut self, now: Instant) -> bool {
+            if now.saturating_duration_since(self.last_poll) < WATCH_POLL_INTERVAL {
+                return false;
+            }
+            self.last_poll = now;
+            match WatchRevision::read(&self.path) {
+                Ok(revision) => self.observe(revision, now),
+                Err(_) => {
+                    // Atomic rename/saves can temporarily hide the file.
+                    self.candidate = None;
+                    false
+                }
+            }
+        }
+
+        fn observe(&mut self, revision: WatchRevision, now: Instant) -> bool {
+            if revision == self.applied {
+                self.candidate = None;
+                return false;
+            }
+            if let Some((previous, since)) = self.candidate {
+                if previous == revision {
+                    if now.saturating_duration_since(since) >= WATCH_SETTLE_DELAY {
+                        self.applied = revision;
+                        self.candidate = None;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            self.candidate = Some((revision, now));
+            false
+        }
+    }
 
     // In the opt-in eco mode, the raster outline handles uncached movement.
     // WebKit only fills the settled viewport, not speculative future tiles.
@@ -1169,6 +1241,7 @@ mod experiment {
     enum ViewerExit {
         Quit,
         Resized(f64),
+        Reload(f64),
     }
 
     // Use relative document progress because a width change causes reflow.
@@ -1212,6 +1285,7 @@ mod experiment {
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
         eco_snapshots: bool,
+        watcher: Option<&mut WatchState>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
@@ -1253,11 +1327,20 @@ mod experiment {
         let mut last_wait_status_at: Option<Instant> = None;
 
         let mut exit = ViewerExit::Quit;
+        let mut watcher = watcher;
         // Always close and join both image workers, even if the event loop
         // exits early with an I/O/rendering error. Otherwise they could still
         // write Kitty graphics after TerminalSession restores the shell.
         let loop_result: Result<ViewerExit> = (|| {
             'viewer: loop {
+                if watcher.as_mut().is_some_and(|state| state.should_reload(Instant::now())) {
+                    exit = ViewerExit::Reload(reading_fraction(
+                        position,
+                        document_height,
+                        viewport_height,
+                    ));
+                    break 'viewer;
+                }
                 if let Some(ref receiver) = preview_responses {
                     loop {
                         match receiver.try_recv() {
@@ -1599,12 +1682,20 @@ mod experiment {
     // Recreate WebKit with the new CSS width after a resize. Unlike the
     // scroll hot path, this intentionally favors correctness over latency.
     fn run_resizable_tiled(
-        html: &Path,
-        source_dir: &Path,
+        document: &Path,
+        theme: Theme,
         hybrid: bool,
         hybrid_image: bool,
         eco_snapshots: bool,
+        watch: bool,
     ) -> Result<()> {
+        let source_dir = document.parent().context("source directory unavailable")?;
+        let (mut html, mut _temp_html) = html_input(document, theme)?;
+        let mut watcher = if watch {
+            Some(WatchState::new(document)?)
+        } else {
+            None
+        };
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
         let _session = TerminalSession::enter()?;
@@ -1629,7 +1720,7 @@ mod experiment {
                 }
                 existing
             } else {
-                let mut process = SwiftProcess::start(html, source_dir, &output, width, height)?;
+                let mut process = SwiftProcess::start(&html, source_dir, &output, width, height)?;
                 let ready = process.response()?;
                 if ready["kind"] != "ready" {
                     bail!("expected WebKit readiness response: {ready}");
@@ -1697,14 +1788,36 @@ mod experiment {
                 outline,
                 scene,
                 eco_snapshots,
+                watcher.as_mut(),
             )?;
-            swift = Some(returned);
-            if let ViewerExit::Resized(next_progress) = exit {
-                progress = next_progress;
-                resize_count += 1;
-                continue;
+            match exit {
+                ViewerExit::Resized(next_progress) => {
+                    progress = next_progress;
+                    resize_count += 1;
+                    swift = Some(returned);
+                }
+                ViewerExit::Reload(next_progress) => {
+                    progress = next_progress;
+                    resize_count += 1;
+                    // Rebuild the HTML from the updated Markdown before
+                    // switching helpers. Keep the last valid render if the
+                    // document is temporarily unreadable or incomplete.
+                    match html_input(document, theme) {
+                        Ok((new_html, new_temp_html)) => {
+                            drop(returned);
+                            // Old temporary HTML stays alive until the old
+                            // Swift process has exited.
+                            html = new_html;
+                            _temp_html = new_temp_html;
+                            swift = None;
+                        }
+                        Err(_) => {
+                            swift = Some(returned);
+                        }
+                    }
+                }
+                ViewerExit::Quit => return Ok(()),
             }
-            return Ok(());
         }
     }
 
@@ -1772,10 +1885,25 @@ mod experiment {
             .context("source file not found")?;
         let dir = document.parent().context("source directory not found")?;
         let theme = webkit_theme(std::env::var_os("DOCTTY_WEBKIT_THEME").as_deref())?;
-        let (html, _temp_html) = html_input(&document, theme)?;
-        if tiled {
-            return run_resizable_tiled(&html, dir, hybrid, hybrid_image, eco_snapshots);
+        let watch = match arguments.next() {
+            None => false,
+            Some(flag) if flag == "--watch" && hybrid_image => true,
+            Some(flag) => bail!("unsupported WebKit experiment option: {flag:?}"),
+        };
+        if let Some(flag) = arguments.next() {
+            bail!("unexpected extra WebKit experiment option: {flag:?}");
         }
+        if tiled {
+            return run_resizable_tiled(
+                &document,
+                theme,
+                hybrid,
+                hybrid_image,
+                eco_snapshots,
+                watch,
+            );
+        }
+        let (html, _temp_html) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
         let (cols, total_rows) = terminal::size()?;
@@ -2036,6 +2164,42 @@ mod experiment {
             let (dark_path, _dark_temp) = html_input(&md, Theme::Dark)?;
             let dark_html = fs::read_to_string(dark_path)?;
             assert!(dark_html.contains("data-color-mode=\"dark\""));
+            Ok(())
+        }
+
+        #[test]
+        fn watch_debounces_rapid_writes_and_triggers_once_after_settle() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let source = dir.path().join("document.md");
+            fs::write(&source, "old")?;
+            let mut state = WatchState::new(&source)?;
+            let start = Instant::now();
+            let first = WatchRevision {
+                modified: Some(SystemTime::UNIX_EPOCH),
+                len: 7,
+            };
+            let second = WatchRevision {
+                modified: Some(SystemTime::UNIX_EPOCH),
+                len: 8,
+            };
+            assert!(!state.observe(first, start));
+            assert!(!state.observe(first, start + WATCH_SETTLE_DELAY / 2));
+            assert!(!state.observe(second, start + WATCH_SETTLE_DELAY));
+            assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 2 - Duration::from_millis(1)));
+            assert!(state.observe(second, start + WATCH_SETTLE_DELAY * 2));
+            assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 3));
+            assert_eq!(state.applied, second);
+            Ok(())
+        }
+
+        #[test]
+        fn watch_file_deletion_does_not_trigger_reload() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let source = dir.path().join("watched.md");
+            fs::write(&source, "hello")?;
+            let mut state = WatchState::new(&source)?;
+            fs::remove_file(&source)?;
+            assert!(!state.should_reload(Instant::now() + WATCH_POLL_INTERVAL));
             Ok(())
         }
 
