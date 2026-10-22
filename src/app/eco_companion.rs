@@ -69,7 +69,9 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn experimental_eco_requires_macos() {
-        let error = run(Path::new("README.md")).unwrap_err().to_string();
-        assert!(error.contains("requires macOS"));
+        assert!(
+            run(Path::new("README.md"))
+                .is_err_and(|error| error.to_string().contains("requires macOS"))
+        );
     }
 }
