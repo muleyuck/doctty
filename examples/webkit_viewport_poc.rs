@@ -2800,7 +2800,13 @@ mod experiment {
                 10_000.0,
                 1000,
             );
-            let _ = apply_key(key(KeyCode::Char('k')), &mut position, &mut direction, 10_000.0, 1000);
+            let _ = apply_key(
+                key(KeyCode::Char('k')),
+                &mut position,
+                &mut direction,
+                10_000.0,
+                1000,
+            );
             assert_eq!(position, 8984.0);
             assert_eq!(direction, ScrollDirection::Backward);
         }
