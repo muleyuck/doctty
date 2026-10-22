@@ -8,6 +8,9 @@ on:
       - 'experiments/webkit_viewport.swift'
       - 'experiments/run_compiled_swift_hybrid.sh'
       - 'experiments/package_macos_hybrid.sh'
+      - 'src/app/**'
+      - 'src/cli/args.rs'
+      - 'tests/unit/cli_args.rs'
       - 'experiments/smoke_compiled_swift_webkit.py'
       - '.github/workflows/macos-hybrid-bundle.yml'
   workflow_dispatch:
@@ -44,12 +47,17 @@ jobs:
           )
           tar -xzf "$archive" -C "$dir"
           bundle="$dir/$(basename "$archive" .tar.gz)"
+          test -x "$bundle/doctty"
           test -x "$bundle/doctty-hybrid"
           test -x "$bundle/doctty-webkit-swift"
           test -x "$bundle/webkit_viewport_poc"
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
           python3 experiments/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
+          # Even with the Eco flag, piped output keeps the existing
+          # noninteractive plain-text path (no Swift/Cargo execution).
+          printf '# Bundled cli smoke\\n' | "$bundle/doctty" --experimental-eco - > "$RUNNER_TEMP/headless-eco.txt"
+          grep -q 'Bundled cli smoke' "$RUNNER_TEMP/headless-eco.txt"
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
