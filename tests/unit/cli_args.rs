@@ -46,4 +46,13 @@ fn experimental_eco_is_explicit_and_off_by_default() {
     ]);
     assert!(themed.experimental_eco);
     assert_eq!(themed.theme, Theme::Dark);
+
+    let watched = DocttyArgs::parse_from([
+        "doctty",
+        "--experimental-eco",
+        "--watch",
+        "sample.md",
+    ]);
+    assert!(watched.experimental_eco);
+    assert!(watched.watch);
 }
