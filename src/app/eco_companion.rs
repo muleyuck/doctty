@@ -9,11 +9,13 @@ use anyhow::{Result, bail};
 
 #[cfg(target_os = "macos")]
 use anyhow::Context;
+#[cfg(any(target_os = "macos", test))]
+use std::path::PathBuf;
 #[cfg(target_os = "macos")]
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
 #[cfg(any(target_os = "macos", test))]
-fn companion_paths(main_executable: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     let directory = main_executable.parent().unwrap_or_else(|| Path::new("."));
     (
         directory.join("webkit_viewport_poc"),
