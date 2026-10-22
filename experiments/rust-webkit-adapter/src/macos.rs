@@ -156,6 +156,11 @@ fn ready_document_height(status: &serde_json::Value, attempt: usize) -> Option<f
 // WebKit promises to call the completion handler on the main thread.
 // The run loop is pumped on that thread; no Objective-C object moves to
 // a Rust worker. Evaluate a JSON *string* to keep the FFI type explicit.
+// Poll a short main-thread interval only while waiting for an active WebKit
+// callback. The idle command loop retains its longer 10 ms sleep to avoid
+// spinning when no requests are pending.
+const CALLBACK_PUMP_SECONDS: f64 = 0.001;
+
 fn evaluate_json(
     webview: &WKWebView,
     javascript: &str,
@@ -191,7 +196,8 @@ fn evaluate_json(
         if Instant::now() >= deadline {
             bail!("JavaScript callback timed out after {timeout:?}");
         }
-        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+        NSRunLoop::currentRunLoop()
+            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(CALLBACK_PUMP_SECONDS));
     }
 }
 
@@ -468,7 +474,8 @@ fn capture_snapshot(
         if Instant::now() >= deadline {
             bail!("WebKit snapshot timed out");
         }
-        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.01));
+        NSRunLoop::currentRunLoop()
+            .runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(CALLBACK_PUMP_SECONDS));
     };
     let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
     let encode_started = Instant::now();
