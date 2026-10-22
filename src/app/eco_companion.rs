@@ -25,7 +25,7 @@ fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
-pub(super) fn run(document: &Path, theme: Theme) -> Result<()> {
+pub(super) fn run(document: &Path, theme: Theme, watch: bool) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let exe = std::env::current_exe().context("unable to resolve doctty executable")?;
@@ -37,11 +37,16 @@ pub(super) fn run(document: &Path, theme: Theme) -> Result<()> {
             );
         }
 
-        let status = Command::new(&viewer)
+        let mut command = Command::new(&viewer);
+        command
             .arg("--hybrid-image")
             .arg(document)
             .env("DOCTTY_WEBKIT_HELPER_BIN", &swift_helper)
-            .env("DOCTTY_WEBKIT_THEME", theme.as_str())
+            .env("DOCTTY_WEBKIT_THEME", theme.as_str());
+        if watch {
+            command.arg("--watch");
+        }
+        let status = command
             .status()
             .context("failed to start bundled Eco viewer")?;
 
@@ -53,7 +58,7 @@ pub(super) fn run(document: &Path, theme: Theme) -> Result<()> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (document, theme);
+        let _ = (document, theme, watch);
         bail!("experimental Eco mode requires macOS and the prebuilt Eco bundle");
     }
 }
@@ -73,7 +78,7 @@ mod tests {
     #[test]
     fn experimental_eco_requires_macos() {
         assert!(
-            run(Path::new("README.md"), Theme::Light)
+            run(Path::new("README.md"), Theme::Light, false)
                 .is_err_and(|error| error.to_string().contains("requires macOS"))
         );
     }
