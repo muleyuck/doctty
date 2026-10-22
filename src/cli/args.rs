@@ -16,10 +16,15 @@ pub struct DocttyArgs {
     #[arg(long)]
     pub watch: bool,
 
-    /// Use the experimental bundled low-CPU Eco WebKit viewer (macOS).
-    /// Requires a separately packaged companion executable.
-    #[arg(long, hide = true)]
+    /// Deprecated compatibility alias: the prebuilt Eco viewer is now the
+    /// macOS interactive default.
+    #[arg(long, hide = true, conflicts_with = "legacy_renderer")]
     pub experimental_eco: bool,
+
+    /// Development-only fallback to the previous one-shot Swift interpreter
+    /// renderer. The prebuilt distribution uses Eco by default.
+    #[arg(long, hide = true)]
+    pub legacy_renderer: bool,
 
     /// Color theme used by the viewer.
     #[arg(long, value_enum, default_value_t = Theme::System)]
