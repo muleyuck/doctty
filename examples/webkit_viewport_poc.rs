@@ -18,6 +18,7 @@ mod hybrid_image_preview;
 #[cfg(target_os = "macos")]
 mod experiment {
     use std::{
+        ffi::OsStr,
         fs,
         io::{self, BufRead, BufReader, IsTerminal, Write},
         path::{Path, PathBuf},
@@ -1726,14 +1727,23 @@ mod experiment {
         Ok(())
     }
 
+    // Eco is the default for the hybrid image viewer. Preserve the explicit
+    // --hybrid-image-eco alias for existing scripts, and retain the old
+    // speculative snapshot mode as --hybrid-image-prefetch for A/B testing.
+    // Other modes such as --hybrid and --tiled are unchanged.
+    fn hybrid_image_flags(first: &OsStr) -> (bool, bool) {
+        let eco = first == "--hybrid-image" || first == "--hybrid-image-eco";
+        let prefetch = first == "--hybrid-image-prefetch";
+        (eco || prefetch, eco)
+    }
+
     pub fn run() -> Result<()> {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("run this interactive experiment in Ghostty or Herdr");
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let eco_snapshots = first == "--hybrid-image-eco";
-        let hybrid_image = first == "--hybrid-image" || eco_snapshots;
+        let (hybrid_image, eco_snapshots) = hybrid_image_flags(&first);
         let hybrid = first == "--hybrid" || hybrid_image;
         let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
@@ -1966,6 +1976,25 @@ mod experiment {
             assert_eq!(resumed_position(0.5, 24000.0, 2000), 11000.0);
             assert_eq!(resumed_position(1.0, 24000.0, 2000), 22000.0);
             assert_eq!(resumed_position(1.0, 700.0, 1000), 0.0);
+        }
+
+        #[test]
+        fn hybrid_image_defaults_to_eco_and_keeps_prefetch_opt_in() {
+            assert_eq!(
+                hybrid_image_flags(OsStr::new("--hybrid-image")),
+                (true, true)
+            );
+            assert_eq!(
+                hybrid_image_flags(OsStr::new("--hybrid-image-eco")),
+                (true, true)
+            );
+            assert_eq!(
+                hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")),
+                (true, false)
+            );
+            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid")), (false, false));
+            assert_eq!(hybrid_image_flags(OsStr::new("--tiled")), (false, false));
+            assert_eq!(hybrid_image_flags(OsStr::new("README.md")), (false, false));
         }
 
         #[test]
