@@ -35,7 +35,7 @@ jobs:
       - name: Validate archive and packed native Swift protocol
         shell: bash
         run: |
-          archive="\${{ steps.package.outputs.archive }}"
+          archive="${{ steps.package.outputs.archive }}"
           dir="$RUNNER_TEMP/unpacked-doctty"
           mkdir -p "$dir"
           (
@@ -56,9 +56,9 @@ jobs:
       - name: Upload prebuilt preview archive
         uses: actions/upload-artifact@v4
         with:
-          name: doctty-hybrid-prebuilt-\${{ runner.os }}-\${{ runner.arch }}
+          name: doctty-hybrid-prebuilt-${{ runner.os }}-${{ runner.arch }}
           path: |
-            \${{ steps.package.outputs.archive }}
-            \${{ steps.package.outputs.checksum }}
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
           if-no-files-found: error
           retention-days: 14
