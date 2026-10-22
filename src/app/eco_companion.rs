@@ -7,6 +7,8 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use crate::cli::Theme;
+
 #[cfg(target_os = "macos")]
 use anyhow::Context;
 #[cfg(any(target_os = "macos", test))]
@@ -23,7 +25,7 @@ fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
-pub(super) fn run(document: &Path) -> Result<()> {
+pub(super) fn run(document: &Path, theme: Theme) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let exe = std::env::current_exe().context("unable to resolve doctty executable")?;
@@ -39,6 +41,7 @@ pub(super) fn run(document: &Path) -> Result<()> {
             .arg("--hybrid-image")
             .arg(document)
             .env("DOCTTY_WEBKIT_HELPER_BIN", &swift_helper)
+            .env("DOCTTY_WEBKIT_THEME", theme.as_str())
             .status()
             .context("failed to start bundled Eco viewer")?;
 
@@ -50,7 +53,7 @@ pub(super) fn run(document: &Path) -> Result<()> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = document;
+        let _ = (document, theme);
         bail!("experimental Eco mode requires macOS and the prebuilt Eco bundle");
     }
 }
@@ -70,7 +73,7 @@ mod tests {
     #[test]
     fn experimental_eco_requires_macos() {
         assert!(
-            run(Path::new("README.md"))
+            run(Path::new("README.md"), Theme::Light)
                 .is_err_and(|error| error.to_string().contains("requires macOS"))
         );
     }
