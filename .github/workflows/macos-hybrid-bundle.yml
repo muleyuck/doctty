@@ -15,6 +15,8 @@ on:
       - 'tests/unit/cli_args.rs'
       - 'experiments/smoke_compiled_swift_webkit.py'
       - 'experiments/smoke_eco_default_cli.py'
+      - 'experiments/sign_notarize_macos.sh'
+      - '.github/workflows/macos-notarized-preview.yml'
       - '.github/workflows/macos-hybrid-bundle.yml'
   workflow_dispatch:
 
@@ -35,6 +37,13 @@ jobs:
         run: |
           test "$(uname -m)" = "arm64"
           cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
+
+      - name: Validate notarization preparation without Apple credentials
+        shell: bash
+        run: |
+          bash -n experiments/sign_notarize_macos.sh
+          bash experiments/sign_notarize_macos.sh --help | grep -q 'Developer ID Application'
+          # No Apple credentials are available or required for PR validation.
 
       - name: Build optimized Swift and Rust Eco preview bundle
         id: package
