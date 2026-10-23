@@ -118,13 +118,14 @@ jobs:
           grep -q 'Cask symlink smoke' "$RUNNER_TEMP/cask-headless.txt"
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "checksum=$zip.sha256" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Render and style-check the Homebrew Cask without publishing
         uses: muleyuck/github-actions/actions/homebrew/render@v1
         with:
           template: packaging/doctty.rb.in
           tap-path: Casks/doctty.rb
-          version: 0.1.1
+          version: ${{ steps.release_zip.outputs.version }}
           sha256: SHA256=${{ steps.release_zip.outputs.zip }}
 
       # Downloadable 14-day pre-release artifact for Apple Silicon install
