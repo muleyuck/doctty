@@ -758,6 +758,19 @@ mod experiment {
         }
     }
 
+    // The bundled doctty CLI forwards its regular Mermaid setting here.
+    // Keep standalone experiment launches disabled as before.
+    fn webkit_mermaid_mode(value: Option<&OsStr>) -> Result<MermaidMode> {
+        match value {
+            None => Ok(MermaidMode::Disabled),
+            Some(v) if v == "enabled" => Ok(MermaidMode::Enabled),
+            Some(v) if v == "disabled" => Ok(MermaidMode::Disabled),
+            Some(v) => bail!(
+                "invalid DOCTTY_WEBKIT_MERMAID: {v:?} (expected enabled or disabled)"
+            ),
+        }
+    }
+
     fn html_input(
         path: &Path,
         theme: Theme,
@@ -770,7 +783,9 @@ mod experiment {
         }
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
         let root = path.parent().context("source directory unavailable")?;
-        let html = build_github_html(&source, root, theme, MermaidMode::Disabled)?;
+        let mermaid_mode =
+            webkit_mermaid_mode(std::env::var_os("DOCTTY_WEBKIT_MERMAID").as_deref())?;
+        let html = build_github_html(&source, root, theme, mermaid_mode)?;
         // Match production 'o': open the first link from Markdown document
         // metadata. Keep this parse off the input/scroll hot path.
         let first_link = parse_document(path.to_path_buf(), &source)?
@@ -2246,6 +2261,20 @@ mod experiment {
                 Some(Theme::Dark)
             );
             assert!(webkit_theme(Some(OsStr::new("neon"))).is_err());
+        }
+
+        #[test]
+        fn mermaid_mode_defaults_to_standalone_behavior_and_respects_cli() {
+            assert_eq!(webkit_mermaid_mode(None).ok(), Some(MermaidMode::Disabled));
+            assert_eq!(
+                webkit_mermaid_mode(Some(OsStr::new("enabled"))).ok(),
+                Some(MermaidMode::Enabled)
+            );
+            assert_eq!(
+                webkit_mermaid_mode(Some(OsStr::new("disabled"))).ok(),
+                Some(MermaidMode::Disabled)
+            );
+            assert!(webkit_mermaid_mode(Some(OsStr::new("invalid"))).is_err());
         }
 
         #[test]
