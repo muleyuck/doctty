@@ -29,7 +29,7 @@ fn defaults_theme_to_system() {
 }
 
 #[test]
-fn experimental_eco_is_explicit_and_off_by_default() {
+fn experimental_eco_alias_remains_available() {
     let normal = DocttyArgs::parse_from(["doctty", "sample.md"]);
     assert!(!normal.experimental_eco);
 
@@ -50,4 +50,14 @@ fn experimental_eco_is_explicit_and_off_by_default() {
     let watched = DocttyArgs::parse_from(["doctty", "--experimental-eco", "--watch", "sample.md"]);
     assert!(watched.experimental_eco);
     assert!(watched.watch);
+}
+
+#[test]
+fn legacy_renderer_is_explicit_and_off_by_default() {
+    let normal = DocttyArgs::parse_from(["doctty", "sample.md"]);
+    assert!(!normal.legacy_renderer);
+    assert!(!normal.experimental_eco);
+
+    let legacy = DocttyArgs::parse_from(["doctty", "--legacy-renderer", "sample.md"]);
+    assert!(legacy.legacy_renderer);
 }
