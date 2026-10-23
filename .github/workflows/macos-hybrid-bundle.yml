@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'examples/webkit_viewport_poc.rs'
+      - 'src/io/webkit_snapshot/**'
+      - 'src/render/github_html/**'
       - 'examples/hybrid_image_preview/**'
       - 'experiments/webkit_viewport.swift'
       - 'experiments/run_compiled_swift_hybrid.sh'
