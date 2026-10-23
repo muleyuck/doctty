@@ -89,6 +89,7 @@ jobs:
           grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
 
       - name: Verify ad-hoc-signed release ZIP without publishing
+        id: release_zip
         shell: bash
         run: |
           bash -n experiments/package_macos_release.sh
@@ -115,6 +116,28 @@ jobs:
           ln -s "$bundle/doctty-cli" "$RUNNER_TEMP/doctty-cask-symlink"
           printf '# Cask symlink smoke\n' | "$RUNNER_TEMP/doctty-cask-symlink" - > "$RUNNER_TEMP/cask-headless.txt"
           grep -q 'Cask symlink smoke' "$RUNNER_TEMP/cask-headless.txt"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "checksum=$zip.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Render and style-check the Homebrew Cask without publishing
+        uses: muleyuck/github-actions/actions/homebrew/render@v1
+        with:
+          template: packaging/doctty.rb.in
+          tap-path: Casks/doctty.rb
+          version: 0.1.1
+          sha256: SHA256=${{ steps.release_zip.outputs.zip }}
+
+      # Downloadable 14-day pre-release artifact for Apple Silicon install
+      # checks. Never call this an official notarized or GitHub Release asset.
+      - name: Upload ad-hoc-signed ZIP release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctty-ad-hoc-signed-arm64-review
+          path: |
+            ${{ steps.release_zip.outputs.zip }}
+            ${{ steps.release_zip.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
