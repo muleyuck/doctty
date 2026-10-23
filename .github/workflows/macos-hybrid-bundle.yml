@@ -111,6 +111,10 @@ jobs:
           bash -n "$bundle/doctty-cli"
           test -x "$bundle/doctty-cli"
           test -x "$bundle/doctty"
+          # Replicate Homebrew's binary symlink without changing PATH.
+          ln -s "$bundle/doctty-cli" "$RUNNER_TEMP/doctty-cask-symlink"
+          printf '# Cask symlink smoke\n' | "$RUNNER_TEMP/doctty-cask-symlink" - > "$RUNNER_TEMP/cask-headless.txt"
+          grep -q 'Cask symlink smoke' "$RUNNER_TEMP/cask-headless.txt"
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
