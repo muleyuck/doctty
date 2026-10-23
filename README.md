@@ -50,9 +50,24 @@ arm64 architecture of all three executables. These are macOS 15 CI
 builds; support on earlier macOS versions has not been established.
 
 No Swift compiler, Rust toolchain or repository checkout is needed for this
-prebuilt Eco preview. **This is not yet a signed or notarized release**;
-do not bypass macOS Gatekeeper protections for untrusted downloads.
-Versioned GitHub Releases and Homebrew distribution are planned.
+prebuilt Eco preview.
+
+**Planned turnray-style distribution (after release review):** CI will also
+produce a versioned Apple Silicon ZIP containing ad-hoc-signed native binaries,
+upload it with a SHA256 checksum to GitHub Releases, and optionally update the
+`muleyuck/tap` Homebrew Cask. The intended commands will be:
+
+```bash
+brew install --cask muleyuck/tap/doctty
+doctty README.md
+```
+
+The ZIP is **not Apple-notarized**. macOS Gatekeeper may block it when
+quarantined; do not disable Gatekeeper globally or override warnings for
+downloads you have not verified. Confirm the official Release URL and
+SHA256 before manually allowing a trusted build. Until the integration PR
+is merged and an actual release is published, use only the CI preview
+artifact described above. Apple Developer Program enrollment is deferred.
 
 **Building from source (developer workflow)** requires Rust 1.92+:
 
