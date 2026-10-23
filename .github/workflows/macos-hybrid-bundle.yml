@@ -8,6 +8,11 @@ on:
       - 'experiments/webkit_viewport.swift'
       - 'experiments/run_compiled_swift_hybrid.sh'
       - 'experiments/package_macos_hybrid.sh'
+      - 'experiments/package_macos_release.sh'
+      - 'packaging/doctty.rb.in'
+      - '.github/release-please-config.json'
+      - '.github/.release-please-manifest.json'
+      - '.github/workflows/release-please.yml'
       - 'src/app/**'
       - 'Cargo.toml'
       - '.github/workflows/ci.yml'
@@ -82,6 +87,30 @@ jobs:
           # Keep hidden compatibility options parseable in scripted use.
           printf '# Legacy flag\\n' | "$bundle/doctty" --legacy-renderer - > "$RUNNER_TEMP/headless-legacy.txt"
           grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
+
+      - name: Verify ad-hoc-signed release ZIP without publishing
+        shell: bash
+        run: |
+          bash -n experiments/package_macos_release.sh
+          ruby -c packaging/doctty.rb.in
+          version="$(sed -n '/^\\[package\\]/,/^\\[/{s/^version = "\\(.*\\)"/\\1/p;}' Cargo.toml | head -n 1)"
+          archive="${{ steps.package.outputs.archive }}"
+          out="$RUNNER_TEMP/doctty-release-zip"
+          zip="$(bash experiments/package_macos_release.sh "$archive" "$version" "$out")"
+          test -s "$zip"
+          (cd "$out" && shasum -a 256 -c "$(basename "$zip").sha256")
+          extracted="$RUNNER_TEMP/unpacked-release-zip"
+          mkdir -p "$extracted"
+          ditto -x -k "$zip" "$extracted"
+          bundle="$extracted/doctty-hybrid-macos-arm64"
+          (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
+          for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
+            codesign --verify --strict "$bundle/$executable"
+            lipo "$bundle/$executable" -verify_arch arm64
+          done
+          bash -n "$bundle/doctty-cli"
+          test -x "$bundle/doctty-cli"
+          test -x "$bundle/doctty"
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
