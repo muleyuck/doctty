@@ -23,15 +23,9 @@ permissions:
 
 jobs:
   preview-bundle:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    # Initial release target: Apple Silicon only. Intel can be revisited
+    # when there is concrete user demand and validation capacity.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
@@ -39,7 +33,7 @@ jobs:
       - name: Verify native architecture and Cargo-source regression
         shell: bash
         run: |
-          test "$(uname -m)" = "${{ matrix.arch }}"
+          test "$(uname -m)" = "arm64"
           cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
 
       - name: Build optimized Swift and Rust Eco preview bundle
@@ -71,7 +65,7 @@ jobs:
           # Check all three native binaries are built for this runner.
           # A mislabeled cross-architecture archive must fail the workflow.
           for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
-            lipo -verify_arch "${{ matrix.arch }}" "$bundle/$executable"
+            lipo -verify_arch "arm64" "$bundle/$executable"
           done
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
@@ -94,7 +88,7 @@ jobs:
       - name: Upload prebuilt preview archive
         uses: actions/upload-artifact@v4
         with:
-          name: doctty-hybrid-prebuilt-${{ runner.os }}-${{ matrix.arch }}
+          name: doctty-hybrid-prebuilt-${{ runner.os }}-arm64
           path: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.checksum }}
