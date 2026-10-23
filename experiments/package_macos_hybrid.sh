@@ -57,7 +57,7 @@ Experimental doctty hybrid preview — macOS
 ============================================
 
 This archive bundles:
-  doctty                normal Rust CLI, plus opt-in --experimental-eco
+  doctty                regular CLI; Eco is macOS interactive default
   doctty-hybrid         direct preview launcher (default Eco)
   webkit_viewport_poc   compiled Rust preview executable
   doctty-webkit-swift   optimized, compiled Swift/WebKit helper
@@ -68,9 +68,9 @@ to run the bundled preview. macOS WebKit is supplied by the operating system.
 
 From an unpacked directory in Ghostty or Kitty:
   ./doctty /absolute/path/to/README.md
-      normal viewer, existing behavior
-  ./doctty --experimental-eco /absolute/path/to/README.md
-      opt-in Eco renderer via bundled native Swift, no compilation
+      default Eco renderer using bundled optimized Swift (no compilation)
+  ./doctty --legacy-renderer /absolute/path/to/README.md
+      developer-only old snapshot path (requires Swift tooling)
   ./doctty --experimental-eco --theme dark /absolute/path/to/README.md
       opt-in Eco with dark GitHub theme (light and system also supported)
   ./doctty --experimental-eco --watch /absolute/path/to/README.md
@@ -83,12 +83,12 @@ From an unpacked directory in Ghostty or Kitty:
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
       previous eager prefetch comparison
 
-The Eco bridge supports --watch, --theme light/dark/system, and pressing
-'o' to open the first Markdown link in the system browser (like the normal
-viewer). The g/G navigation and manual 'r' reload keys also match
-the normal viewer. Other interactive behavior is still experimental.
-Existing non-Eco CLI and
-piped/headless operation are unchanged.
+The default Eco viewer supports --watch, --theme light/dark/system,
+--no-mermaid, and the documented navigation keys (j/k, g/G, PageUp/Down,
+r, o, q). Mermaid is enabled by default, using the same optional mmdc/npx
+integration as the previous renderer; --no-mermaid disables it.
+The normal pipe/headless mode remains unchanged. The legacy renderer
+is only available with an explicit developer --legacy-renderer opt-out.
 
 Keep the bundled executables together. Do not rename the bundle contents.
 This is a non-notarized PREVIEW archive and is NOT a signed or
