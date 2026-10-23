@@ -12,6 +12,7 @@ on:
       - 'src/cli/args.rs'
       - 'tests/unit/cli_args.rs'
       - 'experiments/smoke_compiled_swift_webkit.py'
+      - 'experiments/smoke_eco_default_cli.py'
       - '.github/workflows/macos-hybrid-bundle.yml'
   workflow_dispatch:
 
@@ -54,6 +55,9 @@ jobs:
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
           python3 experiments/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
+          # Exercise the real compiled doctty CLI with pseudo-terminal I/O
+          # and stub sidecars, verifying default routing without WebKit GUI.
+          python3 experiments/smoke_eco_default_cli.py "$bundle"
           # Normal default CLI and --no-mermaid keep the headless
           # noninteractive text contract; no Swift/Cargo execution.
           printf '# Bundled cli smoke\\n' | "$bundle/doctty" - > "$RUNNER_TEMP/headless-default.txt"
