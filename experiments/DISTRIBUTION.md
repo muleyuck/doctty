@@ -12,14 +12,19 @@ both `doctty` and `examples/webkit_viewport_poc.rs` with
 `cargo build --release --locked --features bundled-eco`.
 The `bundled-eco` feature is intentionally **off** for `cargo install`,
 `make build`, and normal source-development builds.
-The workflow assembles and smoke-tests an architecture-labeled tar archive,
-verifies file hashes, and stores it as a downloadable Actions artifact for
-14 days. **It does not publish a GitHub Release or change the main branch.**
+A two-runner matrix builds native Apple Silicon (`macos-15` / `arm64`)
+and Intel (`macos-15-intel` / `x86_64`) distributions independently.
+Each archive is checksum-verified, checks native binary architecture using
+`lipo`, exercises the compiled Swift protocol, and runs the packaged CLI
+via a pseudo-terminal with stub sidecars. CI also verifies the ordinary
+no-feature Cargo default on macOS. The architecture-labeled tar archives
+are stored as downloadable Actions artifacts for 14 days. **It does not publish a GitHub Release or change the main branch.**
 
 The archive has this structure:
 
 ```text
-doctty-hybrid-macos-arm64/             # name matches CI runner architecture
+doctty-hybrid-macos-arm64/             # Apple Silicon CI runner
+# Intel CI produces doctty-hybrid-macos-x86_64/ with the same layout
   doctty                              # normal CLI; compiled Eco is macOS default
   doctty-hybrid                       # launch wrapper; default Eco mode
   webkit_viewport_poc                 # compiled Rust experiment
@@ -107,8 +112,9 @@ distribution still need to be completed.
 - Delete or isolate the developer-only one-shot Swift interpreter path
   before formal release; no compiler or interpreter fallback is allowed
   in distributed builds.
-- Build/test native Apple Silicon and Intel artifacts (or a tested universal
-  combination), with clear macOS version support.
+- Establish minimum supported macOS version and perform clean-machine testing
+  on both Apple Silicon and Intel (macOS 15 CI binaries exist, older systems
+  have not been validated).
 - Sign and notarize the distributed executables appropriately; do not ask
   users to disable Gatekeeper.
 - Generate versioned SHA256 archives from a tagged release workflow and
