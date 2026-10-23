@@ -16,7 +16,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "The release ZIP must be built on an Apple Silicon macOS runner" >&2
   exit 2
 fi
-for tool in codesign ditto lipo shasum mktemp; do
+for tool in codesign ditto lipo shasum mktemp tar; do
   command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 2; }
 done
 
@@ -36,7 +36,6 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/doctty-release.XXXXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
 
-ditto -x -k /dev/null "$STAGING" >/dev/null 2>&1 && { echo "Unexpected ditto operation succeeded" >&2; exit 2; } || true
 tar -xzf "$ARCHIVE" -C "$STAGING"
 BUNDLE="$STAGING/doctty-hybrid-macos-arm64"
 if [[ ! -d "$BUNDLE" ]]; then
