@@ -54,10 +54,15 @@ jobs:
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
           python3 experiments/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
-          # Even with the Eco flag, piped output keeps the existing
-          # noninteractive plain-text path (no Swift/Cargo execution).
-          printf '# Bundled cli smoke\\n' | "$bundle/doctty" --experimental-eco - > "$RUNNER_TEMP/headless-eco.txt"
-          grep -q 'Bundled cli smoke' "$RUNNER_TEMP/headless-eco.txt"
+          # Normal default CLI and --no-mermaid keep the headless
+          # noninteractive text contract; no Swift/Cargo execution.
+          printf '# Bundled cli smoke\\n' | "$bundle/doctty" - > "$RUNNER_TEMP/headless-default.txt"
+          grep -q 'Bundled cli smoke' "$RUNNER_TEMP/headless-default.txt"
+          printf '# Bundled no-mermaid\\n' | "$bundle/doctty" --no-mermaid - > "$RUNNER_TEMP/headless-disabled.txt"
+          grep -q 'Bundled no-mermaid' "$RUNNER_TEMP/headless-disabled.txt"
+          # Keep hidden compatibility options parseable in scripted use.
+          printf '# Legacy flag\\n' | "$bundle/doctty" --legacy-renderer - > "$RUNNER_TEMP/headless-legacy.txt"
+          grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
