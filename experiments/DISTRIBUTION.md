@@ -135,6 +135,35 @@ no GitHub Release or Homebrew tap changes are made by PR CI. The tap
 publication step is skipped if `TAP_APP_CLIENT_ID` or
 `TAP_APP_PRIVATE_KEY` are absent from doctty's Actions secrets.
 
+### Apple Silicon pre-release installation check
+
+The `macOS prebuilt Eco preview bundle` PR workflow now also uploads a
+**14-day review-only** artifact called `doctty-ad-hoc-signed-arm64-review`,
+containing a signed, unnotarized ZIP and `.sha256` file. This is distinct
+from GitHub Releases. On an Apple Silicon test Mac:
+
+1. Open the successful PR Actions workflow, download and extract the
+   `doctty-ad-hoc-signed-arm64-review` artifact.
+2. Verify the downloaded ZIP against its included checksum:
+   `shasum -a 256 -c doctty-<version>-macos-arm64.zip.sha256`.
+   The checksum detects download changes, but does **not** authenticate the
+   author; use only the official repository's Actions artifact.
+3. Extract the verified ZIP and keep all files within
+   `doctty-hybrid-macos-arm64/` together. In Ghostty or Kitty, run
+   `./doctty-hybrid-macos-arm64/doctty README.md` with the path to a
+   Markdown file. Also check `--theme dark`, `--watch`, `g/G`, `r`,
+   and `o` with a document containing a link.
+4. Confirm macOS Gatekeeper behavior. This is ad-hoc signed and
+   **not notarized**, so macOS may block execution. Never disable
+   Gatekeeper globally. The CI can test signatures and symlink resolution,
+   but cannot reproduce an ordinary downloaded-file user approval flow.
+
+The Cask template is validated by the same Homebrew render/style action
+used by turnray, and the CI exercises a Homebrew-like binary symlink.
+An actual `brew install --cask` test requires the release ZIP to be
+published under a real versioned GitHub Releases URL; it has not yet been
+performed.
+
 ## Before an official macOS release
 
 - Refactor Eco's separate Rust companion into the main CLI when practical,
