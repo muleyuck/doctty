@@ -9,6 +9,8 @@ on:
       - 'experiments/run_compiled_swift_hybrid.sh'
       - 'experiments/package_macos_hybrid.sh'
       - 'src/app/**'
+      - 'Cargo.toml'
+      - '.github/workflows/ci.yml'
       - 'src/cli/args.rs'
       - 'tests/unit/cli_args.rs'
       - 'experiments/smoke_compiled_swift_webkit.py'
