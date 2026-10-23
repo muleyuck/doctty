@@ -35,13 +35,21 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 **macOS prebuilt Eco preview (draft, not an official release)**: the
 `macOS prebuilt Eco preview bundle` GitHub Actions workflow produces
-a downloadable `doctty-hybrid-prebuilt-macOS-ARM64` artifact containing
-precompiled `doctty`, its Rust viewport companion and the optimized
-Swift/WebKit helper. Extract the inner `.tar.gz` and, in Ghostty or Kitty:
+architecture-specific artifacts, `doctty-hybrid-prebuilt-macOS-arm64`
+(Apple Silicon) and `doctty-hybrid-prebuilt-macOS-x86_64` (Intel),
+containing precompiled `doctty`, its Rust viewport companion and the
+optimized Swift/WebKit helper. Extract the matching inner `.tar.gz`
+and run in Ghostty or Kitty:
 
 ```bash
-./doctty-hybrid-macos-arm64/doctty README.md
+./doctty-hybrid-macos-arm64/doctty README.md   # Apple Silicon
+# or, on Intel Macs:
+./doctty-hybrid-macos-x86_64/doctty README.md
 ```
+
+CI validates that all three native executables match the archive's
+architecture. These are macOS 15 CI builds; support on earlier macOS
+versions has not yet been established.
 
 No Swift compiler, Rust toolchain or repository checkout is needed for this
 prebuilt Eco preview. **This is not yet a signed or notarized release**;
