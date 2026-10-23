@@ -16,13 +16,13 @@ pub struct DocttyArgs {
     #[arg(long)]
     pub watch: bool,
 
-    /// Deprecated compatibility alias: the prebuilt Eco viewer is now the
-    /// macOS interactive default.
+    /// Opt into the prebuilt Eco sidecars when using a source-only install;
+    /// kept as a compatibility alias in CI-built macOS distribution bundles.
     #[arg(long, hide = true, conflicts_with = "legacy_renderer")]
     pub experimental_eco: bool,
 
-    /// Development-only fallback to the previous one-shot Swift interpreter
-    /// renderer. The prebuilt distribution uses Eco by default.
+    /// Development-only selection of the previous Swift interpreter viewer.
+    /// Source-only Cargo installs already use it by default.
     #[arg(long, hide = true)]
     pub legacy_renderer: bool,
 
