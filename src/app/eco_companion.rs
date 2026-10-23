@@ -1,7 +1,9 @@
 //! Version-matched, CI-compiled Eco companion for macOS interactive sessions.
 //!
-//! No Swift interpreter, compiler, Cargo or runtime source build is used on
-//! the default path. The old renderer remains explicitly opt-in for developers.
+//! CI enables `bundled-eco` only when both sidecars are packaged alongside
+//! doctty. Source-only Cargo builds preserve the historical interactive
+//! renderer. Neither path silently falls back if an explicitly selected Eco
+//! bundle is incomplete.
 
 use std::path::Path;
 
@@ -16,10 +18,11 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-/// Select Eco by default for interactive macOS; leave non-macOS routing
-/// unchanged. The headless/pipe branch does not call this backend.
+/// Source-only builds retain the legacy viewer; the macOS CI distribution
+/// enables `bundled-eco` for an optimized compiled Swift default.
+/// The headless/pipe branch does not call this backend.
 pub(super) const fn use_eco(explicit: bool, legacy: bool) -> bool {
-    explicit || (cfg!(target_os = "macos") && !legacy)
+    explicit || (cfg!(all(target_os = "macos", feature = "bundled-eco")) && !legacy)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -39,8 +42,9 @@ fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
             "the prebuilt macOS Eco bundle is incomplete: expected \
              webkit_viewport_poc and doctty-webkit-swift beside {}. \
              Download the complete CI-built macOS archive and keep its \
-             executables together; for source development only, use \
-             --legacy-renderer (requires Swift tooling)",
+             executables together. A source-only Cargo installation does not \
+             install these sidecars; omit --experimental-eco to use the \
+             traditional renderer (requires Swift tooling)",
             main_executable.display()
         );
     }
@@ -91,8 +95,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_backend_is_compiled_eco_only_on_macos() {
-        assert_eq!(use_eco(false, false), cfg!(target_os = "macos"));
+    fn default_backend_tracks_explicit_ci_bundle_feature() {
+        assert_eq!(
+            use_eco(false, false),
+            cfg!(all(target_os = "macos", feature = "bundled-eco"))
+        );
         assert!(!use_eco(false, true));
         assert!(use_eco(true, false));
     }
