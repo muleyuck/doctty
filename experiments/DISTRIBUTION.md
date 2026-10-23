@@ -8,7 +8,10 @@ Cargo installation should be required on the user's computer.
 
 GitHub Actions workflow `.github/workflows/macos-hybrid-bundle.yml` builds
 `experiments/webkit_viewport.swift` with optimized `swiftc -O` and
-`examples/webkit_viewport_poc.rs` with `cargo build --release --locked`.
+both `doctty` and `examples/webkit_viewport_poc.rs` with
+`cargo build --release --locked --features bundled-eco`.
+The `bundled-eco` feature is intentionally **off** for `cargo install`,
+`make build`, and normal source-development builds.
 The workflow assembles and smoke-tests an architecture-labeled tar archive,
 verifies file hashes, and stores it as a downloadable Actions artifact for
 14 days. **It does not publish a GitHub Release or change the main branch.**
@@ -32,14 +35,19 @@ Once unpacked, the integration test invocation in Ghostty or Kitty is:
 ```
 
 The normal interactive `./doctty /absolute/path/to/README.md` command
-now selects the compiled, bundled Eco viewer automatically on macOS.
+selects the compiled Eco viewer when the `bundled-eco` Cargo feature is
+enabled (as in this CI-built macOS archive). Source-only Cargo installs,
+which lack companions and do not enable that feature, keep the old
+interactive viewer by default.
 It uses the neighboring Rust companion and native Swift helper without
 invoking `swift`, `swiftc` or Cargo. The hidden `--experimental-eco` flag
 remains a compatibility alias. The hidden `--legacy-renderer` developer
 override selects the old one-shot snapshot code, which still invokes
 the Swift interpreter; this is NOT part of the no-compiler release path.
-If the two companions are missing, interactive macOS fails with a clear
-packaging error instead of silently falling back to interpreted Swift.
+If the two companions are missing from a CI-bundled build, interactive
+macOS fails with a clear packaging error instead of silently falling back
+to interpreted Swift. Source-only installs invoke the old renderer by
+design, not as a runtime fallback from Eco.
 It supports `--theme light`, `--theme dark`, and `--theme system`
 using resolved GitHub CSS colors. The normal CLI passes Mermaid mode
 through to the Eco HTML renderer: Mermaid is enabled by default
@@ -73,11 +81,16 @@ The opt-in previous prefetch mode is still available via
 
 ## Default routing and remaining release limitations
 
-The macOS interactive `doctty` command now defaults to precompiled Eco,
-while stdin/piped/headless behavior is unchanged. The old one-shot helper
-embedded in `src/io/webkit_snapshot/script.rs` still exists for explicit
-`--legacy-renderer` development/testing only. No automatic runtime
-compiler/interpreter fallback is allowed for an incomplete Eco bundle.
+The **CI-built macOS interactive** `doctty` command defaults to
+precompiled Eco because the package script builds `doctty` with
+`--features bundled-eco`, while stdin/piped/headless behavior is
+unchanged. **Source-only Cargo installs** omit `bundled-eco` and continue
+using the historical WebKit snapshot path. That path invokes `swift`
+at runtime and remains a source-developer workflow, not an end-user
+binary distribution requirement. The old one-shot helper embedded in
+`src/io/webkit_snapshot/script.rs` can also be explicitly selected with
+`--legacy-renderer` for development. An incomplete CI-built Eco archive
+must fail rather than silently launching the old Swift interpreter.
 
 **This is still a draft CI preview archive, not an installable signed
 production release.** The Eco rendering loop currently lives in a
