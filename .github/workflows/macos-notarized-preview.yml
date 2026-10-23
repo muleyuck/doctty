@@ -21,18 +21,18 @@ jobs:
     if: github.ref == 'refs/heads/main' && inputs.confirmation == 'NOTARIZE'
     runs-on: macos-15
     timeout-minutes: 90
-    env:
-      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_DEVELOPER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_IDENTITY }}
-      MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
-      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
 
       - name: Require existing Apple Developer credentials
+      env:
+        MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        MACOS_DEVELOPER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_IDENTITY }}
+        MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+        MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+        MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +46,22 @@ jobs:
           done
           test "$(uname -m)" = arm64
 
+      - name: Build CI-bundled optimized Swift and Rust Eco
+        id: package
+        shell: bash
+        run: |
+          archive="$(bash experiments/package_macos_hybrid.sh)"
+          test -s "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
       - name: Set up ephemeral Developer ID signing identity
+      env:
+        MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        MACOS_DEVELOPER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_IDENTITY }}
+        MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+        MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+        MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -68,14 +83,6 @@ jobs:
           echo "APPLE_NOTARY_API_KEY_FILE=$api_key" >> "$GITHUB_ENV"
           echo "APPLE_NOTARY_KEY_ID=$MACOS_NOTARY_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_NOTARY_ISSUER_ID=$MACOS_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
-
-      - name: Build CI-bundled optimized Swift and Rust Eco
-        id: package
-        shell: bash
-        run: |
-          archive="$(bash experiments/package_macos_hybrid.sh)"
-          test -s "$archive"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
       - name: Sign, submit to Apple, and staple the DMG
         id: signed
