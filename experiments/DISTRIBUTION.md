@@ -17,7 +17,7 @@ The archive has this structure:
 
 ```text
 doctty-hybrid-macos-arm64/             # name matches CI runner architecture
-  doctty                              # normal CLI + opt-in Eco bridge
+  doctty                              # normal CLI; compiled Eco is macOS default
   doctty-hybrid                       # launch wrapper; default Eco mode
   webkit_viewport_poc                 # compiled Rust experiment
   doctty-webkit-swift                 # compiled, optimized native Swift helper
@@ -28,16 +28,24 @@ doctty-hybrid-macos-arm64/             # name matches CI runner architecture
 Once unpacked, the integration test invocation in Ghostty or Kitty is:
 
 ```sh
-./doctty --experimental-eco /absolute/path/to/README.md
+./doctty /absolute/path/to/README.md
 ```
 
-The normal `./doctty /absolute/path/to/README.md` command still runs the
-existing production viewer, which has NOT yet switched to Eco. The
-`--experimental-eco` mode uses the bundled native Swift helper through
-the neighboring Rust viewer, without invoking local Swift or Cargo.
-It supports `--theme light`, `--theme dark`, and `--theme system` using
-resolved GitHub CSS colors in the Eco preview. The standalone PoC stays
-light by default unless `DOCTTY_WEBKIT_THEME=dark` is explicitly set.
+The normal interactive `./doctty /absolute/path/to/README.md` command
+now selects the compiled, bundled Eco viewer automatically on macOS.
+It uses the neighboring Rust companion and native Swift helper without
+invoking `swift`, `swiftc` or Cargo. The hidden `--experimental-eco` flag
+remains a compatibility alias. The hidden `--legacy-renderer` developer
+override selects the old one-shot snapshot code, which still invokes
+the Swift interpreter; this is NOT part of the no-compiler release path.
+If the two companions are missing, interactive macOS fails with a clear
+packaging error instead of silently falling back to interpreted Swift.
+It supports `--theme light`, `--theme dark`, and `--theme system`
+using resolved GitHub CSS colors. The normal CLI passes Mermaid mode
+through to the Eco HTML renderer: Mermaid is enabled by default
+(using optional `mmdc` / `npx` if available), and `--no-mermaid` explicitly
+disables it. The standalone PoC retains light theme and disabled Mermaid
+defaults unless variables are passed by the packaged CLI.
 The Eco bridge supports `--watch`, polling the source Markdown's modification
 time/size at most once every 150 ms and waiting at least 250 ms for edits to
 settle. Reload stops the old WebKit and raster workers, regenerates HTML,
@@ -63,26 +71,29 @@ itself using
 The opt-in previous prefetch mode is still available via
 `./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md`.
 
-## Important distinction: production doctty still differs
+## Default routing and remaining release limitations
 
-The default `doctty` viewer still renders with the separate one-shot
-snapshot helper embedded in `src/io/webkit_snapshot/script.rs`. That
-legacy mode invokes the Swift interpreter at runtime. Only the
-`--experimental-eco` branch delegates to the bundled native Swift helper
-through `examples/webkit_viewport_poc.rs`.
+The macOS interactive `doctty` command now defaults to precompiled Eco,
+while stdin/piped/headless behavior is unchanged. The old one-shot helper
+embedded in `src/io/webkit_snapshot/script.rs` still exists for explicit
+`--legacy-renderer` development/testing only. No automatic runtime
+compiler/interpreter fallback is allowed for an incomplete Eco bundle.
 
-This is a reversible first CLI-integration step, but **not** the release-ready
-default. We must finish feature parity and replace the legacy runtime script
-before claiming the general-purpose `doctty` command has no Swift toolchain
-dependency on the end-user computer.
+**This is still a draft CI preview archive, not an installable signed
+production release.** The Eco rendering loop currently lives in a
+separately compiled Rust example executable; a future refactor may fold
+that code into the CLI itself. This does not prevent the fully prebuilt
+archive from launching `doctty README.md` directly, but production
+signing, version matching, multi-architecture and clean-machine
+distribution still need to be completed.
 
 ## Before an official macOS release
 
-- Complete the Eco integration into the production CLI, preserving the
-  remaining navigation and interactive contracts, then remove the temporary
-  `--experimental-eco` switch.
-- Choose a predictable location for version-matched compiled Swift helpers;
-  remove runtime Swift compilation and interpreter fallback from release builds.
+- Refactor Eco's separate Rust companion into the main CLI when practical,
+  while preserving its bounded caches and low-CPU settling scheduler.
+- Delete or isolate the developer-only one-shot Swift interpreter path
+  before formal release; no compiler or interpreter fallback is allowed
+  in distributed builds.
 - Build/test native Apple Silicon and Intel artifacts (or a tested universal
   combination), with clear macOS version support.
 - Sign and notarize the distributed executables appropriately; do not ask
