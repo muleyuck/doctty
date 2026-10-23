@@ -392,11 +392,8 @@ mod experiment {
             // Reuse the legacy snapshot's asset-aware root calculation.
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
-            let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
-                &html_source,
-                source_dir,
-                html,
-            );
+            let read_root =
+                doctty::io::webkit_snapshot::compiled_eco_read_root(&html_source, source_dir, html);
             // Compare the interpreter with a compiled executable without
             // changing the image production or cache algorithm.
             let mut command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
@@ -2351,11 +2348,8 @@ mod experiment {
             assert!(!html.starts_with(&documents));
 
             let content = fs::read_to_string(&html)?;
-            let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
-                &content,
-                &documents,
-                &html,
-            );
+            let read_root =
+                doctty::io::webkit_snapshot::compiled_eco_read_root(&content, &documents, &html);
             assert!(markdown.starts_with(&read_root));
             assert!(html.starts_with(&read_root));
             Ok(())
