@@ -65,7 +65,7 @@ jobs:
           # Check all three native binaries are built for this runner.
           # A mislabeled cross-architecture archive must fail the workflow.
           for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
-            lipo -verify_arch "arm64" "$bundle/$executable"
+            lipo "$bundle/$executable" -verify_arch arm64
           done
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
