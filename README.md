@@ -54,11 +54,17 @@ Versioned GitHub Releases and Homebrew distribution are planned.
 cargo install --path . --locked
 ```
 
-Source-only installs do **not** include the precompiled Swift and Rust Eco
-companions. On macOS, interactive `doctty README.md` requires the complete
-prebuilt Eco bundle; for source development only, use
-`doctty --legacy-renderer README.md`, which still requires a working Swift
-toolchain. Headless/piped text output is unchanged.
+Source-only installs do **not** include the compiled Swift and Rust Eco
+companions. They preserve the historical interactive WebKit renderer by
+default: `doctty README.md` still works with the Swift tooling normally
+required for a source build. For an explicit Eco experiment, use
+`--experimental-eco` only after installing both matching companions.
+
+CI-built macOS bundles enable the Cargo `bundled-eco` feature and include
+the two companions, so `doctty README.md` uses Eco automatically without
+running Swift or Cargo on the end-user machine. Bundles with missing helpers
+fail explicitly instead of falling back to an interpreter. Headless/piped
+text output remains unchanged.
 
 ## Usage
 
@@ -99,10 +105,11 @@ From a clone, build with Cargo for development:
 cargo install --path . --locked
 ```
 
-For the interactive macOS source build, use the developer-only
-`--legacy-renderer` flag with locally installed Swift tooling. This is
-not the recommended distribution mode; use the CI-built archive for
-compiler-free Eco instead.
+A source-only install uses the historical interactive renderer without any
+extra flags and may require a working Swift toolchain. **Do not** enable
+`--features bundled-eco` in a source-only Cargo installation: the feature
+is reserved for archives that ship both compiled companion executables.
+For compiler-free end-user installation, use the CI-built archive instead.
 
 For development, `make build` creates `./bin/doctty`. The generated `bin/`
 directory is not committed.
