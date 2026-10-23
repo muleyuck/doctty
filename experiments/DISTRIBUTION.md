@@ -12,19 +12,18 @@ both `doctty` and `examples/webkit_viewport_poc.rs` with
 `cargo build --release --locked --features bundled-eco`.
 The `bundled-eco` feature is intentionally **off** for `cargo install`,
 `make build`, and normal source-development builds.
-A two-runner matrix builds native Apple Silicon (`macos-15` / `arm64`)
-and Intel (`macos-15-intel` / `x86_64`) distributions independently.
-Each archive is checksum-verified, checks native binary architecture using
-`lipo`, exercises the compiled Swift protocol, and runs the packaged CLI
-via a pseudo-terminal with stub sidecars. CI also verifies the ordinary
-no-feature Cargo default on macOS. The architecture-labeled tar archives
-are stored as downloadable Actions artifacts for 14 days. **It does not publish a GitHub Release or change the main branch.**
+The initial target is Apple Silicon (`macos-15` / `arm64`) only.
+Intel support is intentionally deferred. Each archive is checksum-verified,
+checks all three executables' native arm64 architecture using `lipo`,
+exercises the compiled Swift protocol, and runs the packaged CLI via
+a pseudo-terminal with stub sidecars. CI also verifies the ordinary
+no-feature Cargo default on macOS. The arm64 tar archive is stored as
+a downloadable Actions artifact for 14 days. **It does not publish a GitHub Release or change the main branch.**
 
 The archive has this structure:
 
 ```text
 doctty-hybrid-macos-arm64/             # Apple Silicon CI runner
-# Intel CI produces doctty-hybrid-macos-x86_64/ with the same layout
   doctty                              # normal CLI; compiled Eco is macOS default
   doctty-hybrid                       # launch wrapper; default Eco mode
   webkit_viewport_poc                 # compiled Rust experiment
@@ -102,7 +101,7 @@ production release.** The Eco rendering loop currently lives in a
 separately compiled Rust example executable; a future refactor may fold
 that code into the CLI itself. This does not prevent the fully prebuilt
 archive from launching `doctty README.md` directly, but production
-signing, version matching, multi-architecture and clean-machine
+signing, version matching, clean-machine testing, and eventual
 distribution still need to be completed.
 
 ## Before an official macOS release
@@ -113,8 +112,8 @@ distribution still need to be completed.
   before formal release; no compiler or interpreter fallback is allowed
   in distributed builds.
 - Establish minimum supported macOS version and perform clean-machine testing
-  on both Apple Silicon and Intel (macOS 15 CI binaries exist, older systems
-  have not been validated).
+  on Apple Silicon (CI runs on macOS 15; older systems have not been validated).
+  Intel is outside the initial release scope and can be reconsidered if demand emerges.
 - Sign and notarize the distributed executables appropriately; do not ask
   users to disable Gatekeeper.
 - Generate versioned SHA256 archives from a tagged release workflow and
