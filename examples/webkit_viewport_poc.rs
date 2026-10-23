@@ -765,9 +765,7 @@ mod experiment {
             None => Ok(MermaidMode::Disabled),
             Some(v) if v == "enabled" => Ok(MermaidMode::Enabled),
             Some(v) if v == "disabled" => Ok(MermaidMode::Disabled),
-            Some(v) => bail!(
-                "invalid DOCTTY_WEBKIT_MERMAID: {v:?} (expected enabled or disabled)"
-            ),
+            Some(v) => bail!("invalid DOCTTY_WEBKIT_MERMAID: {v:?} (expected enabled or disabled)"),
         }
     }
 
