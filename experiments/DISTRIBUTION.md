@@ -104,6 +104,37 @@ archive from launching `doctty README.md` directly, but production
 signing, version matching, clean-machine testing, and eventual
 distribution still need to be completed.
 
+## turnray-style distribution (no Apple paid account)
+
+The proposed `.github/workflows/release-please.yml` mirrors turnray:
+after successful `CI` on a trusted `main` push, release-please opens a
+version bump PR or creates a release tag. The release job builds the
+same arm64 Rust and optimized Swift bundle, signs all three executables
+**ad-hoc** (not with Developer ID), generates
+`doctty-<version>-macos-arm64.zip` plus its checksum, and attaches both
+to GitHub Releases. A Homebrew Cask template in `packaging/doctty.rb.in`
+then allows `brew install --cask muleyuck/tap/doctty` when the separate
+tap GitHub App credentials are configured. No Apple Developer Program
+subscription is required.
+
+A `doctty-cli` shell launcher bundled inside the ZIP resolves symlinks
+created by Homebrew and starts the actual Rust executable beside both
+required companion binaries. The normal `doctty` command still runs Eco
+without the user installing Rust, Swift, or a compiler.
+
+**Limitations:** An ad-hoc signature does not establish publisher identity
+or satisfy Apple's notarization checks. macOS Gatekeeper can block a
+quarantined copy, including Homebrew-installed files. Users should verify
+the official GitHub Release and published SHA256 before intentionally
+allowing the app, and must not disable Gatekeeper globally. This is a
+tradeoff inherited from turnray's current unsigned/notarization-free
+distribution and should be revisited if public adoption grows.
+
+The release workflow cannot publish while this branch remains a draft PR;
+no GitHub Release or Homebrew tap changes are made by PR CI. The tap
+publication step is skipped if `TAP_APP_CLIENT_ID` or
+`TAP_APP_PRIVATE_KEY` are absent from doctty's Actions secrets.
+
 ## Before an official macOS release
 
 - Refactor Eco's separate Rust companion into the main CLI when practical,
@@ -114,10 +145,12 @@ distribution still need to be completed.
 - Establish minimum supported macOS version and perform clean-machine testing
   on Apple Silicon (CI runs on macOS 15; older systems have not been validated).
   Intel is outside the initial release scope and can be reconsidered if demand emerges.
-- Sign and notarize the distributed executables appropriately; do not ask
-  users to disable Gatekeeper.
-- Generate versioned SHA256 archives from a tagged release workflow and
-  publish GitHub Release assets, then implement a Homebrew formula.
+- Verify the versioned, ad-hoc-signed ZIP and Homebrew Cask on an
+  actual Apple Silicon Mac, including Gatekeeper and symlinked CLI behavior.
+- Run the release-please workflow after integration approval to publish
+  GitHub Release assets. Configure Homebrew tap GitHub App secrets before
+  publishing the Cask. Developer ID and Apple notarization are deferred
+  rather than required for the initial release.
 - Test clean-machine startup, image/keyboard behavior, upgrades, and paths
   containing spaces, without Xcode/Swift or Cargo installed.
 
