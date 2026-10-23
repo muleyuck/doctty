@@ -135,7 +135,9 @@ mod experiment {
             if let Some((previous, since)) = self.candidate {
                 if previous == revision {
                     if now.saturating_duration_since(since) >= WATCH_SETTLE_DELAY {
-                        self.applied = revision;
+                        // Do not acknowledge the new revision until rebuilding
+                        // the Markdown succeeds. If a save is temporarily
+                        // unreadable, the same revision must be retried.
                         self.candidate = None;
                         return true;
                     }
@@ -1779,12 +1781,14 @@ mod experiment {
         watch: bool,
     ) -> Result<()> {
         let source_dir = document.parent().context("source directory unavailable")?;
-        let (mut html, mut _temp_html, mut first_link) = html_input(document, theme)?;
+        // Observe the initial revision before reading HTML: a save racing
+        // with startup is then picked up by the watcher.
         let mut watcher = if watch {
             Some(WatchState::new(document)?)
         } else {
             None
         };
+        let (mut html, mut _temp_html, mut first_link) = html_input(document, theme)?;
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.png");
         let _session = TerminalSession::enter()?;
@@ -1911,6 +1915,12 @@ mod experiment {
                             swift = None;
                         }
                         Err(_) => {
+                            // Keep the last valid render, but do not mark the
+                            // changed source as applied. Back off failed
+                            // rebuilds to avoid busy retrying a broken file.
+                            if let Some(state) = watcher.as_mut() {
+                                state.last_poll = Instant::now() + Duration::from_secs(1);
+                            }
                             swift = Some(returned);
                         }
                     }
@@ -2355,8 +2365,39 @@ mod experiment {
                 start + WATCH_SETTLE_DELAY * 2 - Duration::from_millis(1)
             ));
             assert!(state.observe(second, start + WATCH_SETTLE_DELAY * 2));
+            // Detection is not acceptance: acknowledge only after a
+            // successful HTML rebuild, not before.
+            assert_ne!(state.applied, second);
             assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 3));
+            assert!(state.observe(second, start + WATCH_SETTLE_DELAY * 4));
+            state.acknowledge_loaded(second);
             assert_eq!(state.applied, second);
+            assert!(!state.observe(second, start + WATCH_SETTLE_DELAY * 5));
+            Ok(())
+        }
+
+        #[test]
+        fn failed_watch_rebuild_keeps_revision_pending_until_success() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let source = dir.path().join("watched.md");
+            fs::write(&source, "old")?;
+            let mut state = WatchState::new(&source)?;
+            let old = state.applied;
+            let changed = WatchRevision {
+                modified: Some(SystemTime::UNIX_EPOCH),
+                len: old.len + 10,
+            };
+            let start = Instant::now();
+            assert!(!state.observe(changed, start));
+            assert!(state.observe(changed, start + WATCH_SETTLE_DELAY));
+            // Simulated HTML read/render failure: no acknowledge_loaded.
+            assert_eq!(state.applied, old);
+            assert!(!state.observe(changed, start + WATCH_SETTLE_DELAY * 2));
+            assert!(state.observe(changed, start + WATCH_SETTLE_DELAY * 3));
+            // The next successful rebuild consumes the revision only once.
+            state.acknowledge_loaded(changed);
+            assert!(!state.observe(changed, start + WATCH_SETTLE_DELAY * 4));
+            assert_eq!(state.applied, changed);
             Ok(())
         }
 
