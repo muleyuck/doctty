@@ -117,7 +117,14 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn compiled_eco_requires_macos() {
-        assert!(run(Path::new("README.md"), Theme::Light, false, MermaidMode::Disabled)
-            .is_err_and(|error| error.to_string().contains("requires macOS")));
+        assert!(
+            run(
+                Path::new("README.md"),
+                Theme::Light,
+                false,
+                MermaidMode::Disabled
+            )
+            .is_err_and(|error| error.to_string().contains("requires macOS"))
+        );
     }
 }
