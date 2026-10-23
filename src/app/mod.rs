@@ -18,9 +18,9 @@ use crate::{
 };
 
 pub fn run(args: DocttyArgs) -> Result<()> {
-    // Prebuilt macOS distributions use the optimized Eco renderer by
-    // default. Only explicit developer --legacy-renderer opts back into the
-    // old one-shot Swift interpreter path.
+    // CI-built macOS bundles enable `bundled-eco` for the compiled renderer.
+    // Source-only Cargo installations keep their existing legacy behavior.
+    // Explicit --experimental-eco remains supported with adjacent sidecars.
     let use_eco = eco_companion::use_eco(args.experimental_eco, args.legacy_renderer);
     init_tracing();
 
