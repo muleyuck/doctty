@@ -33,8 +33,8 @@ Mac App Store. The initial supported architecture is **macOS arm64** only.
    | `MACOS_NOTARY_ISSUER_ID` | API issuer UUID |
 
    On macOS, encode files for secrets using
-   `base64 < certificate.p12 | tr -d '\\n'` and
-   `base64 < AuthKey_XXXX.p8 | tr -d '\\n'`.
+   `base64 < certificate.p12 | tr -d '\n'` and
+   `base64 < AuthKey_XXXX.p8 | tr -d '\n'`.
    Store the passwords and API keys only in GitHub secrets or a suitable
    secret manager. If any secret has ever been exposed, revoke and replace it.
 
