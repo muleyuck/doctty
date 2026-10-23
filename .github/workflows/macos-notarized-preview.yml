@@ -1,0 +1,108 @@
+name: macOS notarized Apple Silicon preview (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type NOTARIZE to submit the signed DMG to Apple (main branch only)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-notarization
+  cancel-in-progress: false
+
+jobs:
+  notarize:
+    # Never run secrets-bearing signing on PR branches or automatically.
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'NOTARIZE'
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_DEVELOPER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_IDENTITY }}
+      MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: muleyuck/github-actions/actions/rust/setup@v1
+
+      - name: Require existing Apple Developer credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD \
+                      MACOS_DEVELOPER_IDENTITY MACOS_NOTARY_API_KEY_BASE64 \
+                      MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+          test "$(uname -m)" = arm64
+
+      - name: Set up ephemeral Developer ID signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/doctty-signing.keychain-db"
+          p12="$RUNNER_TEMP/doctty-developer-id.p12"
+          api_key="$RUNNER_TEMP/doctty-notary-api-key.p8"
+          password="$(openssl rand -hex 24)"
+          printf "%s" "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$p12"
+          printf "%s" "$MACOS_NOTARY_API_KEY_BASE64" | /usr/bin/base64 -D > "$api_key"
+          chmod 600 "$p12" "$api_key"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -Fq "$MACOS_DEVELOPER_IDENTITY"
+          echo "APPLE_DEVELOPER_IDENTITY=$MACOS_DEVELOPER_IDENTITY" >> "$GITHUB_ENV"
+          echo "APPLE_NOTARY_API_KEY_FILE=$api_key" >> "$GITHUB_ENV"
+          echo "APPLE_NOTARY_KEY_ID=$MACOS_NOTARY_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_NOTARY_ISSUER_ID=$MACOS_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
+
+      - name: Build CI-bundled optimized Swift and Rust Eco
+        id: package
+        shell: bash
+        run: |
+          archive="$(bash experiments/package_macos_hybrid.sh)"
+          test -s "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Sign, submit to Apple, and staple the DMG
+        id: signed
+        shell: bash
+        run: |
+          dmg="$(bash experiments/sign_notarize_macos.sh "${{ steps.package.outputs.archive }}" "$RUNNER_TEMP/doctty-notarized")"
+          test -s "$dmg"
+          test -s "$dmg.sha256"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "checksum=$dmg.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload accepted notarized DMG for private release review
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctty-AppleSilicon-notarized-preview
+          path: |
+            ${{ steps.signed.outputs.dmg }}
+            ${{ steps.signed.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove ephemeral signing keychain and API material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/doctty-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/doctty-developer-id.p12" "$RUNNER_TEMP/doctty-notary-api-key.p8"
+
+# Intentionally no push, pull_request, tag or release triggers, and no
+# contents:write permission. Notarization does not publish a release.
