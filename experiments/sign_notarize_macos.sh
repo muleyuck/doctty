@@ -77,6 +77,28 @@ for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
   codesign --verify --verbose=2 --strict "$path" >&2
 done
 
+# The unsigned preview archive's README explicitly describes the old
+# unnotarized tarball. Replace it for this review-only signed DMG to avoid
+# shipping conflicting security instructions.
+cat > "$BUNDLE/README.txt" <<'SIGNED_README'
+doctty — Developer ID-signed Apple Silicon notarization preview
+===============================================================
+
+This disk image contains three hardened-runtime Developer ID-signed arm64
+executables: doctty, webkit_viewport_poc and doctty-webkit-swift.
+This DMG is distributed by the CI workflow only after Apple's notary service
+returns Accepted and the notarization ticket is stapled to the DMG.
+
+In Ghostty or Kitty, copy the entire set of files into the same local
+directory before running ./doctty /absolute/path/to/README.md.
+The three executables must remain together. A Swift/Rust compiler is
+not required to use the compiled Eco renderer.
+
+This is a testing preview, not a signed public GitHub Release.
+Do not circumvent system Gatekeeper warnings. Report launch failures
+before publishing a stable release.
+SIGNED_README
+
 # Signing changes the executables: replace pre-signing checksums.
 (
   cd "$BUNDLE"
