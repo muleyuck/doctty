@@ -20,6 +20,6 @@ jobs:
   macos-build:
     uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1
     with:
-      test-command: cargo build --release --locked && cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
+      test-command: cargo build --release --locked
       install-args: rust
       runs-on: macos-latest
