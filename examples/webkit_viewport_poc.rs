@@ -387,6 +387,16 @@ mod experiment {
         ) -> Result<Self> {
             let helper =
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("experiments/webkit_viewport.swift");
+            // The generated HTML must be readable by WebKit, but relative
+            // Markdown images may live outside the source directory.
+            // Reuse the legacy snapshot's asset-aware root calculation.
+            let html_source =
+                fs::read_to_string(html).context("unable to read WebKit HTML input")?;
+            let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
+                &html_source,
+                source_dir,
+                html,
+            );
             // Compare the interpreter with a compiled executable without
             // changing the image production or cache algorithm.
             let mut command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
@@ -402,7 +412,7 @@ mod experiment {
             };
             let mut child = command
                 .arg(html)
-                .arg(source_dir)
+                .arg(&read_root)
                 .arg(png)
                 .arg(width.to_string())
                 .arg(height.to_string())
@@ -793,11 +803,31 @@ mod experiment {
             .links
             .into_iter()
             .next();
-        let mut file = tempfile::Builder::new()
+        let mut file = match tempfile::Builder::new()
             .prefix(".doctty-poc-")
             .suffix(".html")
             .tempfile_in(root)
-            .context("unable to create temporary HTML alongside Markdown")?;
+        {
+            Ok(file) => file,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
+                ) =>
+            {
+                // Read-only docs are common in package managers and system
+                // folders. The shared read-root calculator below grants
+                // access to this temporary HTML and referenced local assets.
+                tempfile::Builder::new()
+                    .prefix(".doctty-poc-")
+                    .suffix(".html")
+                    .tempfile()
+                    .context("unable to create fallback temporary WebKit HTML")?
+            }
+            Err(error) => {
+                return Err(error).context("unable to create temporary HTML alongside Markdown");
+            }
+        };
         file.write_all(html.as_bytes())?;
         file.flush()?;
         Ok((file.path().to_path_buf(), Some(file), first_link))
@@ -2298,6 +2328,36 @@ mod experiment {
             assert_eq!(dark_link, None);
             let dark_html = fs::read_to_string(dark_path)?;
             assert!(dark_html.contains("data-color-mode=\"dark\""));
+            Ok(())
+        }
+
+        #[test]
+        fn readonly_document_folder_uses_out_of_tree_html_tempfile() -> Result<()> {
+            use std::os::unix::fs::PermissionsExt;
+
+            let root = tempfile::tempdir()?;
+            let documents = root.path().join("read-only docs");
+            fs::create_dir(&documents)?;
+            let markdown = documents.join("README.md");
+            fs::write(&markdown, "# Read-only docs\n")?;
+
+            let original = fs::metadata(&documents)?.permissions();
+            fs::set_permissions(&documents, fs::Permissions::from_mode(0o555))?;
+            let rendered = html_input(&markdown, Theme::Light);
+            fs::set_permissions(&documents, original)?;
+
+            let (html, _temp, _) = rendered?;
+            assert!(html.exists());
+            assert!(!html.starts_with(&documents));
+
+            let content = fs::read_to_string(&html)?;
+            let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
+                &content,
+                &documents,
+                &html,
+            );
+            assert!(markdown.starts_with(&read_root));
+            assert!(html.starts_with(&read_root));
             Ok(())
         }
 
