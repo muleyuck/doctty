@@ -29,6 +29,14 @@ use self::{
     script::SWIFT_SNAPSHOT_SCRIPT,
 };
 
+/// Read-only WebKit file access root for compiled Eco HTML, including
+/// referenced assets in parent directories and the generated HTML location.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn compiled_eco_read_root(html: &str, base_dir: &Path, html_path: &Path) -> std::path::PathBuf {
+    paths::viewer_read_access_root(html, base_dir, html_path)
+}
+
 #[cfg(target_os = "macos")]
 pub fn render_html_to_png(
     html: &str,
