@@ -24,7 +24,9 @@ mkdir -p "$BUNDLE"
 
 # Reuse the existing optimized helper build and source/toolchain cache.
 SWIFT_BIN="$(bash "$ROOT/experiments/run_compiled_swift_hybrid.sh" --build-only)"
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --bin doctty --example webkit_viewport_poc
+# Distinguish the complete CI bundle from a source-only Cargo install.
+# The feature is enabled only when both native companions are shipped.
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty --example webkit_viewport_poc
 install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
 install -m 0755 "$ROOT/target/release/examples/webkit_viewport_poc" "$BUNDLE/webkit_viewport_poc"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
