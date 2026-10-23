@@ -93,7 +93,7 @@ jobs:
         run: |
           bash -n experiments/package_macos_release.sh
           ruby -c packaging/doctty.rb.in
-          version="$(sed -n '/^\\[package\\]/,/^\\[/{s/^version = "\\(.*\\)"/\\1/p;}' Cargo.toml | head -n 1)"
+          version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
           archive="${{ steps.package.outputs.archive }}"
           out="$RUNNER_TEMP/doctty-release-zip"
           zip="$(bash experiments/package_macos_release.sh "$archive" "$version" "$out")"
