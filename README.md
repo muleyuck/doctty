@@ -33,24 +33,37 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
-**Install from a local checkout** (requires Rust 1.92+):
+**macOS prebuilt Eco preview (draft, not an official release)**: the
+`macOS prebuilt Eco preview bundle` GitHub Actions workflow produces
+a downloadable `doctty-hybrid-prebuilt-macOS-ARM64` artifact containing
+precompiled `doctty`, its Rust viewport companion and the optimized
+Swift/WebKit helper. Extract the inner `.tar.gz` and, in Ghostty or Kitty:
+
+```bash
+./doctty-hybrid-macos-arm64/doctty README.md
+```
+
+No Swift compiler, Rust toolchain or repository checkout is needed for this
+prebuilt Eco preview. **This is not yet a signed or notarized release**;
+do not bypass macOS Gatekeeper protections for untrusted downloads.
+Versioned GitHub Releases and Homebrew distribution are planned.
+
+**Building from source (developer workflow)** requires Rust 1.92+:
 
 ```bash
 cargo install --path . --locked
 ```
 
-Versioned GitHub Releases and Homebrew distribution are planned. There is currently no installer script or in-app updater.
-
-**Run** (in Ghostty or Kitty):
-
-```bash
-doctty README.md
-```
+Source-only installs do **not** include the precompiled Swift and Rust Eco
+companions. On macOS, interactive `doctty README.md` requires the complete
+prebuilt Eco bundle; for source development only, use
+`doctty --legacy-renderer README.md`, which still requires a working Swift
+toolchain. Headless/piped text output is unchanged.
 
 ## Usage
 
 ```bash
-doctty README.md                           # system theme (default)
+doctty README.md                           # compiled Eco on macOS (prebuilt archive)
 doctty --theme dark notes.md               # dark theme
 doctty --watch examples/rich_markdown.md    # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
@@ -75,18 +88,24 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
-- **Rich rendering**: macOS (uses WebKit for HTML→PNG snapshots). Linux runs in headless/plain-text mode.
+- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built Eco archive). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
 
 ## Installation
 
-From a clone, install with Cargo:
+From a clone, build with Cargo for development:
 
 ```bash
 cargo install --path . --locked
 ```
 
-For development, run `make build` and execute `./bin/doctty`. The `bin/` directory is generated locally and is not committed.
+For the interactive macOS source build, use the developer-only
+`--legacy-renderer` flag with locally installed Swift tooling. This is
+not the recommended distribution mode; use the CI-built archive for
+compiler-free Eco instead.
+
+For development, `make build` creates `./bin/doctty`. The generated `bin/`
+directory is not committed.
 
 ## Troubleshooting
 
