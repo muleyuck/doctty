@@ -29,7 +29,7 @@ pub(super) const fn use_eco(explicit: bool, legacy: bool) -> bool {
 fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     let directory = main_executable.parent().unwrap_or_else(|| Path::new("."));
     (
-        directory.join("webkit_viewport_poc"),
+        directory.join("doctty-eco"),
         directory.join("doctty-webkit-swift"),
     )
 }
@@ -40,7 +40,7 @@ fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
     if !viewer.is_file() || !swift_helper.is_file() {
         bail!(
             "the prebuilt macOS Eco bundle is incomplete: expected \
-             webkit_viewport_poc and doctty-webkit-swift beside {}. \
+             doctty-eco and doctty-webkit-swift beside {}. \
              Download the complete CI-built macOS archive and keep its \
              executables together. A source-only Cargo installation does not \
              install these sidecars; omit --experimental-eco to use the \
@@ -111,7 +111,7 @@ mod tests {
         std::fs::create_dir_all(&bin)?;
         let exe = bin.join("doctty");
         let (viewer, helper) = companion_paths(&exe);
-        assert_eq!(viewer, bin.join("webkit_viewport_poc"));
+        assert_eq!(viewer, bin.join("doctty-eco"));
         assert_eq!(helper, bin.join("doctty-webkit-swift"));
         assert!(require_companions(&exe).is_err());
         std::fs::write(&viewer, b"test placeholder")?;

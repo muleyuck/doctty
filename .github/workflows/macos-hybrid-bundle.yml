@@ -3,13 +3,13 @@ name: macOS prebuilt Eco preview bundle
 on:
   pull_request:
     paths:
-      - 'examples/webkit_viewport_poc.rs'
+      - 'src/bin/doctty-eco.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
-      - 'examples/hybrid_image_preview/**'
+      - 'src/eco/**'
       - 'native/macos/webkit_viewport.swift'
-      - 'scripts/run_compiled_swift_hybrid.sh'
-      - 'scripts/package_macos_hybrid.sh'
+      - 'scripts/build_macos_webkit_helper.sh'
+      - 'scripts/package_macos_eco.sh'
       - 'src/app/**'
       - 'Cargo.toml'
       - '.github/workflows/ci.yml'
@@ -42,7 +42,7 @@ jobs:
         id: package
         shell: bash
         run: |
-          archive="$(bash scripts/package_macos_hybrid.sh)"
+          archive="$(bash scripts/package_macos_eco.sh)"
           test -s "$archive"
           test -s "$archive.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
@@ -63,10 +63,10 @@ jobs:
           test -x "$bundle/doctty"
           test -x "$bundle/doctty-hybrid"
           test -x "$bundle/doctty-webkit-swift"
-          test -x "$bundle/webkit_viewport_poc"
+          test -x "$bundle/doctty-eco"
           # Check all three native binaries are built for this runner.
           # A mislabeled cross-architecture archive must fail the workflow.
-          for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
+          for executable in doctty doctty-eco doctty-webkit-swift; do
             lipo "$bundle/$executable" -verify_arch arm64
           done
           bash -n "$bundle/doctty-hybrid"

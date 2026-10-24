@@ -10,6 +10,13 @@ readme = "README.md"
 keywords = ["markdown", "terminal", "viewer", "cli", "kitty"]
 categories = ["command-line-utilities", "text-processing"]
 
+# Keep the native Eco companion out of default source-only cargo install.
+# The CI-distributed macOS package deliberately builds it with bundled-eco.
+[[bin]]
+name = "doctty-eco"
+path = "src/bin/doctty-eco.rs"
+required-features = ["bundled-eco"]
+
 # Only CI-built, companion-bundled distribution binaries select Eco by
 # default. Ordinary cargo install / make build retains the legacy source
 # behavior until the install process also delivers the native companions.

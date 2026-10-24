@@ -59,7 +59,7 @@ def check(bundle: Path) -> None:
         assert run_interactive(doctty, markdown, [], record) != 0
         assert not record.exists()
 
-        viewer = test_dir / "webkit_viewport_poc"
+        viewer = test_dir / "doctty-eco"
         viewer.write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"

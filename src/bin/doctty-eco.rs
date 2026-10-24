@@ -1,9 +1,9 @@
-// Feasibility experiment; not part of the production viewer.
-// Run inside Ghostty and then in a Herdr pane:
-// cargo run --release --example webkit_viewport_poc -- README.md
+// Compiled Rust Eco viewport companion for interactive macOS terminals.
+// Distributed alongside doctty and the native Swift/WebKit helper.
+// Developer invocation: cargo run --release --bin doctty-eco -- README.md
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("This WebKit experiment requires macOS.");
+    eprintln!("The doctty Eco viewport requires macOS.");
 }
 
 #[cfg(target_os = "macos")]
@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-#[path = "hybrid_image_preview/mod.rs"]
+#[path = "../eco/hybrid_image_preview.rs"]
 mod hybrid_image_preview;
 
 #[cfg(target_os = "macos")]

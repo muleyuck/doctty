@@ -23,12 +23,12 @@ BUNDLE="$STAGING/$NAME"
 mkdir -p "$BUNDLE"
 
 # Reuse the existing optimized helper build and source/toolchain cache.
-SWIFT_BIN="$(bash "$ROOT/scripts/run_compiled_swift_hybrid.sh" --build-only)"
+SWIFT_BIN="$(bash "$ROOT/scripts/build_macos_webkit_helper.sh" --build-only)"
 # Distinguish the complete CI bundle from a source-only Cargo install.
 # The feature is enabled only when both native companions are shipped.
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty --example webkit_viewport_poc
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty --bin doctty-eco
 install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
-install -m 0755 "$ROOT/target/release/examples/webkit_viewport_poc" "$BUNDLE/webkit_viewport_poc"
+install -m 0755 "$ROOT/target/release/doctty-eco" "$BUNDLE/doctty-eco"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
 
 # The packaged launcher always chooses the adjacent, precompiled Swift helper.
@@ -37,7 +37,7 @@ cat > "$BUNDLE/doctty-hybrid" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ ! -x "$ROOT/doctty-webkit-swift" || ! -x "$ROOT/webkit_viewport_poc" ]]; then
+if [[ ! -x "$ROOT/doctty-webkit-swift" || ! -x "$ROOT/doctty-eco" ]]; then
   echo "Incomplete doctty-hybrid bundle: expected helper and viewer alongside launcher" >&2
   exit 2
 fi
@@ -50,18 +50,18 @@ if [[ "$1" != --* ]]; then
   set -- --hybrid-image "$@"
 fi
 export DOCTTY_WEBKIT_HELPER_BIN="$ROOT/doctty-webkit-swift"
-exec "$ROOT/webkit_viewport_poc" "$@"
+exec "$ROOT/doctty-eco" "$@"
 LAUNCHER
 chmod 0755 "$BUNDLE/doctty-hybrid"
 
 cat > "$BUNDLE/README.txt" <<'DOC'
-Experimental doctty hybrid preview — macOS
+doctty precompiled Eco bundle — macOS
 ============================================
 
 This archive bundles:
   doctty                regular CLI; Eco is macOS interactive default
   doctty-hybrid         direct preview launcher (default Eco)
-  webkit_viewport_poc   compiled Rust preview executable
+  doctty-eco   compiled Rust Eco viewport companion
   doctty-webkit-swift   optimized, compiled Swift/WebKit helper
   SHA256SUMS            file integrity checks
 
@@ -81,7 +81,7 @@ From an unpacked directory in Ghostty or Kitty:
   the first Markdown link, and 'r' to manually reload. With --watch,
   link targets also update automatically on file saves.
   ./doctty-hybrid /absolute/path/to/README.md
-      direct standalone Eco experiment
+      direct Eco companion entry point
   ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
       previous eager prefetch comparison
 
@@ -98,14 +98,14 @@ notarized public release. Source-build fallback paths in the example are
 not intended to be used from this archive. Do not bypass Gatekeeper
 protections to run untrusted downloads.
 
-A future release must remove the experimental Eco flag, reach feature
+A future release must remove the compatibility Eco flag, reach feature
 parity with the production CLI, codesign/notarize the macOS distribution,
 and verify installation/upgrades.
 DOC
 
 (
   cd "$BUNDLE"
-  shasum -a 256 doctty doctty-hybrid webkit_viewport_poc doctty-webkit-swift README.txt > SHA256SUMS
+  shasum -a 256 doctty doctty-hybrid doctty-eco doctty-webkit-swift README.txt > SHA256SUMS
 )
 ARCHIVE="$OUT_DIR/$NAME.tar.gz"
 tar -C "$STAGING" -czf "$ARCHIVE" "$NAME"
