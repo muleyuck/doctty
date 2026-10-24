@@ -33,24 +33,49 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
-**Install from a local checkout** (requires Rust 1.92+):
+**macOS prebuilt Eco preview (draft, not an official release)**: the
+`macOS prebuilt Eco preview bundle` GitHub Actions workflow produces
+an Apple Silicon (arm64) artifact named
+`doctty-hybrid-prebuilt-macOS-arm64`, containing precompiled
+`doctty`, its Rust viewport companion and the optimized Swift/WebKit
+helper. Extract the inner `.tar.gz` and run in Ghostty or Kitty:
+
+```bash
+./doctty-hybrid-macos-arm64/doctty README.md
+```
+
+The initial preview/release target is **Apple Silicon only**. Intel Mac
+support is deferred until there is clear demand. CI verifies the native
+arm64 architecture of all three executables. These are macOS 15 CI
+builds; support on earlier macOS versions has not been established.
+
+No Swift compiler, Rust toolchain or repository checkout is needed for this
+prebuilt Eco preview. **This is not yet a signed or notarized release**;
+do not bypass macOS Gatekeeper protections for untrusted downloads.
+Versioned GitHub Releases and Homebrew distribution are planned.
+
+**Building from source (developer workflow)** requires Rust 1.92+:
 
 ```bash
 cargo install --path . --locked
 ```
 
-Versioned GitHub Releases and Homebrew distribution are planned. There is currently no installer script or in-app updater.
+Source-only installs do **not** include the compiled Swift and Rust Eco
+companions. They preserve the historical interactive WebKit renderer by
+default: `doctty README.md` still works with the Swift tooling normally
+required for a source build. For an explicit Eco experiment, use
+`--experimental-eco` only after installing both matching companions.
 
-**Run** (in Ghostty or Kitty):
-
-```bash
-doctty README.md
-```
+CI-built macOS bundles enable the Cargo `bundled-eco` feature and include
+the two companions, so `doctty README.md` uses Eco automatically without
+running Swift or Cargo on the end-user machine. Bundles with missing helpers
+fail explicitly instead of falling back to an interpreter. Headless/piped
+text output remains unchanged.
 
 ## Usage
 
 ```bash
-doctty README.md                           # system theme (default)
+doctty README.md                           # compiled Eco on macOS (prebuilt archive)
 doctty --theme dark notes.md               # dark theme
 doctty --watch examples/rich_markdown.md    # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
@@ -75,18 +100,25 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
-- **Rich rendering**: macOS (uses WebKit for HTML→PNG snapshots). Linux runs in headless/plain-text mode.
+- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built Eco archive). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
 
 ## Installation
 
-From a clone, install with Cargo:
+From a clone, build with Cargo for development:
 
 ```bash
 cargo install --path . --locked
 ```
 
-For development, run `make build` and execute `./bin/doctty`. The `bin/` directory is generated locally and is not committed.
+A source-only install uses the historical interactive renderer without any
+extra flags and may require a working Swift toolchain. **Do not** enable
+`--features bundled-eco` in a source-only Cargo installation: the feature
+is reserved for archives that ship both compiled companion executables.
+For compiler-free end-user installation, use the CI-built archive instead.
+
+For development, `make build` creates `./bin/doctty`. The generated `bin/`
+directory is not committed.
 
 ## Troubleshooting
 

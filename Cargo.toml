@@ -10,6 +10,13 @@ readme = "README.md"
 keywords = ["markdown", "terminal", "viewer", "cli", "kitty"]
 categories = ["command-line-utilities", "text-processing"]
 
+# Only CI-built, companion-bundled distribution binaries select Eco by
+# default. Ordinary cargo install / make build retains the legacy source
+# behavior until the install process also delivers the native companions.
+[features]
+default = []
+bundled-eco = []
+
 [lints.rust]
 unsafe_code = "forbid"
 rust_2018_idioms = { level = "deny", priority = -1 }

@@ -16,6 +16,16 @@ pub struct DocttyArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Opt into the prebuilt Eco sidecars when using a source-only install;
+    /// kept as a compatibility alias in CI-built macOS distribution bundles.
+    #[arg(long, hide = true, conflicts_with = "legacy_renderer")]
+    pub experimental_eco: bool,
+
+    /// Development-only selection of the previous Swift interpreter viewer.
+    /// Source-only Cargo installs already use it by default.
+    #[arg(long, hide = true)]
+    pub legacy_renderer: bool,
+
     /// Color theme used by the viewer.
     #[arg(long, value_enum, default_value_t = Theme::System)]
     pub theme: Theme,

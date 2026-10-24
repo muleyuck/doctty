@@ -1,0 +1,98 @@
+name: macOS prebuilt Eco preview bundle
+
+on:
+  pull_request:
+    paths:
+      - 'examples/webkit_viewport_poc.rs'
+      - 'src/io/webkit_snapshot/**'
+      - 'src/render/github_html/**'
+      - 'examples/hybrid_image_preview/**'
+      - 'experiments/webkit_viewport.swift'
+      - 'experiments/run_compiled_swift_hybrid.sh'
+      - 'experiments/package_macos_hybrid.sh'
+      - 'src/app/**'
+      - 'Cargo.toml'
+      - '.github/workflows/ci.yml'
+      - 'src/cli/args.rs'
+      - 'tests/unit/cli_args.rs'
+      - 'experiments/smoke_compiled_swift_webkit.py'
+      - 'experiments/smoke_eco_default_cli.py'
+      - '.github/workflows/macos-hybrid-bundle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-bundle:
+    # Initial release target: Apple Silicon only. Intel can be revisited
+    # when there is concrete user demand and validation capacity.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: muleyuck/github-actions/actions/rust/setup@v1
+
+      - name: Verify native architecture and Cargo-source regression
+        shell: bash
+        run: |
+          test "$(uname -m)" = "arm64"
+          cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
+
+      - name: Build optimized Swift and Rust Eco preview bundle
+        id: package
+        shell: bash
+        run: |
+          archive="$(bash experiments/package_macos_hybrid.sh)"
+          test -s "$archive"
+          test -s "$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$archive.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Validate archive and packed native Swift protocol
+        shell: bash
+        run: |
+          archive="${{ steps.package.outputs.archive }}"
+          dir="$RUNNER_TEMP/unpacked-doctty"
+          mkdir -p "$dir"
+          (
+            cd "$(dirname "$archive")"
+            shasum -a 256 -c "$(basename "$archive").sha256"
+          )
+          tar -xzf "$archive" -C "$dir"
+          bundle="$dir/$(basename "$archive" .tar.gz)"
+          test -x "$bundle/doctty"
+          test -x "$bundle/doctty-hybrid"
+          test -x "$bundle/doctty-webkit-swift"
+          test -x "$bundle/webkit_viewport_poc"
+          # Check all three native binaries are built for this runner.
+          # A mislabeled cross-architecture archive must fail the workflow.
+          for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
+            lipo "$bundle/$executable" -verify_arch arm64
+          done
+          bash -n "$bundle/doctty-hybrid"
+          (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
+          python3 experiments/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
+          # Exercise the real compiled doctty CLI with pseudo-terminal I/O
+          # and stub sidecars, verifying default routing without WebKit GUI.
+          python3 experiments/smoke_eco_default_cli.py "$bundle"
+          # Normal default CLI and --no-mermaid keep the headless
+          # noninteractive text contract; no Swift/Cargo execution.
+          printf '# Bundled cli smoke\\n' | "$bundle/doctty" - > "$RUNNER_TEMP/headless-default.txt"
+          grep -q 'Bundled cli smoke' "$RUNNER_TEMP/headless-default.txt"
+          printf '# Bundled no-mermaid\\n' | "$bundle/doctty" --no-mermaid - > "$RUNNER_TEMP/headless-disabled.txt"
+          grep -q 'Bundled no-mermaid' "$RUNNER_TEMP/headless-disabled.txt"
+          # Keep hidden compatibility options parseable in scripted use.
+          printf '# Legacy flag\\n' | "$bundle/doctty" --legacy-renderer - > "$RUNNER_TEMP/headless-legacy.txt"
+          grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
+
+      # Preview only: no GitHub Release publication and no source compiler
+      # dependency in the extracted application bundle.
+      - name: Upload prebuilt preview archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctty-hybrid-prebuilt-${{ runner.os }}-arm64
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14

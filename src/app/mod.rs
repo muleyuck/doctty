@@ -6,6 +6,8 @@ use std::{
 use anyhow::{Result, bail};
 use tracing::info_span;
 
+mod eco_companion;
+
 use crate::{
     cli::DocttyArgs,
     core::config::AppConfig,
@@ -16,6 +18,10 @@ use crate::{
 };
 
 pub fn run(args: DocttyArgs) -> Result<()> {
+    // CI-built macOS bundles enable `bundled-eco` for the compiled renderer.
+    // Source-only Cargo installations keep their existing legacy behavior.
+    // Explicit --experimental-eco remains supported with adjacent sidecars.
+    let use_eco = eco_companion::use_eco(args.experimental_eco, args.legacy_renderer);
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
@@ -40,6 +46,14 @@ pub fn run(args: DocttyArgs) -> Result<()> {
             std::env::var("TERM").ok().as_deref(),
         ) {
             bail!("interactive mode requires Ghostty or Kitty");
+        }
+        if use_eco {
+            return eco_companion::run(
+                &config.path,
+                config.theme,
+                config.watch,
+                config.mermaid_mode,
+            );
         }
         let mut viewer = {
             let _span = info_span!("startup.create_viewer").entered();
