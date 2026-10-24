@@ -32,9 +32,19 @@ use self::{
 /// Read-only WebKit file access root for compiled Eco HTML, including
 /// referenced assets in parent directories and the generated HTML location.
 #[cfg(any(target_os = "macos", test))]
-#[must_use]
-pub fn compiled_eco_read_root(html: &str, base_dir: &Path, html_path: &Path) -> std::path::PathBuf {
-    paths::viewer_read_access_root(html, base_dir, html_path)
+pub fn compiled_eco_read_root(
+    html: &str,
+    base_dir: &Path,
+    html_path: &Path,
+) -> Result<std::path::PathBuf> {
+    let root = paths::viewer_read_access_root(html, base_dir, html_path);
+    if root == Path::new("/") {
+        bail!(
+            "refusing unrestricted WebKit filesystem read access; \
+             render the HTML and required images in an isolated temporary folder"
+        );
+    }
+    Ok(root)
 }
 
 #[cfg(target_os = "macos")]
