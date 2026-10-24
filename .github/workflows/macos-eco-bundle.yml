@@ -10,6 +10,11 @@ on:
       - 'native/macos/webkit_viewport.swift'
       - 'scripts/build_macos_webkit_helper.sh'
       - 'scripts/package_macos_eco.sh'
+      - 'scripts/package_macos_release.sh'
+      - 'packaging/doctty.rb.in'
+      - '.github/release-please-config.json'
+      - '.github/.release-please-manifest.json'
+      - '.github/workflows/release-please.yml'
       - 'src/app/**'
       - 'Cargo.toml'
       - '.github/workflows/ci.yml'
@@ -82,6 +87,58 @@ jobs:
           # Keep hidden compatibility options parseable in scripted use.
           printf '# Legacy flag\\n' | "$bundle/doctty" --legacy-renderer - > "$RUNNER_TEMP/headless-legacy.txt"
           grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
+
+      - name: Verify ad-hoc-signed release ZIP without publishing
+        id: release_zip
+        shell: bash
+        run: |
+          bash -n scripts/package_macos_release.sh
+          ruby -c packaging/doctty.rb.in
+          version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          archive="${{ steps.package.outputs.archive }}"
+          out="$RUNNER_TEMP/doctty-release-zip"
+          zip="$(bash scripts/package_macos_release.sh "$archive" "$version" "$out")"
+          test -s "$zip"
+          (cd "$out" && shasum -a 256 -c "$(basename "$zip").sha256")
+          extracted="$RUNNER_TEMP/unpacked-release-zip"
+          mkdir -p "$extracted"
+          ditto -x -k "$zip" "$extracted"
+          bundle="$extracted/doctty-macos-arm64"
+          (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
+          for executable in doctty doctty-eco doctty-webkit-swift; do
+            codesign --verify --strict "$bundle/$executable"
+            lipo "$bundle/$executable" -verify_arch arm64
+          done
+          bash -n "$bundle/doctty-cli"
+          test -x "$bundle/doctty-cli"
+          test -x "$bundle/doctty"
+          # Replicate Homebrew's binary symlink without changing PATH.
+          ln -s "$bundle/doctty-cli" "$RUNNER_TEMP/doctty-cask-symlink"
+          printf '# Cask symlink smoke\n' | "$RUNNER_TEMP/doctty-cask-symlink" - > "$RUNNER_TEMP/cask-headless.txt"
+          grep -q 'Cask symlink smoke' "$RUNNER_TEMP/cask-headless.txt"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "checksum=$zip.sha256" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Render and style-check the Homebrew Cask without publishing
+        uses: muleyuck/github-actions/actions/homebrew/render@v1
+        with:
+          template: packaging/doctty.rb.in
+          tap-path: Casks/doctty.rb
+          version: ${{ steps.release_zip.outputs.version }}
+          sha256: SHA256=${{ steps.release_zip.outputs.zip }}
+
+      # Downloadable 14-day pre-release artifact for Apple Silicon install
+      # checks. Never call this an official notarized or GitHub Release asset.
+      - name: Upload ad-hoc-signed ZIP release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctty-ad-hoc-signed-arm64-review
+          path: |
+            ${{ steps.release_zip.outputs.zip }}
+            ${{ steps.release_zip.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14
 
       # Preview only: no GitHub Release publication and no source compiler
       # dependency in the extracted application bundle.
