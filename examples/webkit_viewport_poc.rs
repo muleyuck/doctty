@@ -386,7 +386,7 @@ mod experiment {
             height: u32,
         ) -> Result<Self> {
             let helper =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("experiments/webkit_viewport.swift");
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("native/macos/webkit_viewport.swift");
             // The generated HTML must be readable by WebKit, but relative
             // Markdown images may live outside the source directory.
             // Reuse the legacy snapshot's asset-aware root calculation.
