@@ -14,7 +14,7 @@ done
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${DOCTTY_HYBRID_DIST_DIR:-$ROOT/target/dist}"
 ARCH="$(uname -m)"
-NAME="doctty-hybrid-macos-$ARCH"
+NAME="doctty-macos-$ARCH"
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 STAGING="$(mktemp -d "$OUT_DIR/.doctty-staging.XXXXXXXX")"
@@ -31,81 +31,33 @@ install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
 install -m 0755 "$ROOT/target/release/doctty-eco" "$BUNDLE/doctty-eco"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
 
-# The packaged launcher always chooses the adjacent, precompiled Swift helper.
-# No swift/swiftc/Cargo invocation happens on the user's Mac.
-cat > "$BUNDLE/doctty-hybrid" <<'LAUNCHER'
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ ! -x "$ROOT/doctty-webkit-swift" || ! -x "$ROOT/doctty-eco" ]]; then
-  echo "Incomplete doctty-hybrid bundle: expected helper and viewer alongside launcher" >&2
-  exit 2
-fi
-if [[ $# -eq 0 ]]; then
-  echo "usage: ./doctty-hybrid FILE.md" >&2
-  echo "  optional: ./doctty-hybrid --hybrid-image-prefetch FILE.md" >&2
-  exit 2
-fi
-if [[ "$1" != --* ]]; then
-  set -- --hybrid-image "$@"
-fi
-export DOCTTY_WEBKIT_HELPER_BIN="$ROOT/doctty-webkit-swift"
-exec "$ROOT/doctty-eco" "$@"
-LAUNCHER
-chmod 0755 "$BUNDLE/doctty-hybrid"
-
 cat > "$BUNDLE/README.txt" <<'DOC'
-doctty precompiled Eco bundle — macOS
+doctty — precompiled Apple Silicon Eco bundle
 ============================================
 
-This archive bundles:
-  doctty                regular CLI; Eco is macOS interactive default
-  doctty-hybrid         direct preview launcher (default Eco)
-  doctty-eco   compiled Rust Eco viewport companion
-  doctty-webkit-swift   optimized, compiled Swift/WebKit helper
-  SHA256SUMS            file integrity checks
+This archive contains:
+  doctty               CLI; Eco renderer is the macOS interactive default
+  doctty-eco           compiled Rust viewport companion
+  doctty-webkit-swift  compiled, optimized native Swift/WebKit helper
+  SHA256SUMS           checksums of the included files
 
-No Swift compiler, Cargo, Rust toolchain, or repository checkout is needed
-to run the bundled preview. macOS WebKit is supplied by the operating system.
-
-From an unpacked directory in Ghostty or Kitty:
+Keep all executables in the same directory. Open Markdown in Ghostty or Kitty:
   ./doctty /absolute/path/to/README.md
-      default Eco renderer using bundled optimized Swift (no compilation)
-  ./doctty --legacy-renderer /absolute/path/to/README.md
-      developer-only old snapshot path (requires Swift tooling)
-  ./doctty --experimental-eco --theme dark /absolute/path/to/README.md
-      opt-in Eco with dark GitHub theme (light and system also supported)
-  ./doctty --experimental-eco --watch /absolute/path/to/README.md
-      opt-in Eco with debounced source file reload and scroll progress preserved
-  Press 'g' to jump to the top, 'G' to the bottom, 'o' to open
-  the first Markdown link, and 'r' to manually reload. With --watch,
-  link targets also update automatically on file saves.
-  ./doctty-hybrid /absolute/path/to/README.md
-      direct Eco companion entry point
-  ./doctty-hybrid --hybrid-image-prefetch /absolute/path/to/README.md
-      previous eager prefetch comparison
 
-The default Eco viewer supports --watch, --theme light/dark/system,
---no-mermaid, and the documented navigation keys (j/k, g/G, PageUp/Down,
-r, o, q). Mermaid is enabled by default, using the same optional mmdc/npx
-integration as the previous renderer; --no-mermaid disables it.
-The normal pipe/headless mode remains unchanged. The legacy renderer
-is only available with an explicit developer --legacy-renderer opt-out.
+Supported CLI options include --theme light/dark/system, --watch,
+--no-mermaid, and the normal keyboard navigation (j/k, g/G,
+PageUp/PageDown, r, o, q). Standard piped output remains unchanged.
 
-Keep the bundled executables together. Do not rename the bundle contents.
-This is a non-notarized PREVIEW archive and is NOT a signed or
-notarized public release. Source-build fallback paths in the example are
-not intended to be used from this archive. Do not bypass Gatekeeper
-protections to run untrusted downloads.
+Neither a Rust toolchain nor the Swift compiler is needed to run this
+prebuilt bundle. macOS supplies WebKit at runtime.
 
-A future release must remove the compatibility Eco flag, reach feature
-parity with the production CLI, codesign/notarize the macOS distribution,
-and verify installation/upgrades.
+This CI preview has NOT been notarized by Apple; do not disable
+Gatekeeper or blindly bypass quarantine for unverified downloads.
 DOC
 
 (
   cd "$BUNDLE"
-  shasum -a 256 doctty doctty-hybrid doctty-eco doctty-webkit-swift README.txt > SHA256SUMS
+  shasum -a 256 doctty doctty-eco doctty-webkit-swift README.txt > SHA256SUMS
 )
 ARCHIVE="$OUT_DIR/$NAME.tar.gz"
 tar -C "$STAGING" -czf "$ARCHIVE" "$NAME"
