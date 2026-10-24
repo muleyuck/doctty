@@ -393,13 +393,13 @@ mod experiment {
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
             let read_root = if html.starts_with(source_dir) {
-                doctty::io::webkit_snapshot::compiled_eco_read_root(
-                    &html_source, source_dir, html,
-                )?
+                doctty::io::webkit_snapshot::compiled_eco_read_root(&html_source, source_dir, html)?
             } else {
                 // Out-of-tree generated HTML has only staged media inside its
                 // private temp folder; never combine this with source_dir.
-                html.parent().context("isolated HTML has no parent directory")?.to_path_buf()
+                html.parent()
+                    .context("isolated HTML has no parent directory")?
+                    .to_path_buf()
             };
             if read_root == Path::new("/") {
                 bail!("refusing unrestricted WebKit filesystem read access");
@@ -890,7 +890,10 @@ mod experiment {
             || metadata.len() > MAX_STAGED_ASSET_BYTES
             || total_bytes.saturating_add(metadata.len()) > MAX_STAGED_TOTAL_BYTES
         {
-            bail!("isolated WebKit image staging limit exceeded for {}", path.display());
+            bail!(
+                "isolated WebKit image staging limit exceeded for {}",
+                path.display()
+            );
         }
         let assets = stage.join("assets");
         fs::create_dir_all(&assets)?;
@@ -930,7 +933,11 @@ mod experiment {
             let value = &rest[..end];
             if marker == "src=\"" {
                 output.push_str(&stage_image_reference(
-                    value, source_dir, stage.path(), &mut copies, &mut total_bytes,
+                    value,
+                    source_dir,
+                    stage.path(),
+                    &mut copies,
+                    &mut total_bytes,
                 )?);
             } else {
                 let mut candidates = Vec::new();
@@ -940,7 +947,11 @@ mod experiment {
                     let url = pieces.next().unwrap_or_default();
                     let descriptor = pieces.next().unwrap_or_default().trim();
                     let staged = stage_image_reference(
-                        url, source_dir, stage.path(), &mut copies, &mut total_bytes,
+                        url,
+                        source_dir,
+                        stage.path(),
+                        &mut copies,
+                        &mut total_bytes,
                     )?;
                     candidates.push(if descriptor.is_empty() {
                         staged
@@ -984,15 +995,17 @@ mod experiment {
             .tempfile_in(root)
         {
             Ok(mut file) => {
-                let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
-                    &html, root, file.path(),
-                );
+                let read_root =
+                    doctty::io::webkit_snapshot::compiled_eco_read_root(&html, root, file.path());
                 if read_root.is_ok() {
                     file.write_all(html.as_bytes())?;
                     file.flush()?;
                     return Ok((
                         file.path().to_path_buf(),
-                        Some(HtmlLease { _file: Some(file), _isolated_assets: None }),
+                        Some(HtmlLease {
+                            _file: Some(file),
+                            _isolated_assets: None,
+                        }),
                         first_link,
                     ));
                 }
@@ -1013,7 +1026,10 @@ mod experiment {
         let (html_path, stage) = stage_isolated_html(&html, root)?;
         Ok((
             html_path,
-            Some(HtmlLease { _file: None, _isolated_assets: Some(stage) }),
+            Some(HtmlLease {
+                _file: None,
+                _isolated_assets: Some(stage),
+            }),
             first_link,
         ))
     }
