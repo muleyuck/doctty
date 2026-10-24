@@ -8,7 +8,7 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
-    experiment::run()
+    eco_viewer::run()
 }
 
 #[cfg(target_os = "macos")]
@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
 mod hybrid_image_preview;
 
 #[cfg(target_os = "macos")]
-mod experiment {
+mod eco_viewer {
     use std::{
         ffi::OsStr,
         fs,
@@ -765,7 +765,7 @@ mod experiment {
     }
 
     // The regular doctty CLI resolves --theme system and passes light/dark
-    // to the experimental companion. Standalone PoC launches retain the
+    // to the native companion. Direct companion launches retain the
     // historical light-theme default unless this variable is supplied.
     fn webkit_theme(value: Option<&OsStr>) -> Result<Theme> {
         match value {
@@ -2174,7 +2174,7 @@ mod experiment {
 
         let _session = TerminalSession::enter()?;
         let mut out = io::stdout().lock();
-        // Deliberately bypasses WebKit and the experimental viewport cache.
+        // Deliberately bypasses WebKit and the Eco viewport cache.
         upload_png(&mut out, FIRST_IMAGE_ID, &png)?;
         place_image(&mut out, FIRST_IMAGE_ID, columns, rows, 12, 12, 0)?;
         execute!(out, cursor::MoveTo(0, rows))?;
