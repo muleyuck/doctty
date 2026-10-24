@@ -21,13 +21,67 @@ pub enum DeleteCommand {
     Placement { image_id: u32, placement_id: u32 },
 }
 
+// The Kitty protocol limits Base64 payloads to 4096 bytes per APC command.
+// Large single-APC uploads can be discarded by terminal multiplexers.
+const MAX_GRAPHICS_CHUNK_BYTES: usize = 4096;
+
 #[must_use]
 pub fn encode_transmit_png(image_id: u32, png_bytes: &[u8]) -> String {
+    encode_png_with_control(&format!("a=t,t=d,f=100,i={image_id},q=2"), png_bytes)
+}
+
+/// Upload and place the page viewport in the same graphics transaction.
+/// This avoids a separate put command observing an image that has just been replaced.
+#[must_use]
+pub fn encode_transmit_and_place_png(
+    placement: &KittyImagePlacement,
+    png_bytes: &[u8],
+) -> String {
+    let control = format!(
+        "a=T,t=d,f=100,i={},p={},c={},r={},x={},y={},w={},h={},X={},Y={},z={},q=2,C=1",
+        placement.image_id,
+        placement.placement_id,
+        placement.columns,
+        placement.rows,
+        placement.source_x_px,
+        placement.source_y_px,
+        placement.source_width_px,
+        placement.source_height_px,
+        placement.cursor_x,
+        placement.cursor_y,
+        placement.z_index,
+    );
+    encode_png_with_control(&control, png_bytes)
+}
+
+fn encode_png_with_control(control: &str, png_bytes: &[u8]) -> String {
     let payload = STANDARD.encode(png_bytes);
-    format!(
-        "\u{1b}_Ga=t,t=d,f=100,i={},q=2;{}\u{1b}\\",
-        image_id, payload
-    )
+    if payload.is_empty() {
+        return format!("\u{1b}_G{control},m=0;\u{1b}\\");
+    }
+
+    let mut commands = String::with_capacity(
+        payload.len() + 64 * payload.len().div_ceil(MAX_GRAPHICS_CHUNK_BYTES),
+    );
+    for (index, start) in (0..payload.len())
+        .step_by(MAX_GRAPHICS_CHUNK_BYTES)
+        .enumerate()
+    {
+        let end = start
+            .saturating_add(MAX_GRAPHICS_CHUNK_BYTES)
+            .min(payload.len());
+        let more = u8::from(end < payload.len());
+
+        if index == 0 {
+            commands.push_str(&format!("\u{1b}_G{control},m={more};"));
+        } else {
+            commands.push_str(&format!("\u{1b}_Gm={more};"));
+        }
+        // STANDARD Base64 is ASCII, so its byte boundaries are valid UTF-8 boundaries.
+        commands.push_str(&payload[start..end]);
+        commands.push_str("\u{1b}\\");
+    }
+    commands
 }
 
 #[must_use]

@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::{
     io::kitty_graphics::{
-        DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_png,
+        DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_and_place_png,
+        encode_transmit_png,
     },
     render::text::{
         RenderedDocument, RenderedGraphic, RenderedGraphicContent, RenderedLine, RenderedLineKind,
@@ -44,8 +45,6 @@ pub(super) fn collect_page_viewport_commands(
     }
 
     if let Some(raster) = raster {
-        commands.push(encode_transmit_png(PAGE_IMAGE_ID, &raster.png_bytes));
-
         let placement = KittyImagePlacement {
             image_id: PAGE_IMAGE_ID,
             placement_id: PAGE_IMAGE_ID,
@@ -57,12 +56,14 @@ pub(super) fn collect_page_viewport_commands(
             source_height_px: raster.image_height_px,
             cursor_x: 0,
             cursor_y: 0,
-            z_index: -1,
+            // The page is entirely graphical; it does not need to sit below text.
+            // Keeping it at z=0 also avoids opaque pane backgrounds hiding z<0 images.
+            z_index: 0,
         };
         commands.push(format!(
             "{}{}",
             ansi_cursor_move(0, 0),
-            encode_place(&placement)
+            encode_transmit_and_place_png(&placement, &raster.png_bytes)
         ));
     }
 
