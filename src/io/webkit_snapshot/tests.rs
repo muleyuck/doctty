@@ -40,9 +40,10 @@ fn compiled_eco_read_root_refuses_cross_filesystem_root_access() {
     let base_dir = Path::new("/Users/example/project/docs");
     let generated_html = Path::new("/private/var/folders/tmp/.doctty-poc-test.html");
 
-    let error = super::compiled_eco_read_root(html, base_dir, generated_html)
-        .expect_err("out-of-tree HTML needs isolated staged assets");
-    assert!(error.to_string().contains("refusing unrestricted WebKit"));
+    assert!(
+        super::compiled_eco_read_root(html, base_dir, generated_html)
+            .is_err_and(|error| error.to_string().contains("refusing unrestricted WebKit"))
+    );
 }
 
 #[test]
