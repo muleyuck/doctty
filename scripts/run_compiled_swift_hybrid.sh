@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Opt-in optimized Swift WebKit helper for the existing hybrid preview.
-# The default experiment remains unchanged until visual/CPU parity is checked.
+# Build the optimized Swift/WebKit helper used by the precompiled Eco bundle.
+# Optional arguments still launch the developer-only hybrid example.
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -11,7 +11,7 @@ command -v swiftc >/dev/null || { echo "swiftc not found" >&2; exit 2; }
 command -v cargo >/dev/null || { echo "cargo not found" >&2; exit 2; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="$ROOT/experiments/webkit_viewport.swift"
+SOURCE="$ROOT/native/macos/webkit_viewport.swift"
 CACHE_DIR="${DOCTTY_SWIFT_HELPER_CACHE_DIR:-$ROOT/target/swift-webkit}"
 mkdir -p "$CACHE_DIR"
 BINARY="$CACHE_DIR/doctty-webkit-swift-$(uname -m)"

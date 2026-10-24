@@ -5,9 +5,9 @@ on:
       - 'examples/webkit_viewport_poc.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
-      - 'experiments/webkit_viewport.swift'
-      - 'experiments/run_compiled_swift_hybrid.sh'
-      - 'experiments/smoke_compiled_swift_webkit.py'
+      - 'native/macos/webkit_viewport.swift'
+      - 'scripts/run_compiled_swift_hybrid.sh'
+      - 'tests/smoke/smoke_compiled_swift_webkit.py'
       - '.github/workflows/webkit-poc.yml'
   push:
     branches:
@@ -23,12 +23,12 @@ jobs:
       - name: Check PoC example
         run: cargo test --example webkit_viewport_poc --locked
       - name: Typecheck Swift helper
-        run: swiftc -swift-version 5 -typecheck experiments/webkit_viewport.swift
+        run: swiftc -swift-version 5 -typecheck native/macos/webkit_viewport.swift
       - name: Compile cached optimized Swift helper
         run: |
-          bash experiments/run_compiled_swift_hybrid.sh --build-only > "$RUNNER_TEMP/doctty-swift-helper-path"
+          bash scripts/run_compiled_swift_hybrid.sh --build-only > "$RUNNER_TEMP/doctty-swift-helper-path"
       - name: Smoke optimized Swift helper PNG and protocol
         run: |
-          python3 -m py_compile experiments/smoke_compiled_swift_webkit.py
-          python3 experiments/smoke_compiled_swift_webkit.py "$(cat "$RUNNER_TEMP/doctty-swift-helper-path")"
+          python3 -m py_compile tests/smoke/smoke_compiled_swift_webkit.py
+          python3 tests/smoke/smoke_compiled_swift_webkit.py "$(cat "$RUNNER_TEMP/doctty-swift-helper-path")"
 

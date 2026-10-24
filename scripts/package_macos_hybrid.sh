@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a self-contained experimental Ghostty/Kitty hybrid preview archive.
+# Assemble the precompiled macOS Eco bundle used by CI and release packaging.
 # Release signing/notarization and production integration are separate.
 set -euo pipefail
 
@@ -23,7 +23,7 @@ BUNDLE="$STAGING/$NAME"
 mkdir -p "$BUNDLE"
 
 # Reuse the existing optimized helper build and source/toolchain cache.
-SWIFT_BIN="$(bash "$ROOT/experiments/run_compiled_swift_hybrid.sh" --build-only)"
+SWIFT_BIN="$(bash "$ROOT/scripts/run_compiled_swift_hybrid.sh" --build-only)"
 # Distinguish the complete CI bundle from a source-only Cargo install.
 # The feature is enabled only when both native companions are shipped.
 cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty --example webkit_viewport_poc

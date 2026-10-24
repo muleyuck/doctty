@@ -7,16 +7,16 @@ on:
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
       - 'examples/hybrid_image_preview/**'
-      - 'experiments/webkit_viewport.swift'
-      - 'experiments/run_compiled_swift_hybrid.sh'
-      - 'experiments/package_macos_hybrid.sh'
+      - 'native/macos/webkit_viewport.swift'
+      - 'scripts/run_compiled_swift_hybrid.sh'
+      - 'scripts/package_macos_hybrid.sh'
       - 'src/app/**'
       - 'Cargo.toml'
       - '.github/workflows/ci.yml'
       - 'src/cli/args.rs'
       - 'tests/unit/cli_args.rs'
-      - 'experiments/smoke_compiled_swift_webkit.py'
-      - 'experiments/smoke_eco_default_cli.py'
+      - 'tests/smoke/smoke_compiled_swift_webkit.py'
+      - 'tests/smoke/smoke_eco_default_cli.py'
       - '.github/workflows/macos-hybrid-bundle.yml'
   workflow_dispatch:
 
@@ -42,7 +42,7 @@ jobs:
         id: package
         shell: bash
         run: |
-          archive="$(bash experiments/package_macos_hybrid.sh)"
+          archive="$(bash scripts/package_macos_hybrid.sh)"
           test -s "$archive"
           test -s "$archive.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
@@ -71,10 +71,10 @@ jobs:
           done
           bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
-          python3 experiments/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
+          python3 tests/smoke/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
           # Exercise the real compiled doctty CLI with pseudo-terminal I/O
           # and stub sidecars, verifying default routing without WebKit GUI.
-          python3 experiments/smoke_eco_default_cli.py "$bundle"
+          python3 tests/smoke/smoke_eco_default_cli.py "$bundle"
           # Normal default CLI and --no-mermaid keep the headless
           # noninteractive text contract; no Swift/Cargo execution.
           printf '# Bundled cli smoke\\n' | "$bundle/doctty" - > "$RUNNER_TEMP/headless-default.txt"
