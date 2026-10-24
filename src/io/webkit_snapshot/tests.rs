@@ -29,18 +29,29 @@ fn compiled_eco_read_root_includes_parent_directory_assets() {
     let base_dir = Path::new("/Users/example/project/docs");
     let generated_html = Path::new("/Users/example/project/docs/.doctty-poc-test.html");
 
-    let root = super::compiled_eco_read_root(html, base_dir, generated_html);
+    let root = super::compiled_eco_read_root(html, base_dir, generated_html)
+        .unwrap_or_else(|error| panic!("safe project asset root expected: {error}"));
     assert_eq!(root, Path::new("/Users/example/project"));
 }
 
 #[test]
-fn compiled_eco_read_root_includes_fallback_html_outside_document_directory() {
+fn compiled_eco_read_root_refuses_cross_filesystem_root_access() {
     let html = r#"<article><img src="images/screenshot.png"></article>"#;
     let base_dir = Path::new("/Users/example/project/docs");
     let generated_html = Path::new("/private/var/folders/tmp/.doctty-poc-test.html");
 
-    let root = super::compiled_eco_read_root(html, base_dir, generated_html);
-    assert_eq!(root, Path::new("/"));
+    let error = super::compiled_eco_read_root(html, base_dir, generated_html)
+        .expect_err("out-of-tree HTML needs isolated staged assets");
+    assert!(error.to_string().contains("refusing unrestricted WebKit"));
+}
+
+#[test]
+fn compiled_eco_read_root_refuses_absolute_asset_outside_document_tree() {
+    let html = r#"<article><img src="/private/tmp/external.png"></article>"#;
+    let base_dir = Path::new("/Users/example/project/docs");
+    let generated_html = base_dir.join(".doctty-poc-test.html");
+
+    assert!(super::compiled_eco_read_root(html, base_dir, &generated_html).is_err());
 }
 
 #[test]
