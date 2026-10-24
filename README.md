@@ -34,14 +34,14 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 ## Quick start
 
 **macOS prebuilt Eco preview (draft, not an official release)**: the
-`macOS prebuilt Eco preview bundle` GitHub Actions workflow produces
+`macOS Eco bundle validation` GitHub Actions workflow produces
 an Apple Silicon (arm64) artifact named
-`doctty-hybrid-prebuilt-macOS-arm64`, containing precompiled
+`doctty-eco-prebuilt-macOS-arm64`, containing precompiled
 `doctty`, its Rust viewport companion and the optimized Swift/WebKit
 helper. Extract the inner `.tar.gz` and run in Ghostty or Kitty:
 
 ```bash
-./doctty-hybrid-macos-arm64/doctty README.md
+./doctty-macos-arm64/doctty README.md
 ```
 
 The initial preview/release target is **Apple Silicon only**. Intel Mac
@@ -63,8 +63,8 @@ cargo install --path . --locked
 Source-only installs do **not** include the compiled Swift and Rust Eco
 companions. They preserve the historical interactive WebKit renderer by
 default: `doctty README.md` still works with the Swift tooling normally
-required for a source build. For an explicit Eco experiment, use
-`--experimental-eco` only after installing both matching companions.
+required for a source build. The hidden `--experimental-eco` flag remains solely as a compatibility alias
+for developers who already installed both matching companions.
 
 CI-built macOS bundles enable the Cargo `bundled-eco` feature and include
 the two companions, so `doctty README.md` uses Eco automatically without

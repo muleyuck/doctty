@@ -1,15 +1,15 @@
-name: macOS prebuilt Eco preview bundle
+name: macOS Eco bundle validation
 
 on:
   pull_request:
     paths:
-      - 'examples/webkit_viewport_poc.rs'
+      - 'src/bin/doctty-eco.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
-      - 'examples/hybrid_image_preview/**'
+      - 'src/eco/**'
       - 'native/macos/webkit_viewport.swift'
-      - 'scripts/run_compiled_swift_hybrid.sh'
-      - 'scripts/package_macos_hybrid.sh'
+      - 'scripts/build_macos_webkit_helper.sh'
+      - 'scripts/package_macos_eco.sh'
       - 'src/app/**'
       - 'Cargo.toml'
       - '.github/workflows/ci.yml'
@@ -17,7 +17,7 @@ on:
       - 'tests/unit/cli_args.rs'
       - 'tests/smoke/smoke_compiled_swift_webkit.py'
       - 'tests/smoke/smoke_eco_default_cli.py'
-      - '.github/workflows/macos-hybrid-bundle.yml'
+      - '.github/workflows/macos-eco-bundle.yml'
   workflow_dispatch:
 
 permissions:
@@ -38,11 +38,11 @@ jobs:
           test "$(uname -m)" = "arm64"
           cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
 
-      - name: Build optimized Swift and Rust Eco preview bundle
+      - name: Build precompiled Rust and Swift Eco bundle
         id: package
         shell: bash
         run: |
-          archive="$(bash scripts/package_macos_hybrid.sh)"
+          archive="$(bash scripts/package_macos_eco.sh)"
           test -s "$archive"
           test -s "$archive.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
@@ -61,15 +61,13 @@ jobs:
           tar -xzf "$archive" -C "$dir"
           bundle="$dir/$(basename "$archive" .tar.gz)"
           test -x "$bundle/doctty"
-          test -x "$bundle/doctty-hybrid"
           test -x "$bundle/doctty-webkit-swift"
-          test -x "$bundle/webkit_viewport_poc"
+          test -x "$bundle/doctty-eco"
           # Check all three native binaries are built for this runner.
           # A mislabeled cross-architecture archive must fail the workflow.
-          for executable in doctty webkit_viewport_poc doctty-webkit-swift; do
+          for executable in doctty doctty-eco doctty-webkit-swift; do
             lipo "$bundle/$executable" -verify_arch arm64
           done
-          bash -n "$bundle/doctty-hybrid"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
           python3 tests/smoke/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
           # Exercise the real compiled doctty CLI with pseudo-terminal I/O
@@ -90,7 +88,7 @@ jobs:
       - name: Upload prebuilt preview archive
         uses: actions/upload-artifact@v4
         with:
-          name: doctty-hybrid-prebuilt-${{ runner.os }}-arm64
+          name: doctty-eco-prebuilt-${{ runner.os }}-arm64
           path: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.checksum }}

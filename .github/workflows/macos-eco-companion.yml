@@ -1,17 +1,15 @@
-name: WebKit PoC
+name: macOS Eco companion
 on:
   pull_request:
     paths:
-      - 'examples/webkit_viewport_poc.rs'
+      - 'src/bin/doctty-eco.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
+      - 'src/eco/**'
       - 'native/macos/webkit_viewport.swift'
-      - 'scripts/run_compiled_swift_hybrid.sh'
+      - 'scripts/build_macos_webkit_helper.sh'
       - 'tests/smoke/smoke_compiled_swift_webkit.py'
-      - '.github/workflows/webkit-poc.yml'
-  push:
-    branches:
-      - experiment/persistent-webkit-viewport
+      - '.github/workflows/macos-eco-companion.yml'
 permissions:
   contents: read
 jobs:
@@ -20,13 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
-      - name: Check PoC example
-        run: cargo test --example webkit_viewport_poc --locked
+      - name: Test compiled Eco companion
+        run: cargo test --bin doctty-eco --locked --features bundled-eco
       - name: Typecheck Swift helper
         run: swiftc -swift-version 5 -typecheck native/macos/webkit_viewport.swift
       - name: Compile cached optimized Swift helper
         run: |
-          bash scripts/run_compiled_swift_hybrid.sh --build-only > "$RUNNER_TEMP/doctty-swift-helper-path"
+          bash scripts/build_macos_webkit_helper.sh --build-only > "$RUNNER_TEMP/doctty-swift-helper-path"
       - name: Smoke optimized Swift helper PNG and protocol
         run: |
           python3 -m py_compile tests/smoke/smoke_compiled_swift_webkit.py

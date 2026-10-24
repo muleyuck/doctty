@@ -1,22 +1,22 @@
-// Feasibility experiment; not part of the production viewer.
-// Run inside Ghostty and then in a Herdr pane:
-// cargo run --release --example webkit_viewport_poc -- README.md
+// Compiled Rust Eco viewport companion for interactive macOS terminals.
+// Distributed alongside doctty and the native Swift/WebKit helper.
+// Developer invocation: cargo run --release --bin doctty-eco -- README.md
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("This WebKit experiment requires macOS.");
+    eprintln!("The doctty Eco viewport requires macOS.");
 }
 
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
-    experiment::run()
+    eco_viewer::run()
 }
 
 #[cfg(target_os = "macos")]
-#[path = "hybrid_image_preview/mod.rs"]
+#[path = "../eco/hybrid_image_preview.rs"]
 mod hybrid_image_preview;
 
 #[cfg(target_os = "macos")]
-mod experiment {
+mod eco_viewer {
     use std::{
         ffi::OsStr,
         fs,
@@ -765,7 +765,7 @@ mod experiment {
     }
 
     // The regular doctty CLI resolves --theme system and passes light/dark
-    // to the experimental companion. Standalone PoC launches retain the
+    // to the native companion. Direct companion launches retain the
     // historical light-theme default unless this variable is supplied.
     fn webkit_theme(value: Option<&OsStr>) -> Result<Theme> {
         match value {
@@ -2174,7 +2174,7 @@ mod experiment {
 
         let _session = TerminalSession::enter()?;
         let mut out = io::stdout().lock();
-        // Deliberately bypasses WebKit and the experimental viewport cache.
+        // Deliberately bypasses WebKit and the Eco viewport cache.
         upload_png(&mut out, FIRST_IMAGE_ID, &png)?;
         place_image(&mut out, FIRST_IMAGE_ID, columns, rows, 12, 12, 0)?;
         execute!(out, cursor::MoveTo(0, rows))?;

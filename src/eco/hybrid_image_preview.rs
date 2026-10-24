@@ -1,4 +1,4 @@
-//! Low-resolution, non-WebKit preview images for the hybrid experiment.
+//! Low-resolution, non-WebKit preview images for the Eco viewport.
 //!
 //! A dedicated worker turns a bounded DOM outline into small SVG/PNG tiles.
 //! Kitty retains at most a few decoded tiles; scrolling only re-places already
