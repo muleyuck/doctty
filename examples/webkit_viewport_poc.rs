@@ -395,7 +395,7 @@ mod experiment {
             let read_root = if html.starts_with(source_dir) {
                 doctty::io::webkit_snapshot::compiled_eco_read_root(
                     &html_source, source_dir, html,
-                )
+                )?
             } else {
                 // Out-of-tree generated HTML has only staged media inside its
                 // private temp folder; never combine this with source_dir.
@@ -987,7 +987,7 @@ mod experiment {
                 let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
                     &html, root, file.path(),
                 );
-                if read_root != Path::new("/") {
+                if read_root.is_ok() {
                     file.write_all(html.as_bytes())?;
                     file.flush()?;
                     return Ok((
