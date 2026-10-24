@@ -392,8 +392,18 @@ mod experiment {
             // Reuse the legacy snapshot's asset-aware root calculation.
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
-            let read_root =
-                doctty::io::webkit_snapshot::compiled_eco_read_root(&html_source, source_dir, html);
+            let read_root = if html.starts_with(source_dir) {
+                doctty::io::webkit_snapshot::compiled_eco_read_root(
+                    &html_source, source_dir, html,
+                )
+            } else {
+                // Out-of-tree generated HTML has only staged media inside its
+                // private temp folder; never combine this with source_dir.
+                html.parent().context("isolated HTML has no parent directory")?.to_path_buf()
+            };
+            if read_root == Path::new("/") {
+                bail!("refusing unrestricted WebKit filesystem read access");
+            }
             // Compare the interpreter with a compiled executable without
             // changing the image production or cache algorithm.
             let mut command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
@@ -778,10 +788,179 @@ mod experiment {
         }
     }
 
+    // The WebKit helper may read every file below allowingReadAccessTo.
+    // Never grant the filesystem root just to render assets referenced from
+    // separate directories. Isolate only the affected documents; the normal
+    // writable-folder path keeps its zero-copy image behavior.
+    const MAX_STAGED_ASSETS: usize = 256;
+    const MAX_STAGED_ASSET_BYTES: u64 = 32 * 1024 * 1024;
+    const MAX_STAGED_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
+
+    struct HtmlLease {
+        _file: Option<tempfile::NamedTempFile>,
+        _isolated_assets: Option<tempfile::TempDir>,
+    }
+
+    fn asset_file_url(path: &Path) -> String {
+        use std::fmt::Write as _;
+        let mut result = String::from("file://");
+        for byte in path.to_string_lossy().bytes() {
+            if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+                result.push(char::from(byte));
+            } else {
+                let _ = write!(result, "%{byte:02X}");
+            }
+        }
+        result
+    }
+
+    fn decoded_local_asset(source_dir: &Path, reference: &str) -> Option<PathBuf> {
+        if reference.is_empty()
+            || reference.starts_with('#')
+            || reference.starts_with("//")
+            || reference.starts_with("data:")
+            || reference.starts_with("http:")
+            || reference.starts_with("https:")
+        {
+            return None;
+        }
+        let raw = if let Some(path) = reference.strip_prefix("file://") {
+            path
+        } else if reference.contains(':') {
+            // No custom URI schemes or Windows drive names in image sources.
+            return None;
+        } else {
+            reference
+        };
+        let raw = raw.split(['?', '#']).next()?;
+        let mut decoded = Vec::with_capacity(raw.len());
+        let bytes = raw.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                if let (Some(a), Some(b)) = (
+                    char::from(bytes[i + 1]).to_digit(16),
+                    char::from(bytes[i + 2]).to_digit(16),
+                ) {
+                    decoded.push(u8::try_from(a * 16 + b).ok()?);
+                    i += 3;
+                    continue;
+                }
+            }
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+        let decoded = String::from_utf8(decoded).ok()?.replace("&amp;", "&");
+        let path = Path::new(&decoded);
+        Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            source_dir.join(path)
+        })
+    }
+
+    fn stage_image_reference(
+        reference: &str,
+        source_dir: &Path,
+        stage: &Path,
+        copies: &mut Vec<(String, String)>,
+        total_bytes: &mut u64,
+    ) -> Result<String> {
+        if let Some((_, uri)) = copies.iter().find(|(original, _)| original == reference) {
+            return Ok(uri.clone());
+        }
+        let Some(path) = decoded_local_asset(source_dir, reference) else {
+            return Ok(reference.to_string());
+        };
+        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+            return Ok(reference.to_string());
+        };
+        let extension = extension.to_ascii_lowercase();
+        if !matches!(
+            extension.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif"
+        ) {
+            return Ok(reference.to_string());
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => return Ok(reference.to_string()), // Preserve missing-image placeholders.
+        };
+        if copies.len() >= MAX_STAGED_ASSETS
+            || metadata.len() > MAX_STAGED_ASSET_BYTES
+            || total_bytes.saturating_add(metadata.len()) > MAX_STAGED_TOTAL_BYTES
+        {
+            bail!("isolated WebKit image staging limit exceeded for {}", path.display());
+        }
+        let assets = stage.join("assets");
+        fs::create_dir_all(&assets)?;
+        let destination = assets.join(format!("image-{}.{}", copies.len(), extension));
+        fs::copy(&path, &destination)
+            .with_context(|| format!("unable to stage WebKit image {}", path.display()))?;
+        *total_bytes += metadata.len();
+        let uri = asset_file_url(&destination);
+        copies.push((reference.to_string(), uri.clone()));
+        Ok(uri)
+    }
+
+    fn stage_isolated_html(html: &str, source_dir: &Path) -> Result<(PathBuf, tempfile::TempDir)> {
+        let stage = tempfile::tempdir().context("unable to create isolated WebKit workspace")?;
+        let mut copies = Vec::new();
+        let mut total_bytes = 0;
+        let mut output = String::with_capacity(html.len());
+        let mut rest = html;
+        // Only the media URL attributes generated by the sanitizer are staged.
+        // External resources stay external. Original document paths never gain
+        // WebKit read permission just because the HTML lives in /tmp.
+        loop {
+            let next = ["src=\"", "srcset=\""]
+                .into_iter()
+                .filter_map(|marker| rest.find(marker).map(|index| (index, marker)))
+                .min_by_key(|(index, _)| *index);
+            let Some((index, marker)) = next else {
+                output.push_str(rest);
+                break;
+            };
+            output.push_str(&rest[..index + marker.len()]);
+            rest = &rest[index + marker.len()..];
+            let Some(end) = rest.find('"') else {
+                output.push_str(rest);
+                break;
+            };
+            let value = &rest[..end];
+            if marker == "src=\"" {
+                output.push_str(&stage_image_reference(
+                    value, source_dir, stage.path(), &mut copies, &mut total_bytes,
+                )?);
+            } else {
+                let mut candidates = Vec::new();
+                for candidate in value.split(',') {
+                    let trimmed = candidate.trim();
+                    let mut pieces = trimmed.splitn(2, char::is_whitespace);
+                    let url = pieces.next().unwrap_or_default();
+                    let descriptor = pieces.next().unwrap_or_default().trim();
+                    let staged = stage_image_reference(
+                        url, source_dir, stage.path(), &mut copies, &mut total_bytes,
+                    )?;
+                    candidates.push(if descriptor.is_empty() {
+                        staged
+                    } else {
+                        format!("{staged} {descriptor}")
+                    });
+                }
+                output.push_str(&candidates.join(", "));
+            }
+            rest = &rest[end..];
+        }
+        let html_path = stage.path().join("document.html");
+        fs::write(&html_path, output).context("unable to write isolated WebKit HTML")?;
+        Ok((html_path, stage))
+    }
+
     fn html_input(
         path: &Path,
         theme: Theme,
-    ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, Option<String>)> {
+    ) -> Result<(PathBuf, Option<HtmlLease>, Option<String>)> {
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
@@ -793,41 +972,50 @@ mod experiment {
         let mermaid_mode =
             webkit_mermaid_mode(std::env::var_os("DOCTTY_WEBKIT_MERMAID").as_deref())?;
         let html = build_github_html(&source, root, theme, mermaid_mode)?;
-        // Match production 'o': open the first link from Markdown document
-        // metadata. Keep this parse off the input/scroll hot path.
         let first_link = parse_document(path.to_path_buf(), &source)?
             .meta
             .links
             .into_iter()
             .next();
-        let mut file = match tempfile::Builder::new()
+
+        match tempfile::Builder::new()
             .prefix(".doctty-poc-")
             .suffix(".html")
             .tempfile_in(root)
         {
-            Ok(file) => file,
+            Ok(mut file) => {
+                let read_root = doctty::io::webkit_snapshot::compiled_eco_read_root(
+                    &html, root, file.path(),
+                );
+                if read_root != Path::new("/") {
+                    file.write_all(html.as_bytes())?;
+                    file.flush()?;
+                    return Ok((
+                        file.path().to_path_buf(),
+                        Some(HtmlLease { _file: Some(file), _isolated_assets: None }),
+                        first_link,
+                    ));
+                }
+                // Even a writable document may reference an image from an
+                // unrelated filesystem root. Never hand "/" to WebKit.
+                drop(file);
+            }
             Err(error)
                 if matches!(
                     error.kind(),
                     io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
-                ) =>
-            {
-                // Read-only docs are common in package managers and system
-                // folders. The shared read-root calculator below grants
-                // access to this temporary HTML and referenced local assets.
-                tempfile::Builder::new()
-                    .prefix(".doctty-poc-")
-                    .suffix(".html")
-                    .tempfile()
-                    .context("unable to create fallback temporary WebKit HTML")?
-            }
+                ) => {}
             Err(error) => {
                 return Err(error).context("unable to create temporary HTML alongside Markdown");
             }
-        };
-        file.write_all(html.as_bytes())?;
-        file.flush()?;
-        Ok((file.path().to_path_buf(), Some(file), first_link))
+        }
+
+        let (html_path, stage) = stage_isolated_html(&html, root)?;
+        Ok((
+            html_path,
+            Some(HtmlLease { _file: None, _isolated_assets: Some(stage) }),
+            first_link,
+        ))
     }
 
     // Open links only on explicit 'o' presses. This intentionally reuses the
@@ -2348,10 +2536,33 @@ mod experiment {
             assert!(!html.starts_with(&documents));
 
             let content = fs::read_to_string(&html)?;
-            let read_root =
-                doctty::io::webkit_snapshot::compiled_eco_read_root(&content, &documents, &html);
-            assert!(markdown.starts_with(&read_root));
-            assert!(html.starts_with(&read_root));
+            let read_root = html.parent().context("staged HTML has no parent")?;
+            assert_ne!(read_root, Path::new("/"));
+            assert!(html.starts_with(read_root));
+            assert!(!markdown.starts_with(read_root));
+            assert!(content.contains("Read-only docs"));
+            Ok(())
+        }
+
+        #[test]
+        fn isolated_html_copies_only_media_and_preserves_link_origin() -> Result<()> {
+            let source = tempfile::tempdir()?;
+            let docs = source.path().join("docs");
+            let assets = source.path().join("assets");
+            fs::create_dir(&docs)?;
+            fs::create_dir(&assets)?;
+            fs::write(assets.join("picture with spaces.png"), b"test image")?;
+            let input = r#"<base href="file:///original/docs/">
+                <img src="../assets/picture%20with%20spaces.png">
+                <picture><source srcset="../assets/picture%20with%20spaces.png 1x"></picture>
+                <a href="../other.md">Link</a>"#;
+            let (html, stage) = stage_isolated_html(input, &docs)?;
+            let staged = fs::read_to_string(html)?;
+            let expected = asset_file_url(&stage.path().join("assets/image-0.png"));
+            assert_eq!(staged.matches(&expected).count(), 2);
+            assert!(staged.contains("href=\"../other.md\""));
+            assert!(stage.path().join("assets/image-0.png").is_file());
+            assert!(!stage.path().join("assets/image-1.png").exists());
             Ok(())
         }
 
