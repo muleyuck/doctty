@@ -45,4 +45,4 @@ if [[ "$#" -eq 0 ]]; then
   set -- --hybrid-image "$ROOT/README.md"
 fi
 export DOCTTY_WEBKIT_HELPER_BIN="$BINARY"
-exec cargo run --release --manifest-path "$ROOT/Cargo.toml" --bin doctty-eco -- "$@"
+exec cargo run --release --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty-eco -- "$@"
