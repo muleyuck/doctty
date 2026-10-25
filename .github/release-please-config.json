@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "skip-github-release": false,
+  "include-component-in-tag": false,
+  "plugins": [
+    "cargo-workspace"
+  ],
+  "packages": {
+    ".": {
+      "changelog-sections": [
+        {
+          "type": "feat",
+          "section": "Features"
+        },
+        {
+          "type": "fix",
+          "section": "Bug Fixes"
+        },
+        {
+          "type": "perf",
+          "section": "Performance Improvements"
+        },
+        {
+          "type": "revert",
+          "section": "Reverts"
+        }
+      ]
+    }
+  }
+}

@@ -50,9 +50,28 @@ arm64 architecture of all three executables. These are macOS 15 CI
 builds; support on earlier macOS versions has not been established.
 
 No Swift compiler, Rust toolchain or repository checkout is needed for this
-prebuilt Eco preview. **This is not yet a signed or notarized release**;
-do not bypass macOS Gatekeeper protections for untrusted downloads.
-Versioned GitHub Releases and Homebrew distribution are planned.
+prebuilt Eco preview.
+
+**Planned turnray-style distribution (after release review):** CI will also
+produce a versioned Apple Silicon ZIP containing ad-hoc-signed native binaries,
+upload it with a SHA256 checksum to GitHub Releases, and optionally update the
+`muleyuck/tap` Homebrew Cask. The intended commands will be:
+
+```bash
+brew install --cask muleyuck/tap/doctty
+doctty README.md
+```
+
+The ZIP is **not Apple-notarized**. macOS Gatekeeper may initially block
+`doctty` and may independently block `doctty-eco` or `doctty-webkit-swift`.
+On a verified download, use **System Settings → Privacy & Security → Open Anyway**
+for each blocked executable as needed, then retry `doctty`. An initial
+`WebKit helper closed its output` error may mean the Swift helper was still
+blocked; it does **not** prove Gatekeeper is the cause of every such error.
+Only consider per-app approval after confirming the official release source
+and SHA256 checksum. Do **not** disable Gatekeeper globally or blindly remove
+quarantine. Until a real release is published, use the CI preview artifact
+above. Apple Developer Program enrollment is deferred.
 
 **Building from source (developer workflow)** requires Rust 1.92+:
 
