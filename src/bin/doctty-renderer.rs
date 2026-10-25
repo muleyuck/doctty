@@ -389,7 +389,7 @@ mod renderer_viewer {
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("native/macos/webkit_viewport.swift");
             // The generated HTML must be readable by WebKit, but relative
             // Markdown images may live outside the source directory.
-            // Reuse the legacy snapshot's asset-aware root calculation.
+            // Reuse the snapshot pipeline's asset-aware root calculation.
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
             let read_root = if html.starts_with(source_dir) {
@@ -2203,19 +2203,15 @@ mod renderer_viewer {
         Ok(())
     }
 
-    // is the default for the hybrid image viewer. Preserve the explicit
-    // --hybrid-image-removed alias for existing scripts, and retain the old
-    // speculative snapshot mode as --hybrid-image-prefetch for A/B testing.
-    // Other modes such as --hybrid and --tiled are unchanged.
+    // The public CLI selects only the low-CPU capture-after-settle pipeline.
     fn hybrid_image_flags(first: &OsStr) -> (bool, bool) {
-        let eco = first == "--hybrid-image" || first == "--hybrid-image-removed";
-        let prefetch = first == "--hybrid-image-prefetch";
-        (eco || prefetch, eco)
+        let standard = first == "--hybrid-image";
+        (standard, standard)
     }
 
     pub fn run() -> Result<()> {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
-            bail!("run this interactive experiment in Ghostty or Herdr");
+            bail!("interactive mode requires Ghostty or Kitty");
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
@@ -2485,8 +2481,14 @@ mod renderer_viewer {
                 hybrid_image_flags(OsStr::new("--hybrid-image")),
                 (true, true)
             );
-            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid-image-removed")), (false, false));
-            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")), (false, false));
+            assert_eq!(
+                hybrid_image_flags(OsStr::new("--hybrid-image-eco")),
+                (false, false)
+            );
+            assert_eq!(
+                hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")),
+                (false, false)
+            );
             assert_eq!(hybrid_image_flags(OsStr::new("--hybrid")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("--tiled")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("README.md")), (false, false));

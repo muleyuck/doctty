@@ -51,6 +51,19 @@ jobs:
           test "$(uname -m)" = "arm64"
           cargo test --locked --lib companions_must_reside_beside_the_cli_even_in_paths_with_spaces
 
+      - name: Install source package and validate compiled renderer parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/doctty-source-install"
+          cargo install --path . --locked --root "$install_root" --force
+          test -x "$install_root/bin/doctty"
+          test -x "$install_root/bin/doctty-renderer"
+          # The source install has no adjacent Swift helper: doctty extracts
+          # its build-time-compiled, embedded helper instead of running swift.
+          test ! -e "$install_root/bin/doctty-webkit-swift"
+          python3 tests/smoke/smoke_renderer_default_cli.py "$install_root/bin" --source-install
+
       - name: Build precompiled Rust and Swift renderer bundle
         id: package
         shell: bash

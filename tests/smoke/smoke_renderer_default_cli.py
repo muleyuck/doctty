@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Verify macOS packaged doctty chooses native without executing Swift.
 
-The compiled CLI runs inside a pseudo-terminal, but the two companion files
-are test stubs. This checks argument/environment forwarding and the
-fail-closed missing-helper contract without running WebKit or a real browser.
+The compiled CLI runs inside a pseudo-terminal with a renderer stub.
+This checks argument forwarding, missing-renderer failure, and the compiled
+Swift helper extraction used for source installs, without opening WebKit.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
         os.close(master)
 
 
-def check(bundle: Path) -> None:
+def check(bundle: Path, source_install: bool = False) -> None:
     with tempfile.TemporaryDirectory(prefix="doctty compiled renderer smoke ") as root:
         test_dir = Path(root) / "installed bundle with spaces"
         test_dir.mkdir()
@@ -75,8 +75,9 @@ def check(bundle: Path) -> None:
         )
         viewer.chmod(0o755)
         helper = test_dir / "doctty-webkit-swift"
-        helper.write_bytes(b"CI-only native helper placeholder\n")
-        helper.chmod(0o755)
+        if not source_install:
+            helper.write_bytes(b"CI-only native helper placeholder\n")
+            helper.chmod(0o755)
 
         cases = [
             ([], ["--hybrid-image", str(markdown)], "enabled", None),
@@ -92,18 +93,24 @@ def check(bundle: Path) -> None:
                 record.unlink()
             exit_code = run_interactive(doctty, markdown, flags, record)
             if exit_code != 0:
-                raise AssertionError(f"doctty failed to launch default Eco: {exit_code}")
+                raise AssertionError(f"doctty failed to launch the standard renderer: {exit_code}")
             data = json.loads(record.read_text(encoding="utf-8"))
             assert data["args"] == expected_args, data
-            assert data["swift"] == str(helper), data
+            if source_install:
+                extracted = Path(data["swift"])
+                assert extracted.is_file() and os.access(extracted, os.X_OK), data
+                assert "Library/Caches/doctty/native" in str(extracted), data
+                assert extracted != helper, data
+            else:
+                assert data["swift"] == str(helper), data
             assert data["mermaid"] == expected_mermaid, data
             if expected_theme is not None:
                 assert data["theme"] == expected_theme, data
 
-    print("OK: normal interactive doctty uses adjacent compiled companions")
+    print("OK: interactive doctty uses the compiled renderer and Swift helper")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: smoke_renderer_default_cli.py /path/to/unpacked/bundle")
-    check(Path(sys.argv[1]))
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--source-install"):
+        raise SystemExit("usage: smoke_renderer_default_cli.py /path/to/bundle [--source-install]")
+    check(Path(sys.argv[1]), source_install=len(sys.argv) == 3)

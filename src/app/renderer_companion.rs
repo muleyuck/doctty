@@ -30,7 +30,7 @@ fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
     let (viewer, swift_helper) = companion_paths(main_executable);
     if !viewer.is_file() {
         bail!(
-            "missing doctty-renderer next to {}. Install the complete doctty              package with cargo install --path . --locked or download the ZIP",
+            "missing doctty-renderer next to {}. Install both Rust executables with cargo install --path . --locked or use the complete ZIP",
             main_executable.display()
         );
     }
@@ -135,7 +135,7 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     #[test]
-    fn compiled_eco_requires_macos() {
+    fn compiled_renderer_requires_macos() {
         assert!(
             run(
                 Path::new("README.md"),
