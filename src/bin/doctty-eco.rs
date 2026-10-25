@@ -446,6 +446,16 @@ mod eco_viewer {
         fn response(&mut self) -> Result<Value> {
             let mut line = String::new();
             if self.output.read_line(&mut line)? == 0 {
+                if std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN").is_some() {
+                    bail!(
+                        "WebKit helper closed its output; see Swift stderr. \
+                         If this is a downloaded, non-notarized macOS bundle, \
+                         Gatekeeper may have blocked doctty-webkit-swift separately. \
+                         Verify the archive checksum, then check System Settings > \
+                         Privacy & Security for a blocked helper. \
+                         Do not disable Gatekeeper system-wide."
+                    );
+                }
                 bail!("WebKit helper closed its output; see Swift stderr");
             }
             let payload: Value =
