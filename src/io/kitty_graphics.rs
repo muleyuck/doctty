@@ -21,6 +21,40 @@ pub enum DeleteCommand {
     Placement { image_id: u32, placement_id: u32 },
 }
 
+const SUPPORT_QUERY_IMAGE_ID: u32 = 31;
+
+/// Kitty graphics query followed by a primary device attributes request.
+/// Every terminal answers the latter, so its reply bounds the wait.
+#[must_use]
+pub fn encode_support_query() -> String {
+    format!("\u{1b}_Gi={SUPPORT_QUERY_IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\u{1b}\\\u{1b}[c")
+}
+
+/// Returns `None` until the device attributes reply is complete.
+#[must_use]
+pub fn parse_support_reply(reply: &[u8]) -> Option<bool> {
+    let attributes_start = find_device_attributes_reply(reply)?;
+    let ok = format!("\u{1b}_Gi={SUPPORT_QUERY_IMAGE_ID};OK\u{1b}\\");
+    Some(
+        reply[..attributes_start]
+            .windows(ok.len())
+            .any(|window| window == ok.as_bytes()),
+    )
+}
+
+fn find_device_attributes_reply(reply: &[u8]) -> Option<usize> {
+    (0..reply.len()).find(|&start| {
+        let Some(rest) = reply[start..].strip_prefix(b"\x1b[?") else {
+            return false;
+        };
+        let parameters = rest
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+            .count();
+        rest.get(parameters) == Some(&b'c')
+    })
+}
+
 #[must_use]
 pub fn encode_transmit_png(image_id: u32, png_bytes: &[u8]) -> String {
     let payload = STANDARD.encode(png_bytes);

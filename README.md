@@ -16,7 +16,7 @@
 
 If you live in [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/), you no longer need to leave the terminal to read a README.
 
-The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by terminals including Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js. `doctty` currently enables interactive mode in Ghostty and Kitty.
+The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by terminals including Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js. At startup, `doctty` asks the terminal whether it accepts Kitty graphics and enables interactive mode only when it does, so multiplexers that answer for their panes, such as Herdr, work too. Ghostty and Kitty are the primary targets.
 
 ## Features
 

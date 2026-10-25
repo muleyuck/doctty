@@ -1,5 +1,6 @@
 use doctty::io::kitty_graphics::{
-    DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_transmit_png,
+    DeleteCommand, KittyImagePlacement, encode_delete, encode_place, encode_support_query,
+    encode_transmit_png, parse_support_reply,
 };
 
 #[test]
@@ -55,4 +56,49 @@ fn encodes_delete_specific_placement_command() {
         placement_id: 3,
     });
     assert_eq!(escape, "\u{1b}_Ga=d,d=i,i=7,p=3\u{1b}\\");
+}
+
+#[test]
+fn support_query_asks_for_graphics_then_device_attributes() {
+    assert_eq!(
+        encode_support_query(),
+        "\u{1b}_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u{1b}\\\u{1b}[c"
+    );
+}
+
+#[test]
+fn graphics_ok_before_device_attributes_means_supported() {
+    assert_eq!(
+        parse_support_reply(b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22c"),
+        Some(true)
+    );
+}
+
+#[test]
+fn device_attributes_alone_means_unsupported() {
+    assert_eq!(parse_support_reply(b"\x1b[?62;22c"), Some(false));
+    assert_eq!(parse_support_reply(b"\x1b[?1;2c"), Some(false));
+}
+
+#[test]
+fn graphics_error_reply_means_unsupported() {
+    assert_eq!(
+        parse_support_reply(b"\x1b_Gi=31;ENOTSUPPORTED:no\x1b\\\x1b[?62c"),
+        Some(false)
+    );
+}
+
+#[test]
+fn waits_until_device_attributes_reply_is_complete() {
+    assert_eq!(parse_support_reply(b""), None);
+    assert_eq!(parse_support_reply(b"\x1b_Gi=31;OK\x1b\\"), None);
+    assert_eq!(parse_support_reply(b"\x1b_Gi=31;OK\x1b\\\x1b[?62;2"), None);
+}
+
+#[test]
+fn ignores_replies_for_other_image_ids() {
+    assert_eq!(
+        parse_support_reply(b"\x1b_Gi=7;OK\x1b\\\x1b[?62c"),
+        Some(false)
+    );
 }
