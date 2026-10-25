@@ -13,7 +13,11 @@ use crate::{
     },
 };
 
-const PAGE_IMAGE_ID: u32 = 1;
+// Page frames alternate between two image IDs: Ghostty (and Herdr) delete an
+// image when a new transmission with its ID begins, so reusing one ID would
+// blank the page while a chunked frame is still arriving. The second ID stays
+// clear of `collect_graphics_commands`, which numbers images from 2.
+const PAGE_IMAGE_IDS: [u32; 2] = [1, u32::MAX];
 type GraphicCommands = (Vec<String>, Vec<(u32, u32)>);
 
 pub(super) fn collect_page_viewport_commands(
@@ -26,29 +30,26 @@ pub(super) fn collect_page_viewport_commands(
 ) -> anyhow::Result<GraphicCommands> {
     let mut commands = Vec::new();
     let raster = viewport_raster(page, scroll, content_height, cell_metrics.height_px)?;
+    let image_id = if previous_visible_placements
+        .iter()
+        .any(|&(image_id, _)| image_id == PAGE_IMAGE_IDS[0])
+    {
+        PAGE_IMAGE_IDS[1]
+    } else {
+        PAGE_IMAGE_IDS[0]
+    };
     let visible_placements = if raster.is_none() {
         Vec::new()
     } else {
-        vec![(PAGE_IMAGE_ID, PAGE_IMAGE_ID)]
+        vec![(image_id, image_id)]
     };
 
-    for (image_id, placement_id) in previous_visible_placements
-        .iter()
-        .copied()
-        .filter(|placement| !visible_placements.contains(placement))
-    {
-        commands.push(encode_delete(DeleteCommand::Placement {
-            image_id,
-            placement_id,
-        }));
-    }
-
     if let Some(raster) = raster {
-        commands.push(encode_transmit_png(PAGE_IMAGE_ID, &raster.png_bytes));
+        commands.push(encode_transmit_png(image_id, &raster.png_bytes));
 
         let placement = KittyImagePlacement {
-            image_id: PAGE_IMAGE_ID,
-            placement_id: PAGE_IMAGE_ID,
+            image_id,
+            placement_id: image_id,
             columns: page.width_cells,
             rows: raster.rows,
             source_x_px: 0,
@@ -64,6 +65,17 @@ pub(super) fn collect_page_viewport_commands(
             ansi_cursor_move(0, 0),
             encode_place(&placement)
         ));
+    }
+
+    for (image_id, placement_id) in previous_visible_placements
+        .iter()
+        .copied()
+        .filter(|placement| !visible_placements.contains(placement))
+    {
+        commands.push(encode_delete(DeleteCommand::Placement {
+            image_id,
+            placement_id,
+        }));
     }
 
     Ok((commands, visible_placements))

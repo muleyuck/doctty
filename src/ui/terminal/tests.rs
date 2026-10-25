@@ -177,6 +177,56 @@ fn page_viewport_commands_retransmit_cropped_png_for_each_scroll_position() {
 }
 
 #[test]
+fn page_viewport_scroll_keeps_previous_frame_until_replacement_is_placed() {
+    let image = ImageBuffer::from_pixel(8, 40, Rgba([255, 0, 0, 255]));
+    let mut png_bytes = Vec::new();
+    DynamicImage::ImageRgba8(image)
+        .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+        .unwrap_or_else(|error| panic!("fixture image should encode: {error}"));
+    let page = build_graphic_page(&png_bytes, 16, 8)
+        .unwrap_or_else(|error| panic!("graphic page should decode: {error}"));
+    let cell_metrics = CellMetrics {
+        width_px: 8.0,
+        height_px: 2.0,
+    };
+    let mut transmitted = std::collections::BTreeSet::new();
+
+    let (_, first_visible) =
+        collect_page_viewport_commands(&page, 0, 4, cell_metrics, &[], &mut transmitted)
+            .unwrap_or_else(|error| panic!("viewport commands should build: {error}"));
+    let (second_commands, second_visible) =
+        collect_page_viewport_commands(&page, 4, 4, cell_metrics, &first_visible, &mut transmitted)
+            .unwrap_or_else(|error| {
+                panic!("viewport commands should rebuild after scroll: {error}")
+            });
+    let (_, third_visible) = collect_page_viewport_commands(
+        &page,
+        8,
+        4,
+        cell_metrics,
+        &second_visible,
+        &mut transmitted,
+    )
+    .unwrap_or_else(|error| panic!("viewport commands should rebuild after scroll: {error}"));
+
+    let (first_id, _) = first_visible[0];
+    let (second_id, _) = second_visible[0];
+    assert_ne!(first_id, second_id);
+    assert_eq!(third_visible, first_visible);
+
+    let position = |needle: &str| {
+        second_commands
+            .iter()
+            .position(|command| command.contains(needle))
+            .unwrap_or_else(|| panic!("missing command containing {needle}"))
+    };
+    let transmit = position(&format!("a=t,t=d,f=100,i={second_id},"));
+    let place = position(&format!("a=p,i={second_id},"));
+    let delete = position(&format!("a=d,d=i,i={first_id},p={first_id}"));
+    assert!(transmit < place && place < delete, "{second_commands:?}");
+}
+
+#[test]
 fn fit_graphic_placement_stays_within_reserved_box() {
     let graphic = RenderedGraphic {
         line_index: 0,
