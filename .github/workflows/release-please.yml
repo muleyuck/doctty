@@ -1,0 +1,103 @@
+name: Release Please
+
+# Staged on main, but never publishes from an ordinary push or merge.
+# A maintainer must explicitly start this workflow on main after release review.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release-please:
+    # A manual action on main is required: merging the distribution PR
+    # cannot create a release PR, a version tag, a Release, or a tap update.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: muleyuck/github-actions/.github/workflows/release-please.yml@v1
+    with:
+      path: .
+
+  release:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+      VERSION: ${{ needs.release-please.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - uses: muleyuck/github-actions/actions/rust/setup@v1
+
+      - name: Ensure the release tag matches Cargo package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$TAG_NAME" = "v$VERSION"
+          cargo_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          test "$cargo_version" = "$VERSION"
+          test "$(uname -m)" = arm64
+
+      - name: Build compiled Rust and Swift Eco archive
+        id: preview
+        shell: bash
+        run: |
+          archive="$(bash scripts/package_macos_eco.sh)"
+          test -s "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Ad-hoc sign and package the versioned ZIP
+        id: zip
+        shell: bash
+        run: |
+          zip="$(bash scripts/package_macos_release.sh "${{ steps.preview.outputs.archive }}" "$VERSION" "$RUNNER_TEMP/doctty-release")"
+          test -s "$zip"
+          test -s "$zip.sha256"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "checksum=$zip.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Attach both release assets before updating the Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "$TAG_NAME" \
+            "${{ steps.zip.outputs.zip }}" \
+            "${{ steps.zip.outputs.checksum }}" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Determine whether Homebrew tap credentials are configured
+        id: tap
+        shell: bash
+        env:
+          TAP_CLIENT_ID: ${{ secrets.TAP_APP_CLIENT_ID }}
+          TAP_PRIVATE_KEY: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$TAP_CLIENT_ID" && -n "$TAP_PRIVATE_KEY" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Release ZIP uploaded; Homebrew tap credentials not configured in doctty repository"
+          fi
+
+      - name: Publish doctty Homebrew Cask
+        if: steps.tap.outputs.configured == 'true'
+        uses: muleyuck/github-actions/actions/homebrew/publish@v1
+        with:
+          template: packaging/doctty.rb.in
+          tap-path: Casks/doctty.rb
+          version: ${{ env.VERSION }}
+          sha256: SHA256=${{ steps.zip.outputs.zip }}
+          client-id: ${{ secrets.TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+
+# No notarization/signing credentials, no actions on pull requests.
+# Deployment is manual-only until a separate reviewed change enables automatic releases.
