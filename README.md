@@ -33,6 +33,8 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
+For maintainers preparing the first official release, follow the [macOS release runbook](docs/RELEASING.md). Publishing remains manual-only and is not triggered by merging ordinary PRs.
+
 **macOS prebuilt Eco preview (draft, not an official release)**: the
 `macOS Eco bundle validation` GitHub Actions workflow produces
 an Apple Silicon (arm64) artifact named
