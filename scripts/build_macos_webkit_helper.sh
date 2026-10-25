@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the optimized Swift/WebKit helper used by the precompiled Eco bundle.
-# Optional arguments still allow developers to inspect the Eco viewport.
+# Build the optimized Swift/WebKit helper used by the precompiled renderer bundle.
+# Optional arguments still allow developers to inspect the viewport.
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -45,4 +45,4 @@ if [[ "$#" -eq 0 ]]; then
   set -- --hybrid-image "$ROOT/README.md"
 fi
 export DOCTTY_WEBKIT_HELPER_BIN="$BINARY"
-exec cargo run --release --manifest-path "$ROOT/Cargo.toml" --bin doctty-eco -- "$@"
+exec cargo run --release --manifest-path "$ROOT/Cargo.toml" --bin doctty-renderer -- "$@"

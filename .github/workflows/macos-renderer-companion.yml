@@ -1,15 +1,15 @@
-name: macOS Eco companion
+name: macOS renderer companion
 on:
   pull_request:
     paths:
-      - 'src/bin/doctty-eco.rs'
+      - 'src/bin/doctty-renderer.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
-      - 'src/eco/**'
+      - 'src/viewport/**'
       - 'native/macos/webkit_viewport.swift'
       - 'scripts/build_macos_webkit_helper.sh'
       - 'tests/smoke/smoke_compiled_swift_webkit.py'
-      - '.github/workflows/macos-eco-companion.yml'
+      - '.github/workflows/macos-renderer-companion.yml'
 permissions:
   contents: read
 jobs:
@@ -18,8 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
-      - name: Test compiled Eco companion
-        run: cargo test --bin doctty-eco --locked
+      - name: Test compiled renderer companion
+        run: cargo test --bin doctty-renderer --locked
       - name: Typecheck Swift helper
         run: swiftc -swift-version 5 -typecheck native/macos/webkit_viewport.swift
       - name: Compile cached optimized Swift helper

@@ -29,10 +29,10 @@ use self::{
     script::SWIFT_SNAPSHOT_SCRIPT,
 };
 
-/// Read-only WebKit file access root for compiled Eco HTML, including
+/// Read-only WebKit file access root for compiled renderer HTML, including
 /// referenced assets in parent directories and the generated HTML location.
 #[cfg(any(target_os = "macos", test))]
-pub fn compiled_eco_read_root(
+pub fn compiled_renderer_read_root(
     html: &str,
     base_dir: &Path,
     html_path: &Path,

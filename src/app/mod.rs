@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Result, bail};
 use tracing::info_span;
 
-mod eco_companion;
+mod renderer_companion;
 
 use crate::{
     cli::DocttyArgs,
@@ -42,7 +42,7 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         ) {
             bail!("interactive mode requires Ghostty or Kitty");
         }
-        return eco_companion::run(
+        return renderer_companion::run(
             &config.path,
             config.theme,
             config.watch,

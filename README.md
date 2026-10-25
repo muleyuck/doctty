@@ -33,10 +33,10 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
-**macOS prebuilt Eco preview (draft, not an official release)**: the
-`macOS Eco bundle validation` GitHub Actions workflow produces
+**macOS prebuilt renderer preview (draft, not an official release)**: the
+`macOS renderer bundle validation` GitHub Actions workflow produces
 an Apple Silicon (arm64) artifact named
-`doctty-eco-prebuilt-macOS-arm64`, containing precompiled
+`doctty-renderer-prebuilt-macOS-arm64`, containing precompiled
 `doctty`, its Rust viewport companion and the optimized Swift/WebKit
 helper. Extract the inner `.tar.gz` and run in Ghostty or Kitty:
 
@@ -50,7 +50,7 @@ arm64 architecture of all three executables. These are macOS 15 CI
 builds; support on earlier macOS versions has not been established.
 
 No Swift compiler, Rust toolchain or repository checkout is needed for this
-prebuilt Eco preview.
+prebuilt renderer preview.
 
 **Planned turnray-style distribution (after release review):** CI will also
 produce a versioned Apple Silicon ZIP containing ad-hoc-signed native binaries,
@@ -63,7 +63,7 @@ doctty README.md
 ```
 
 The ZIP is **not Apple-notarized**. macOS Gatekeeper may initially block
-`doctty` and may independently block `doctty-eco` or `doctty-webkit-swift`.
+`doctty` and may independently block `doctty-renderer` or `doctty-webkit-swift`.
 On a verified download, use **System Settings → Privacy & Security → Open Anyway**
 for each blocked executable as needed, then retry `doctty`. An initial
 `WebKit helper closed its output` error may mean the Swift helper was still
@@ -112,7 +112,7 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
-- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built Eco archive). Linux runs in headless/plain-text mode.
+- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built renderer archive). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
 
 ## Installation

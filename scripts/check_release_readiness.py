@@ -48,24 +48,24 @@ def main() -> None:
            "Automatic release workflow trigger detected")
     verify("github.ref == 'refs/heads/main'" in workflow,
            "Release workflow must require the main branch")
-    verify("scripts/package_macos_eco.sh" in workflow,
-           "Release workflow does not build the Eco archive")
+    verify("scripts/package_macos_renderer.sh" in workflow,
+           "Release workflow does not build the renderer archive")
     verify("scripts/package_macos_release.sh" in workflow,
            "Release workflow does not package the signed ZIP")
     verify("gh release upload" in workflow and "homebrew/publish@v1" in workflow,
            "Missing asset upload or Cask publication step")
     verify("Casks/doctty.rb" in workflow, "Homebrew Cask tap path mismatch")
 
-    bundle_script = read("scripts/package_macos_eco.sh")
+    bundle_script = read("scripts/package_macos_renderer.sh")
     release_script = read("scripts/package_macos_release.sh")
     cask = read("packaging/doctty.rb.in")
-    bins = ("doctty", "doctty-eco", "doctty-webkit-swift")
+    bins = ("doctty", "doctty-renderer", "doctty-webkit-swift")
     for name in bins:
         verify(f'"$BUNDLE/{name}"' in bundle_script,
-               f"Eco archive is missing its {name} binary")
+               f"renderer archive is missing its {name} binary")
         verify(name in release_script, f"Release ZIP is missing {name}")
     verify('NAME="doctty-macos-$ARCH"' in bundle_script,
-           "Unexpected Eco archive directory name")
+           "Unexpected renderer archive directory name")
     verify('doctty-$VERSION-macos-arm64.zip' in release_script,
            "Unexpected versioned release ZIP filename")
     verify('binary "doctty-macos-arm64/doctty-cli", target: "doctty"' in cask,
@@ -90,7 +90,7 @@ def main() -> None:
 
     print(f"Release preflight OK: Cargo + manifest v{version}")
     print("Release Please trigger: manual-only, main branch")
-    print("Artifact contracts: arm64 Eco bundle, versioned ZIP, sha256, Cask")
+    print("Artifact contracts: arm64 renderer bundle, versioned ZIP, sha256, Cask")
     print("This is a STATIC check only: no binaries, GitHub secrets, public")
     print("Release, real Homebrew install, or clean-Mac Gatekeeper were tested.")
 

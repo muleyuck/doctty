@@ -1,15 +1,15 @@
-name: macOS Eco bundle validation
+name: macOS renderer bundle validation
 
 on:
   pull_request:
     paths:
-      - 'src/bin/doctty-eco.rs'
+      - 'src/bin/doctty-renderer.rs'
       - 'src/io/webkit_snapshot/**'
       - 'src/render/github_html/**'
-      - 'src/eco/**'
+      - 'src/viewport/**'
       - 'native/macos/webkit_viewport.swift'
       - 'scripts/build_macos_webkit_helper.sh'
-      - 'scripts/package_macos_eco.sh'
+      - 'scripts/package_macos_renderer.sh'
       - 'scripts/package_macos_release.sh'
       - 'scripts/check_release_readiness.py'
       - 'packaging/doctty.rb.in'
@@ -22,8 +22,8 @@ on:
       - 'src/cli/args.rs'
       - 'tests/unit/cli_args.rs'
       - 'tests/smoke/smoke_compiled_swift_webkit.py'
-      - 'tests/smoke/smoke_eco_default_cli.py'
-      - '.github/workflows/macos-eco-bundle.yml'
+      - 'tests/smoke/smoke_renderer_default_cli.py'
+      - '.github/workflows/macos-renderer-bundle.yml'
   workflow_dispatch:
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           python3 scripts/check_release_readiness.py
-          bash -n scripts/package_macos_eco.sh
+          bash -n scripts/package_macos_renderer.sh
           bash -n scripts/package_macos_release.sh
 
       - name: Verify native architecture and Cargo-source regression
@@ -51,11 +51,11 @@ jobs:
           test "$(uname -m)" = "arm64"
           cargo test --locked --lib companions_must_reside_beside_the_cli_even_in_paths_with_spaces
 
-      - name: Build precompiled Rust and Swift Eco bundle
+      - name: Build precompiled Rust and Swift renderer bundle
         id: package
         shell: bash
         run: |
-          archive="$(bash scripts/package_macos_eco.sh)"
+          archive="$(bash scripts/package_macos_renderer.sh)"
           test -s "$archive"
           test -s "$archive.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
@@ -75,17 +75,17 @@ jobs:
           bundle="$dir/$(basename "$archive" .tar.gz)"
           test -x "$bundle/doctty"
           test -x "$bundle/doctty-webkit-swift"
-          test -x "$bundle/doctty-eco"
+          test -x "$bundle/doctty-renderer"
           # Check all three native binaries are built for this runner.
           # A mislabeled cross-architecture archive must fail the workflow.
-          for executable in doctty doctty-eco doctty-webkit-swift; do
+          for executable in doctty doctty-renderer doctty-webkit-swift; do
             lipo "$bundle/$executable" -verify_arch arm64
           done
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
           python3 tests/smoke/smoke_compiled_swift_webkit.py "$bundle/doctty-webkit-swift"
           # Exercise the real compiled doctty CLI with pseudo-terminal I/O
           # and stub sidecars, verifying default routing without WebKit GUI.
-          python3 tests/smoke/smoke_eco_default_cli.py "$bundle"
+          python3 tests/smoke/smoke_renderer_default_cli.py "$bundle"
           # Normal default CLI and --no-mermaid keep the headless
           # noninteractive text contract; no Swift/Cargo execution.
           printf '# Bundled cli smoke\\n' | "$bundle/doctty" - > "$RUNNER_TEMP/headless-default.txt"
@@ -110,7 +110,7 @@ jobs:
           ditto -x -k "$zip" "$extracted"
           bundle="$extracted/doctty-macos-arm64"
           (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
-          for executable in doctty doctty-eco doctty-webkit-swift; do
+          for executable in doctty doctty-renderer doctty-webkit-swift; do
             codesign --verify --strict "$bundle/$executable"
             lipo "$bundle/$executable" -verify_arch arm64
           done
@@ -150,7 +150,7 @@ jobs:
       - name: Upload prebuilt preview archive
         uses: actions/upload-artifact@v4
         with:
-          name: doctty-eco-prebuilt-${{ runner.os }}-arm64
+          name: doctty-renderer-prebuilt-${{ runner.os }}-arm64
           path: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.checksum }}

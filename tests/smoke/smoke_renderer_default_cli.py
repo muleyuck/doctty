@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify macOS packaged doctty chooses native Eco without executing Swift.
+"""Verify macOS packaged doctty chooses native without executing Swift.
 
 The compiled CLI runs inside a pseudo-terminal, but the two companion files
 are test stubs. This checks argument/environment forwarding and the
@@ -25,7 +25,7 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
             {
                 "TERM_PROGRAM": "ghostty",
                 "TERM": "xterm-256color",
-                "DOCTTY_ECO_SMOKE_RECORD": str(record),
+                "DOCTTY_RENDERER_SMOKE_RECORD": str(record),
             }
         )
         result = subprocess.run(
@@ -45,21 +45,21 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
 
 
 def check(bundle: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="doctty compiled eco smoke ") as root:
+    with tempfile.TemporaryDirectory(prefix="doctty compiled renderer smoke ") as root:
         test_dir = Path(root) / "installed bundle with spaces"
         test_dir.mkdir()
         doctty = test_dir / "doctty"
         shutil.copy2(bundle / "doctty", doctty)
 
         markdown = test_dir / "sample document.md"
-        markdown.write_text("# Default Eco test\n\nHello.\n", encoding="utf-8")
+        markdown.write_text("# Default test\n\nHello.\n", encoding="utf-8")
         record = test_dir / "invoked.json"
 
         # Missing helpers must fail, not implicitly run the old Swift script.
         assert run_interactive(doctty, markdown, [], record) != 0
         assert not record.exists()
 
-        viewer = test_dir / "doctty-eco"
+        viewer = test_dir / "doctty-renderer"
         viewer.write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
@@ -70,7 +70,7 @@ def check(bundle: Path) -> None:
             "    'theme': os.environ.get('DOCTTY_WEBKIT_THEME'),\n"
             "    'mermaid': os.environ.get('DOCTTY_WEBKIT_MERMAID'),\n"
             "}\n"
-            "Path(os.environ['DOCTTY_ECO_SMOKE_RECORD']).write_text(json.dumps(data))\n",
+            "Path(os.environ['DOCTTY_RENDERER_SMOKE_RECORD']).write_text(json.dumps(data))\n",
             encoding="utf-8",
         )
         viewer.chmod(0o755)
@@ -100,10 +100,10 @@ def check(bundle: Path) -> None:
             if expected_theme is not None:
                 assert data["theme"] == expected_theme, data
 
-    print("OK: normal interactive doctty uses adjacent compiled Eco companions")
+    print("OK: normal interactive doctty uses adjacent compiled companions")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        raise SystemExit("usage: smoke_eco_default_cli.py /path/to/unpacked/bundle")
+        raise SystemExit("usage: smoke_renderer_default_cli.py /path/to/unpacked/bundle")
     check(Path(sys.argv[1]))

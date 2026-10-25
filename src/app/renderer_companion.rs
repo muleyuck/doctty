@@ -1,4 +1,4 @@
-//! Version-matched, CI-compiled Eco companion for macOS interactive sessions.
+//! Version-matched, compiled renderer companion for macOS interactive sessions.
 //!
 //! The same compiled renderer is the default for every macOS install.
 //! Source builds embed the compiled Swift helper; ZIPs ship it alongside doctty.
@@ -20,7 +20,7 @@ use std::process::Command;
 fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     let directory = main_executable.parent().unwrap_or_else(|| Path::new("."));
     (
-        directory.join("doctty-eco"),
+        directory.join("doctty-renderer"),
         directory.join("doctty-webkit-swift"),
     )
 }
@@ -30,7 +30,7 @@ fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
     let (viewer, swift_helper) = companion_paths(main_executable);
     if !viewer.is_file() {
         bail!(
-            "missing doctty-eco next to {}. Install the complete doctty              package with cargo install --path . --locked or download the ZIP",
+            "missing doctty-renderer next to {}. Install the complete doctty              package with cargo install --path . --locked or download the ZIP",
             main_executable.display()
         );
     }
@@ -109,7 +109,7 @@ pub(super) fn run(document: &Path, theme: Theme, watch: bool, mermaid: MermaidMo
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (document, theme, watch, mermaid);
-        bail!("the compiled Eco viewer requires macOS and the prebuilt Eco bundle");
+        bail!("the compiled renderer viewer requires macOS and the prebuilt renderer bundle");
     }
 }
 
@@ -124,7 +124,7 @@ mod tests {
         std::fs::create_dir_all(&bin)?;
         let exe = bin.join("doctty");
         let (viewer, helper) = companion_paths(&exe);
-        assert_eq!(viewer, bin.join("doctty-eco"));
+        assert_eq!(viewer, bin.join("doctty-renderer"));
         assert_eq!(helper, bin.join("doctty-webkit-swift"));
         assert!(!viewer.exists());
         std::fs::write(&viewer, b"test placeholder")?;

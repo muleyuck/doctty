@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble the precompiled macOS Eco bundle used by CI and release packaging.
+# Assemble the precompiled macOS renderer bundle used by CI and release packaging.
 # Release signing/notarization and production integration are separate.
 set -euo pipefail
 
@@ -26,18 +26,18 @@ mkdir -p "$BUNDLE"
 SWIFT_BIN="$(bash "$ROOT/scripts/build_macos_webkit_helper.sh" --build-only)"
 # Distinguish the complete CI bundle from a source-only Cargo install.
 # The feature is enabled only when both native companions are shipped.
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --bin doctty --bin doctty-eco
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --bin doctty --bin doctty-renderer
 install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
-install -m 0755 "$ROOT/target/release/doctty-eco" "$BUNDLE/doctty-eco"
+install -m 0755 "$ROOT/target/release/doctty-renderer" "$BUNDLE/doctty-renderer"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"
 
 cat > "$BUNDLE/README.txt" <<'DOC'
-doctty — precompiled Apple Silicon Eco bundle
+doctty — precompiled Apple Silicon renderer bundle
 ============================================
 
 This archive contains:
-  doctty               CLI; Eco renderer is the macOS interactive default
-  doctty-eco           compiled Rust viewport companion
+  doctty               CLI; standard renderer is the macOS interactive default
+  doctty-renderer           compiled Rust viewport companion
   doctty-webkit-swift  compiled, optimized native Swift/WebKit helper
   SHA256SUMS           checksums of the included files
 
@@ -57,7 +57,7 @@ DOC
 
 (
   cd "$BUNDLE"
-  shasum -a 256 doctty doctty-eco doctty-webkit-swift README.txt > SHA256SUMS
+  shasum -a 256 doctty doctty-renderer doctty-webkit-swift README.txt > SHA256SUMS
 )
 ARCHIVE="$OUT_DIR/$NAME.tar.gz"
 tar -C "$STAGING" -czf "$ARCHIVE" "$NAME"

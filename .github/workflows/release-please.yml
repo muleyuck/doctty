@@ -46,11 +46,11 @@ jobs:
           test "$cargo_version" = "$VERSION"
           test "$(uname -m)" = arm64
 
-      - name: Build compiled Rust and Swift Eco archive
+      - name: Build compiled Rust and Swift renderer archive
         id: preview
         shell: bash
         run: |
-          archive="$(bash scripts/package_macos_eco.sh)"
+          archive="$(bash scripts/package_macos_renderer.sh)"
           test -s "$archive"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 

@@ -1,22 +1,22 @@
-// Compiled Rust Eco viewport companion for interactive macOS terminals.
+// Compiled Rust renderer viewport companion for interactive macOS terminals.
 // Distributed alongside doctty and the native Swift/WebKit helper.
-// Developer invocation: cargo run --release --bin doctty-eco -- README.md
+// Developer invocation: cargo run --release --bin doctty-renderer -- README.md
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("The doctty Eco viewport requires macOS.");
+    eprintln!("The doctty renderer viewport requires macOS.");
 }
 
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
-    eco_viewer::run()
+    renderer_viewer::run()
 }
 
 #[cfg(target_os = "macos")]
-#[path = "../eco/hybrid_image_preview.rs"]
+#[path = "../viewport/hybrid_image_preview.rs"]
 mod hybrid_image_preview;
 
 #[cfg(target_os = "macos")]
-mod eco_viewer {
+mod renderer_viewer {
     use std::{
         ffi::OsStr,
         fs,
@@ -149,9 +149,9 @@ mod eco_viewer {
         }
     }
 
-    // In the opt-in eco mode, the raster outline handles uncached movement.
+    // In the standard mode, the raster outline handles uncached movement.
     // WebKit only fills the settled viewport, not speculative future tiles.
-    fn should_capture_in_eco_mode(idle_for: Duration, tile_ready: bool) -> bool {
+    fn should_capture_settled(idle_for: Duration, tile_ready: bool) -> bool {
         idle_for >= HYBRID_SETTLE_AFTER && !tile_ready
     }
 
@@ -192,7 +192,7 @@ mod eco_viewer {
             KeyCode::Char('K') | KeyCode::PageUp => *position - page,
             // Match the production CLI: g jumps to top and G to the
             // last scrollable viewport. Jumps use the existing redraw and
-            // Eco capture-after-settle path; do not force WebKit prefetch.
+            // capture-after-settle path; do not force WebKit prefetch.
             KeyCode::Char('g') if key.kind == KeyEventKind::Press => 0.0,
             KeyCode::Char('G') if key.kind == KeyEventKind::Press => {
                 (document_height - f64::from(viewport_height)).max(0.0)
@@ -393,7 +393,7 @@ mod eco_viewer {
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
             let read_root = if html.starts_with(source_dir) {
-                doctty::io::webkit_snapshot::compiled_eco_read_root(&html_source, source_dir, html)?
+                doctty::io::webkit_snapshot::compiled_renderer_read_root(&html_source, source_dir, html)?
             } else {
                 // Out-of-tree generated HTML has only staged media inside its
                 // private temp folder; never combine this with source_dir.
@@ -1006,7 +1006,7 @@ mod eco_viewer {
         {
             Ok(mut file) => {
                 let read_root =
-                    doctty::io::webkit_snapshot::compiled_eco_read_root(&html, root, file.path());
+                    doctty::io::webkit_snapshot::compiled_renderer_read_root(&html, root, file.path());
                 if read_root.is_ok() {
                     file.write_all(html.as_bytes())?;
                     file.flush()?;
@@ -1601,7 +1601,7 @@ mod eco_viewer {
         initial_position: f64,
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
-        eco_snapshots: bool,
+        capture_after_settle: bool,
         watcher: Option<&mut WatchState>,
         first_link: Option<&str>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
@@ -1876,7 +1876,7 @@ mod eco_viewer {
                 }
 
                 if pending.is_none()
-                    && (!eco_snapshots || should_capture_in_eco_mode(idle_for, selected.is_some()))
+                    && (!capture_after_settle || should_capture_settled(idle_for, selected.is_some()))
                 {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
@@ -2018,7 +2018,7 @@ mod eco_viewer {
         theme: Theme,
         hybrid: bool,
         hybrid_image: bool,
-        eco_snapshots: bool,
+        capture_after_settle: bool,
         watch: bool,
     ) -> Result<()> {
         let source_dir = document.parent().context("source directory unavailable")?;
@@ -2121,7 +2121,7 @@ mod eco_viewer {
                 initial_position,
                 outline,
                 scene,
-                eco_snapshots,
+                capture_after_settle,
                 watcher.as_mut(),
                 first_link.as_deref(),
             )?;
@@ -2184,7 +2184,7 @@ mod eco_viewer {
 
         let _session = TerminalSession::enter()?;
         let mut out = io::stdout().lock();
-        // Deliberately bypasses WebKit and the Eco viewport cache.
+        // Deliberately bypasses WebKit and the renderer viewport cache.
         upload_png(&mut out, FIRST_IMAGE_ID, &png)?;
         place_image(&mut out, FIRST_IMAGE_ID, columns, rows, 12, 12, 0)?;
         execute!(out, cursor::MoveTo(0, rows))?;
@@ -2203,12 +2203,12 @@ mod eco_viewer {
         Ok(())
     }
 
-    // Eco is the default for the hybrid image viewer. Preserve the explicit
-    // --hybrid-image-eco alias for existing scripts, and retain the old
+    // is the default for the hybrid image viewer. Preserve the explicit
+    // --hybrid-image-removed alias for existing scripts, and retain the old
     // speculative snapshot mode as --hybrid-image-prefetch for A/B testing.
     // Other modes such as --hybrid and --tiled are unchanged.
     fn hybrid_image_flags(first: &OsStr) -> (bool, bool) {
-        let eco = first == "--hybrid-image" || first == "--hybrid-image-eco";
+        let eco = first == "--hybrid-image" || first == "--hybrid-image-removed";
         let prefetch = first == "--hybrid-image-prefetch";
         (eco || prefetch, eco)
     }
@@ -2219,7 +2219,7 @@ mod eco_viewer {
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let (hybrid_image, eco_snapshots) = hybrid_image_flags(&first);
+        let (hybrid_image, capture_after_settle) = hybrid_image_flags(&first);
         let hybrid = first == "--hybrid" || hybrid_image;
         let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
@@ -2249,7 +2249,7 @@ mod eco_viewer {
                 theme,
                 hybrid,
                 hybrid_image,
-                eco_snapshots,
+                capture_after_settle,
                 watch,
             );
         }
@@ -2480,19 +2480,13 @@ mod eco_viewer {
         }
 
         #[test]
-        fn hybrid_image_defaults_to_eco_and_keeps_prefetch_opt_in() {
+        fn hybrid_image_selects_standard_renderer() {
             assert_eq!(
                 hybrid_image_flags(OsStr::new("--hybrid-image")),
                 (true, true)
             );
-            assert_eq!(
-                hybrid_image_flags(OsStr::new("--hybrid-image-eco")),
-                (true, true)
-            );
-            assert_eq!(
-                hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")),
-                (true, false)
-            );
+            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid-image-removed")), (false, false));
+            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("--hybrid")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("--tiled")), (false, false));
             assert_eq!(hybrid_image_flags(OsStr::new("README.md")), (false, false));
@@ -2704,15 +2698,15 @@ mod eco_viewer {
         }
 
         #[test]
-        fn eco_mode_captures_only_a_missing_settled_viewport() {
-            assert!(!should_capture_in_eco_mode(Duration::ZERO, false));
-            assert!(!should_capture_in_eco_mode(
+        fn renderer_mode_captures_only_a_missing_settled_viewport() {
+            assert!(!should_capture_settled(Duration::ZERO, false));
+            assert!(!should_capture_settled(
                 Duration::from_millis(159),
                 false
             ));
-            assert!(should_capture_in_eco_mode(HYBRID_SETTLE_AFTER, false));
-            assert!(should_capture_in_eco_mode(Duration::from_secs(2), false));
-            assert!(!should_capture_in_eco_mode(Duration::from_secs(2), true));
+            assert!(should_capture_settled(HYBRID_SETTLE_AFTER, false));
+            assert!(should_capture_settled(Duration::from_secs(2), false));
+            assert!(!should_capture_settled(Duration::from_secs(2), true));
         }
 
         #[test]
