@@ -393,7 +393,11 @@ mod renderer_viewer {
             let html_source =
                 fs::read_to_string(html).context("unable to read WebKit HTML input")?;
             let read_root = if html.starts_with(source_dir) {
-                doctty::io::webkit_snapshot::compiled_renderer_read_root(&html_source, source_dir, html)?
+                doctty::io::webkit_snapshot::compiled_renderer_read_root(
+                    &html_source,
+                    source_dir,
+                    html,
+                )?
             } else {
                 // Out-of-tree generated HTML has only staged media inside its
                 // private temp folder; never combine this with source_dir.
@@ -1005,8 +1009,11 @@ mod renderer_viewer {
             .tempfile_in(root)
         {
             Ok(mut file) => {
-                let read_root =
-                    doctty::io::webkit_snapshot::compiled_renderer_read_root(&html, root, file.path());
+                let read_root = doctty::io::webkit_snapshot::compiled_renderer_read_root(
+                    &html,
+                    root,
+                    file.path(),
+                );
                 if read_root.is_ok() {
                     file.write_all(html.as_bytes())?;
                     file.flush()?;
@@ -1876,7 +1883,8 @@ mod renderer_viewer {
                 }
 
                 if pending.is_none()
-                    && (!capture_after_settle || should_capture_settled(idle_for, selected.is_some()))
+                    && (!capture_after_settle
+                        || should_capture_settled(idle_for, selected.is_some()))
                 {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
@@ -2702,10 +2710,7 @@ mod renderer_viewer {
         #[test]
         fn renderer_mode_captures_only_a_missing_settled_viewport() {
             assert!(!should_capture_settled(Duration::ZERO, false));
-            assert!(!should_capture_settled(
-                Duration::from_millis(159),
-                false
-            ));
+            assert!(!should_capture_settled(Duration::from_millis(159), false));
             assert!(should_capture_settled(HYBRID_SETTLE_AFTER, false));
             assert!(should_capture_settled(Duration::from_secs(2), false));
             assert!(!should_capture_settled(Duration::from_secs(2), true));

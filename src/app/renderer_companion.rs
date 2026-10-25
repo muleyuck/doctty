@@ -63,7 +63,8 @@ fn source_install_swift_helper() -> Result<PathBuf> {
 
     let mut temp = tempfile::NamedTempFile::new_in(&cache)?;
     temp.write_all(SWIFT)?;
-    temp.as_file().set_permissions(fs::Permissions::from_mode(0o700))?;
+    temp.as_file()
+        .set_permissions(fs::Permissions::from_mode(0o700))?;
     temp.persist(&destination)
         .with_context(|| format!("install {}", destination.display()))?;
     Ok(destination)
