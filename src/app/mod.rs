@@ -48,7 +48,6 @@ pub fn run(args: DocttyArgs) -> Result<()> {
             config.watch,
             config.mermaid_mode,
         );
-        return Ok(());
     }
 
     let rendered = {

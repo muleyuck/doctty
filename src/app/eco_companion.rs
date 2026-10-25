@@ -69,7 +69,7 @@ fn source_install_swift_helper() -> Result<PathBuf> {
     Ok(destination)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(test, not(target_os = "macos")))]
 fn source_install_swift_helper() -> Result<PathBuf> {
     bail!("Swift/WebKit helper requires macOS")
 }
