@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           test "$(uname -m)" = "arm64"
-          cargo test --locked --no-default-features --lib default_backend_tracks_explicit_ci_bundle_feature
+          cargo test --locked --lib companions_must_reside_beside_the_cli_even_in_paths_with_spaces
 
       - name: Build precompiled Rust and Swift Eco bundle
         id: package
@@ -92,9 +92,6 @@ jobs:
           grep -q 'Bundled cli smoke' "$RUNNER_TEMP/headless-default.txt"
           printf '# Bundled no-mermaid\\n' | "$bundle/doctty" --no-mermaid - > "$RUNNER_TEMP/headless-disabled.txt"
           grep -q 'Bundled no-mermaid' "$RUNNER_TEMP/headless-disabled.txt"
-          # Keep hidden compatibility options parseable in scripted use.
-          printf '# Legacy flag\\n' | "$bundle/doctty" --legacy-renderer - > "$RUNNER_TEMP/headless-legacy.txt"
-          grep -q 'Legacy flag' "$RUNNER_TEMP/headless-legacy.txt"
 
       - name: Verify ad-hoc-signed release ZIP without publishing
         id: release_zip

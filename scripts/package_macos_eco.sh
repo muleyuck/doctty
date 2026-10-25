@@ -26,7 +26,7 @@ mkdir -p "$BUNDLE"
 SWIFT_BIN="$(bash "$ROOT/scripts/build_macos_webkit_helper.sh" --build-only)"
 # Distinguish the complete CI bundle from a source-only Cargo install.
 # The feature is enabled only when both native companions are shipped.
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --features bundled-eco --bin doctty --bin doctty-eco
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --bin doctty --bin doctty-eco
 install -m 0755 "$ROOT/target/release/doctty" "$BUNDLE/doctty"
 install -m 0755 "$ROOT/target/release/doctty-eco" "$BUNDLE/doctty-eco"
 install -m 0755 "$SWIFT_BIN" "$BUNDLE/doctty-webkit-swift"

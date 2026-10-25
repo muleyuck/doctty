@@ -79,22 +79,15 @@ above. Apple Developer Program enrollment is deferred.
 cargo install --path . --locked
 ```
 
-Source-only installs do **not** include the compiled Swift and Rust Eco
-companions. They preserve the historical interactive WebKit renderer by
-default: `doctty README.md` still works with the Swift tooling normally
-required for a source build. The hidden `--experimental-eco` flag remains solely as a compatibility alias
-for developers who already installed both matching companions.
-
-CI-built macOS bundles enable the Cargo `bundled-eco` feature and include
-the two companions, so `doctty README.md` uses Eco automatically without
-running Swift or Cargo on the end-user machine. Bundles with missing helpers
-fail explicitly instead of falling back to an interpreter. Headless/piped
-text output remains unchanged.
+On macOS, a source installation builds both Rust executables and compiles the
+Swift/WebKit helper at build time. The optimized renderer is the default
+for both source and prebuilt installations. The Swift compiler is not
+required when running the app. Piped/headless text output remains unchanged.
 
 ## Usage
 
 ```bash
-doctty README.md                           # compiled Eco on macOS (prebuilt archive)
+doctty README.md                           # optimized native renderer on macOS
 doctty --theme dark notes.md               # dark theme
 doctty --watch examples/rich_markdown.md    # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
@@ -130,11 +123,10 @@ From a clone, build with Cargo for development:
 cargo install --path . --locked
 ```
 
-A source-only install uses the historical interactive renderer without any
-extra flags and may require a working Swift toolchain. **Do not** enable
-`--features bundled-eco` in a source-only Cargo installation: the feature
-is reserved for archives that ship both compiled companion executables.
-For compiler-free end-user installation, use the CI-built archive instead.
+Source installations require Swift's compiler (`swiftc`) on macOS at **build
+time only**, to embed the native WebKit helper. The app uses the same rendering
+implementation as the prebuilt archive. For a compiler-free installation,
+use the CI-built archive instead.
 
 For development, `make build` creates `./bin/doctty`. The generated `bin/`
 directory is not committed.

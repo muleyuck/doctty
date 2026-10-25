@@ -11,6 +11,8 @@ ifneq ($(UNAME_S),Darwin)
 else
 	codesign --force --sign - target/release/doctty
 	cp target/release/doctty bin/doctty
+	cp target/release/doctty-eco bin/doctty-eco
+	codesign --force --sign - bin/doctty-eco
 	codesign --force --sign - bin/doctty
 endif
 
