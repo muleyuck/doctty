@@ -41,11 +41,11 @@ pub fn run(args: DocttyArgs) -> Result<()> {
     };
 
     if io::stdout().is_terminal() && io::stdin().is_terminal() {
-        if !crate::ui::terminal::is_supported_terminal(
-            std::env::var("TERM_PROGRAM").ok().as_deref(),
-            std::env::var("TERM").ok().as_deref(),
-        ) {
-            bail!("interactive mode requires Ghostty or Kitty");
+        if !crate::ui::terminal::probe_kitty_graphics_support()? {
+            bail!(
+                "interactive mode requires a terminal with Kitty graphics support, \
+                 such as Ghostty or Kitty"
+            );
         }
         if use_eco {
             return eco_companion::run(

@@ -15,19 +15,36 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+
+
+KITTY_SUPPORT_REPLY = b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22c"
+
+
+def answer_kitty_query(master: int) -> None:
+    """Act as a Kitty graphics terminal for doctty's startup probe."""
+    received = b""
+    answered = False
+    while True:
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            return
+        if not chunk:
+            return
+        received += chunk
+        if not answered and b"a=q" in received and b"\x1b[c" in received:
+            os.write(master, KITTY_SUPPORT_REPLY)
+            answered = True
 
 
 def run_interactive(executable: Path, markdown: Path, flags: list[str], record: Path) -> int:
     master, slave = pty.openpty()
+    responder = threading.Thread(target=answer_kitty_query, args=(master,), daemon=True)
+    responder.start()
     try:
         env = os.environ.copy()
-        env.update(
-            {
-                "TERM_PROGRAM": "ghostty",
-                "TERM": "xterm-256color",
-                "DOCTTY_ECO_SMOKE_RECORD": str(record),
-            }
-        )
+        env["DOCTTY_ECO_SMOKE_RECORD"] = str(record)
         result = subprocess.run(
             [str(executable), *flags, str(markdown)],
             stdin=slave,
