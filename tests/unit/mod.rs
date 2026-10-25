@@ -11,4 +11,3 @@ mod plain_text_render;
 mod render_pipeline;
 mod svg_render;
 mod terminal_render;
-mod terminal_support;

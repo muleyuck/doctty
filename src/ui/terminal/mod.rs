@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::BTreeSet,
     io::{self, Write},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::Result;
@@ -34,7 +34,7 @@ use crate::render::text::render_document;
 use crate::{
     core::{config::AppConfig, document::Document, theme::ThemeTokens},
     io::fs::FileSystemDocumentSource,
-    io::kitty_graphics::{DeleteCommand, encode_delete},
+    io::kitty_graphics::{DeleteCommand, encode_delete, encode_support_query, parse_support_reply},
     io::{browser, image_decoder::ImageDecoder, mermaid_cli::MermaidCliRenderer},
     render::{
         markdown::parse_document,
@@ -81,10 +81,68 @@ pub struct TerminalViewer {
     cell_metrics: CellMetrics,
 }
 
-#[must_use]
-pub fn is_supported_terminal(term_program: Option<&str>, term: Option<&str>) -> bool {
-    term_program.is_some_and(|value| value.eq_ignore_ascii_case("ghostty"))
-        || term.is_some_and(|value| value.contains("kitty"))
+const SUPPORT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Asks the terminal on stdin/stdout whether it accepts Kitty graphics.
+/// Multiplexers such as Herdr answer for their panes, so the terminal name
+/// is not needed.
+pub fn probe_kitty_graphics_support() -> Result<bool> {
+    enable_raw_mode()?;
+    let supported = query_kitty_graphics_support();
+    disable_raw_mode()?;
+    supported
+}
+
+#[cfg(unix)]
+fn query_kitty_graphics_support() -> Result<bool> {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        io::Errno,
+    };
+    use std::os::fd::AsFd;
+
+    let mut stdout = io::stdout();
+    stdout.write_all(encode_support_query().as_bytes())?;
+    stdout.flush()?;
+
+    let stdin = io::stdin();
+    let stdin = stdin.as_fd();
+    let deadline = Instant::now() + SUPPORT_QUERY_TIMEOUT;
+    let mut reply = Vec::new();
+    let mut buffer = [0_u8; 256];
+    loop {
+        if let Some(supported) = parse_support_reply(&reply) {
+            return Ok(supported);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        let timeout = Timespec::try_from(remaining)?;
+        let mut fds = [PollFd::new(&stdin, PollFlags::IN)];
+        match poll(&mut fds, Some(&timeout)) {
+            Ok(0) => return Ok(false),
+            Ok(_) => {}
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+        // Read the fd directly: std's buffered stdin could keep bytes that
+        // belong to the viewer's first key events.
+        let read = match rustix::io::read(stdin, &mut buffer) {
+            Ok(read) => read,
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if read == 0 {
+            return Ok(false);
+        }
+        reply.extend_from_slice(&buffer[..read]);
+    }
+}
+
+#[cfg(not(unix))]
+fn query_kitty_graphics_support() -> Result<bool> {
+    Ok(false)
 }
 
 impl TerminalViewer {
