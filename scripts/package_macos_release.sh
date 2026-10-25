@@ -43,7 +43,7 @@ if [[ ! -d "$BUNDLE" ]]; then
   exit 2
 fi
 
-for executable in doctty doctty-eco doctty-webkit-swift; do
+for executable in doctty doctty-renderer doctty-webkit-swift; do
   file="$BUNDLE/$executable"
   test -x "$file" || { echo "Missing executable: $executable" >&2; exit 2; }
   lipo "$file" -verify_arch arm64 >&2
@@ -90,8 +90,8 @@ doctty — Apple Silicon release preview (unsigned by a Developer ID)
 This ZIP mirrors turnray's no-paid-Apple-account distribution method:
 three compiled arm64 executables signed ad-hoc, NOT notarized.
 
-  doctty               Rust CLI; Eco mode is the default
-  doctty-eco  Compiled Rust WebKit Eco companion
+  doctty               Rust CLI; standard mode is the default
+  doctty-renderer  Compiled Rust WebKit renderer companion
   doctty-webkit-swift  Compiled native Swift/WebKit helper
   doctty-cli           Homebrew launcher; resolves the complete bundle
 
@@ -99,7 +99,7 @@ Run ./doctty /absolute/path/to/README.md in Ghostty or Kitty.
 Do not move the native executables out of this directory individually.
 Neither Swift nor Rust needs to be installed by the user.
 
-Gatekeeper may separately block doctty, doctty-eco, or doctty-webkit-swift.
+Gatekeeper may separately block doctty, doctty-renderer, or doctty-webkit-swift.
 First verify that this ZIP came from the official GitHub Releases page and
 that its SHA256 checksum matches the published value. After trying to run
 ./doctty, open macOS System Settings > Privacy & Security and use the
@@ -112,7 +112,7 @@ DOC
 
 (
   cd "$BUNDLE"
-  shasum -a 256 doctty doctty-cli doctty-eco doctty-webkit-swift README.txt > SHA256SUMS
+  shasum -a 256 doctty doctty-cli doctty-renderer doctty-webkit-swift README.txt > SHA256SUMS
   shasum -a 256 -c SHA256SUMS >&2
 )
 

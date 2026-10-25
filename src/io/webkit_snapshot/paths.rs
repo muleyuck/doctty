@@ -58,7 +58,7 @@ pub(super) fn common_read_access_root(html: &str, base_dir: &Path) -> PathBuf {
     snapshot_asset_root(html, base_dir)
 }
 
-// The persistent Eco HTML may be created outside the Markdown folder
+// The persistent renderer HTML may be created outside the Markdown folder
 // (e.g. when the source directory is read-only). Extend the existing
 // asset-aware read root to include both the generated HTML and linked files.
 pub(super) fn viewer_read_access_root(html: &str, base_dir: &Path, html_path: &Path) -> PathBuf {

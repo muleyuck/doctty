@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Result, bail};
 use tracing::info_span;
 
-mod eco_companion;
+mod renderer_companion;
 
 use crate::{
     cli::DocttyArgs,
@@ -14,14 +14,9 @@ use crate::{
     io::fs::FileSystemDocumentSource,
     render::{markdown::parse_document, text::render_plain_text},
     support::tracing::init_tracing,
-    ui::terminal::TerminalViewer,
 };
 
 pub fn run(args: DocttyArgs) -> Result<()> {
-    // CI-built macOS bundles enable `bundled-eco` for the compiled renderer.
-    // Source-only Cargo installations keep their existing legacy behavior.
-    // Explicit --experimental-eco remains supported with adjacent sidecars.
-    let use_eco = eco_companion::use_eco(args.experimental_eco, args.legacy_renderer);
     init_tracing();
 
     let _startup_span = info_span!("app.run").entered();
@@ -47,20 +42,12 @@ pub fn run(args: DocttyArgs) -> Result<()> {
                  such as Ghostty or Kitty"
             );
         }
-        if use_eco {
-            return eco_companion::run(
-                &config.path,
-                config.theme,
-                config.watch,
-                config.mermaid_mode,
-            );
-        }
-        let mut viewer = {
-            let _span = info_span!("startup.create_viewer").entered();
-            TerminalViewer::try_new(config, source, document, content)?
-        };
-        viewer.run()?;
-        return Ok(());
+        return renderer_companion::run(
+            &config.path,
+            config.theme,
+            config.watch,
+            config.mermaid_mode,
+        );
     }
 
     let rendered = {

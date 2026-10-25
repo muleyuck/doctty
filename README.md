@@ -33,10 +33,10 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
-**macOS prebuilt Eco preview (draft, not an official release)**: the
-`macOS Eco bundle validation` GitHub Actions workflow produces
+**macOS prebuilt renderer preview (draft, not an official release)**: the
+`macOS renderer bundle validation` GitHub Actions workflow produces
 an Apple Silicon (arm64) artifact named
-`doctty-eco-prebuilt-macOS-arm64`, containing precompiled
+`doctty-renderer-prebuilt-macOS-arm64`, containing precompiled
 `doctty`, its Rust viewport companion and the optimized Swift/WebKit
 helper. Extract the inner `.tar.gz` and run in Ghostty or Kitty:
 
@@ -50,7 +50,7 @@ arm64 architecture of all three executables. These are macOS 15 CI
 builds; support on earlier macOS versions has not been established.
 
 No Swift compiler, Rust toolchain or repository checkout is needed for this
-prebuilt Eco preview.
+prebuilt renderer preview.
 
 **Planned turnray-style distribution (after release review):** CI will also
 produce a versioned Apple Silicon ZIP containing ad-hoc-signed native binaries,
@@ -63,7 +63,7 @@ doctty README.md
 ```
 
 The ZIP is **not Apple-notarized**. macOS Gatekeeper may initially block
-`doctty` and may independently block `doctty-eco` or `doctty-webkit-swift`.
+`doctty` and may independently block `doctty-renderer` or `doctty-webkit-swift`.
 On a verified download, use **System Settings → Privacy & Security → Open Anyway**
 for each blocked executable as needed, then retry `doctty`. An initial
 `WebKit helper closed its output` error may mean the Swift helper was still
@@ -79,22 +79,15 @@ above. Apple Developer Program enrollment is deferred.
 cargo install --path . --locked
 ```
 
-Source-only installs do **not** include the compiled Swift and Rust Eco
-companions. They preserve the historical interactive WebKit renderer by
-default: `doctty README.md` still works with the Swift tooling normally
-required for a source build. The hidden `--experimental-eco` flag remains solely as a compatibility alias
-for developers who already installed both matching companions.
-
-CI-built macOS bundles enable the Cargo `bundled-eco` feature and include
-the two companions, so `doctty README.md` uses Eco automatically without
-running Swift or Cargo on the end-user machine. Bundles with missing helpers
-fail explicitly instead of falling back to an interpreter. Headless/piped
-text output remains unchanged.
+On macOS, a source installation builds both Rust executables and compiles the
+Swift/WebKit helper at build time. The optimized renderer is the default
+for both source and prebuilt installations. The Swift compiler is not
+required when running the app. Piped/headless text output remains unchanged.
 
 ## Usage
 
 ```bash
-doctty README.md                           # compiled Eco on macOS (prebuilt archive)
+doctty README.md                           # optimized native renderer on macOS
 doctty --theme dark notes.md               # dark theme
 doctty --watch examples/rich_markdown.md    # auto-reload on save
 doctty --no-mermaid spec.md                # skip Mermaid rendering
@@ -119,7 +112,7 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
-- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built Eco archive). Linux runs in headless/plain-text mode.
+- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built renderer archive). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
 
 ## Installation
@@ -130,11 +123,10 @@ From a clone, build with Cargo for development:
 cargo install --path . --locked
 ```
 
-A source-only install uses the historical interactive renderer without any
-extra flags and may require a working Swift toolchain. **Do not** enable
-`--features bundled-eco` in a source-only Cargo installation: the feature
-is reserved for archives that ship both compiled companion executables.
-For compiler-free end-user installation, use the CI-built archive instead.
+Source installations require Swift's compiler (`swiftc`) on macOS at **build
+time only**, to embed the native WebKit helper. The app uses the same rendering
+implementation as the prebuilt archive. For a compiler-free installation,
+use the CI-built archive instead.
 
 For development, `make build` creates `./bin/doctty`. The generated `bin/`
 directory is not committed.

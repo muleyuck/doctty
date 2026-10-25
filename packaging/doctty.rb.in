@@ -19,7 +19,7 @@ cask "doctty" do
     doctty requires Ghostty or Kitty for interactive rendering.
 
     This build is ad-hoc signed and is NOT Apple-notarized. Gatekeeper may
-    independently block doctty and its native Eco or Swift/WebKit helpers.
+    independently block doctty and its native or Swift/WebKit helpers.
     After verifying the official release checksum and source, go to macOS
     System Settings > Privacy & Security > Open Anyway for each blocked
     executable as needed, then retry doctty. A "WebKit helper closed its

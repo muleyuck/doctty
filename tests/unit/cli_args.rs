@@ -27,37 +27,3 @@ fn defaults_theme_to_system() {
 
     assert_eq!(args.theme, Theme::System);
 }
-
-#[test]
-fn experimental_eco_alias_remains_available() {
-    let normal = DocttyArgs::parse_from(["doctty", "sample.md"]);
-    assert!(!normal.experimental_eco);
-
-    let eco = DocttyArgs::parse_from(["doctty", "--experimental-eco", "sample.md"]);
-    assert!(eco.experimental_eco);
-    assert_eq!(eco.path.as_deref(), Some(std::path::Path::new("sample.md")));
-
-    let themed = DocttyArgs::parse_from([
-        "doctty",
-        "--experimental-eco",
-        "--theme",
-        "dark",
-        "sample.md",
-    ]);
-    assert!(themed.experimental_eco);
-    assert_eq!(themed.theme, Theme::Dark);
-
-    let watched = DocttyArgs::parse_from(["doctty", "--experimental-eco", "--watch", "sample.md"]);
-    assert!(watched.experimental_eco);
-    assert!(watched.watch);
-}
-
-#[test]
-fn legacy_renderer_is_explicit_and_off_by_default() {
-    let normal = DocttyArgs::parse_from(["doctty", "sample.md"]);
-    assert!(!normal.legacy_renderer);
-    assert!(!normal.experimental_eco);
-
-    let legacy = DocttyArgs::parse_from(["doctty", "--legacy-renderer", "sample.md"]);
-    assert!(legacy.legacy_renderer);
-}

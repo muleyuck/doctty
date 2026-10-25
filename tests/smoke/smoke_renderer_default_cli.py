@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Verify macOS packaged doctty chooses native Eco without executing Swift.
+"""Verify macOS packaged doctty chooses native without executing Swift.
 
-The compiled CLI runs inside a pseudo-terminal, but the two companion files
-are test stubs. This checks argument/environment forwarding and the
-fail-closed missing-helper contract without running WebKit or a real browser.
+The compiled CLI runs inside a pseudo-terminal with a renderer stub.
+This checks argument forwarding, missing-renderer failure, and the compiled
+Swift helper extraction used for source installs, without opening WebKit.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ KITTY_SUPPORT_REPLY = b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22c"
 
 
 def answer_kitty_query(master: int) -> None:
-    """Act as a Kitty graphics terminal for doctty's startup probe."""
+    """Answer the terminal graphics capability query in a pseudo-terminal."""
     received = b""
     answered = False
     while True:
@@ -44,7 +44,13 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
     responder.start()
     try:
         env = os.environ.copy()
-        env["DOCTTY_ECO_SMOKE_RECORD"] = str(record)
+        env.update(
+            {
+                "TERM_PROGRAM": "ghostty",
+                "TERM": "xterm-256color",
+                "DOCTTY_RENDERER_SMOKE_RECORD": str(record),
+            }
+        )
         result = subprocess.run(
             [str(executable), *flags, str(markdown)],
             stdin=slave,
@@ -61,22 +67,22 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
         os.close(master)
 
 
-def check(bundle: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="doctty compiled eco smoke ") as root:
+def check(bundle: Path, source_install: bool = False) -> None:
+    with tempfile.TemporaryDirectory(prefix="doctty compiled renderer smoke ") as root:
         test_dir = Path(root) / "installed bundle with spaces"
         test_dir.mkdir()
         doctty = test_dir / "doctty"
         shutil.copy2(bundle / "doctty", doctty)
 
         markdown = test_dir / "sample document.md"
-        markdown.write_text("# Default Eco test\n\nHello.\n", encoding="utf-8")
+        markdown.write_text("# Default test\n\nHello.\n", encoding="utf-8")
         record = test_dir / "invoked.json"
 
         # Missing helpers must fail, not implicitly run the old Swift script.
         assert run_interactive(doctty, markdown, [], record) != 0
         assert not record.exists()
 
-        viewer = test_dir / "doctty-eco"
+        viewer = test_dir / "doctty-renderer"
         viewer.write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
@@ -87,13 +93,14 @@ def check(bundle: Path) -> None:
             "    'theme': os.environ.get('DOCTTY_WEBKIT_THEME'),\n"
             "    'mermaid': os.environ.get('DOCTTY_WEBKIT_MERMAID'),\n"
             "}\n"
-            "Path(os.environ['DOCTTY_ECO_SMOKE_RECORD']).write_text(json.dumps(data))\n",
+            "Path(os.environ['DOCTTY_RENDERER_SMOKE_RECORD']).write_text(json.dumps(data))\n",
             encoding="utf-8",
         )
         viewer.chmod(0o755)
         helper = test_dir / "doctty-webkit-swift"
-        helper.write_bytes(b"CI-only native helper placeholder\n")
-        helper.chmod(0o755)
+        if not source_install:
+            helper.write_bytes(b"CI-only native helper placeholder\n")
+            helper.chmod(0o755)
 
         cases = [
             ([], ["--hybrid-image", str(markdown)], "enabled", None),
@@ -109,18 +116,24 @@ def check(bundle: Path) -> None:
                 record.unlink()
             exit_code = run_interactive(doctty, markdown, flags, record)
             if exit_code != 0:
-                raise AssertionError(f"doctty failed to launch default Eco: {exit_code}")
+                raise AssertionError(f"doctty failed to launch the standard renderer: {exit_code}")
             data = json.loads(record.read_text(encoding="utf-8"))
             assert data["args"] == expected_args, data
-            assert data["swift"] == str(helper), data
+            if source_install:
+                extracted = Path(data["swift"])
+                assert extracted.is_file() and os.access(extracted, os.X_OK), data
+                assert "Library/Caches/doctty/native" in str(extracted), data
+                assert extracted != helper, data
+            else:
+                assert data["swift"] == str(helper), data
             assert data["mermaid"] == expected_mermaid, data
             if expected_theme is not None:
                 assert data["theme"] == expected_theme, data
 
-    print("OK: normal interactive doctty uses adjacent compiled Eco companions")
+    print("OK: interactive doctty uses the compiled renderer and Swift helper")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: smoke_eco_default_cli.py /path/to/unpacked/bundle")
-    check(Path(sys.argv[1]))
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--source-install"):
+        raise SystemExit("usage: smoke_renderer_default_cli.py /path/to/bundle [--source-install]")
+    check(Path(sys.argv[1]), source_install=len(sys.argv) == 3)
