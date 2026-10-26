@@ -10,6 +10,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private let outputURL: URL
     private var width: CGFloat
     private var height: CGFloat
+    // Snapshot width in pixels; 0 keeps the backing scale.
+    private var pixelWidth: CGFloat
     private let webView: WKWebView
     private var documentHeight: Double = 0
     private var loaded = false
@@ -18,12 +20,16 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private var snapshotCompleted = 0
     private var lastSnapshotRequestedAt: Date?
 
-    init(htmlURL: URL, readRoot: URL, outputURL: URL, width: CGFloat, height: CGFloat) {
+    init(
+        htmlURL: URL, readRoot: URL, outputURL: URL,
+        width: CGFloat, height: CGFloat, pixelWidth: CGFloat
+    ) {
         self.htmlURL = htmlURL
         self.readRoot = readRoot
         self.outputURL = outputURL
         self.width = width
         self.height = height
+        self.pixelWidth = pixelWidth
         self.webView = WKWebView(
             frame: CGRect(x: 0, y: 0, width: width, height: height * 2),
             configuration: WKWebViewConfiguration()
@@ -110,6 +116,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
             let nextHeight = max(1, (request["height"] as? NSNumber)?.doubleValue ?? Double(height))
             width = CGFloat(nextWidth)
             height = CGFloat(nextHeight)
+            pixelWidth = CGFloat(max(0, (request["pixelWidth"] as? NSNumber)?.doubleValue ?? 0))
             // Reflow the *same* loaded WKWebView. Do not compile/start a new
             // Swift process or reload the document on every terminal resize.
             webView.frame = CGRect(x: 0, y: 0, width: width, height: height * 2)
@@ -268,6 +275,11 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private func capture(started: Date, requestedY: Double, actualY: Double) {
         let configuration = WKSnapshotConfiguration()
         configuration.rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
+        if pixelWidth > 0 {
+            // snapshotWidth is in points; WebKit multiplies it by the backing scale.
+            let backingScale = NSScreen.main?.backingScaleFactor ?? 1
+            configuration.snapshotWidth = NSNumber(value: Double(pixelWidth / backingScale))
+        }
         configuration.afterScreenUpdates = true
         let captureStarted = Date()
         webView.takeSnapshot(with: configuration) { image, error in
@@ -317,11 +329,12 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 }
 
 let args = CommandLine.arguments
-guard args.count == 6,
+guard args.count == 7,
       let width = Double(args[4]), let height = Double(args[5]),
-      width > 0, height > 0
+      let pixelWidth = Double(args[6]),
+      width > 0, height > 0, pixelWidth >= 0
 else {
-    fputs("usage: webkit_viewport.swift HTML READ_ROOT OUTPUT_PNG WIDTH HEIGHT\n", stderr)
+    fputs("usage: webkit_viewport.swift HTML READ_ROOT OUTPUT_PNG WIDTH HEIGHT PIXEL_WIDTH\n", stderr)
     exit(2)
 }
 
@@ -330,7 +343,8 @@ let runner = ViewportRunner(
     readRoot: URL(fileURLWithPath: args[2], isDirectory: true),
     outputURL: URL(fileURLWithPath: args[3]),
     width: CGFloat(width),
-    height: CGFloat(height)
+    height: CGFloat(height),
+    pixelWidth: CGFloat(pixelWidth)
 )
 runner.start()
 

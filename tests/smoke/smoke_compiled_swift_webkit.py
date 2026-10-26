@@ -31,7 +31,7 @@ def test(binary: Path) -> None:
         stderr_path = root / "helper-stderr.log"
         with stderr_path.open("wb") as stderr:
             process = subprocess.Popen(
-                [str(binary.resolve()), str(html), str(root), str(png), "640", "400"],
+                [str(binary.resolve()), str(html), str(root), str(png), "640", "400", "0"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
@@ -105,6 +105,16 @@ def test(binary: Path) -> None:
                         }
                     )
                 )
+
+                # A terminal pixel width replaces the backing-scale width.
+                request(
+                    {"type": "resize", "width": 640, "height": 400, "pixelWidth": 960},
+                    "resized",
+                )
+                request({"type": "snapshot", "y": 0}, "snapshot")
+                scaled_width, scaled_height = struct.unpack(">II", png.read_bytes()[16:24])
+                assert scaled_width == 960, (scaled_width, scaled_height)
+                assert abs(scaled_height - 1200) <= 2, (scaled_width, scaled_height)
 
                 # quit intentionally does not emit a response.
                 assert process.stdin is not None
