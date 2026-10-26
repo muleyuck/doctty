@@ -59,6 +59,9 @@ mod renderer_viewer {
     // Experimental bounded tile store: four uploaded 2-viewport snapshots
     // and at most one additional in-flight image.
     const MAX_TILE_CACHE: usize = 4;
+    // Decoded bytes for cached tiles plus one in flight. Herdr panes evict
+    // Kitty images beyond 64 MiB, which blanks a tile doctty thinks is cached.
+    const TILE_CACHE_BUDGET_BYTES: usize = 56 * 1024 * 1024;
     const LAST_TILE_IMAGE_ID: u32 = 93_006;
     // Alternating IDs let a resized frame arrive before the old placement is deleted.
     const FIRST_RESIZE_IMAGE_ID: u32 = 93_007;
@@ -1431,6 +1434,21 @@ mod renderer_viewer {
             .map_or(usize::MAX, |(rank, _)| rank)
     }
 
+    // Every tile in a geometry has the same size. At least two slots keep the
+    // displayed tile replaceable.
+    fn tile_cache_capacity(cached: &[ImageCache]) -> usize {
+        let Some(tile) = cached.first() else {
+            return MAX_TILE_CACHE;
+        };
+        let tile_bytes = (tile.image_width as usize)
+            .saturating_mul(tile.image_height as usize)
+            .saturating_mul(4)
+            .max(1);
+        (TILE_CACHE_BUDGET_BYTES / tile_bytes)
+            .saturating_sub(1)
+            .clamp(2, MAX_TILE_CACHE)
+    }
+
     fn should_admit_tile(
         cached: &[ImageCache],
         position: f64,
@@ -1440,7 +1458,7 @@ mod renderer_viewer {
         origin: f64,
         displayed_id: Option<u32>,
     ) -> bool {
-        if cached.len() < MAX_TILE_CACHE {
+        if cached.len() < tile_cache_capacity(cached) {
             return true;
         }
         // Match evict_tile's actual selection, then admit only if the new
@@ -1560,7 +1578,7 @@ mod renderer_viewer {
     // Independent prototype for comparison with the original single-prefetch
     // viewer. All costly WebKit captures and PNG transfers stay on the worker.
     // The event loop never waits for a snapshot. Images held by Kitty are
-    // bounded to MAX_TILE_CACHE + one upload and freed on eviction/exit.
+    // bounded to tile_cache_capacity + one upload and freed on eviction/exit.
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum ViewerExit {
         Quit,
@@ -1913,7 +1931,7 @@ mod renderer_viewer {
                                 last_displayed.map(|v| v.0),
                             )
                     }) {
-                        if cached.len() >= MAX_TILE_CACHE {
+                        if cached.len() >= tile_cache_capacity(&cached) {
                             if let Some(old) = evict_tile(
                                 &mut cached,
                                 position,
@@ -1925,7 +1943,7 @@ mod renderer_viewer {
                                 out.flush()?;
                             }
                         }
-                        if cached.len() < MAX_TILE_CACHE {
+                        if cached.len() < tile_cache_capacity(&cached) {
                             if let Some(image_id) = tile_image_id(&cached) {
                                 requests.send(WorkerCommand::Snapshot {
                                     origin,
@@ -3332,6 +3350,36 @@ mod renderer_viewer {
                 last_upload_ms: 0.0,
                 png_bytes: 100,
             }
+        }
+
+        fn cached_with_size(image_width: u32, image_height: u32) -> ImageCache {
+            ImageCache {
+                image_width,
+                image_height,
+                ..cached_at(0.0)
+            }
+        }
+
+        #[test]
+        fn tile_cache_capacity_keeps_decoded_tiles_within_budget() {
+            assert_eq!(tile_cache_capacity(&[]), MAX_TILE_CACHE);
+            // Small tiles keep the full prefetch window.
+            assert_eq!(
+                tile_cache_capacity(&[cached_with_size(800, 2000)]),
+                MAX_TILE_CACHE
+            );
+            // A 101x58-cell Herdr pane at its 1414px pixel width: about 18 MB
+            // per tile, so two cached tiles plus one in flight fit.
+            let tile = cached_with_size(1414, 3192);
+            let capacity = tile_cache_capacity(&[tile]);
+            assert_eq!(capacity, 2);
+            assert!((capacity + 1) * 1414 * 3192 * 4 <= TILE_CACHE_BUDGET_BYTES);
+        }
+
+        #[test]
+        fn tile_cache_capacity_never_drops_below_displayed_plus_one() {
+            // Below two, the displayed tile could never be replaced.
+            assert_eq!(tile_cache_capacity(&[cached_with_size(4000, 8000)]), 2);
         }
 
         #[test]
