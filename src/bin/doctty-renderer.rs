@@ -374,6 +374,12 @@ mod renderer_viewer {
         }
     }
 
+    // Extra resolution is only downscaled by the terminal, but Herdr drops
+    // images over a 30 MiB base64 budget. 0 keeps WebKit's backing scale.
+    fn terminal_pixel_width() -> u32 {
+        terminal::window_size().map_or(0, |window| u32::from(window.width))
+    }
+
     struct SwiftProcess {
         child: Child,
         input: std::process::ChildStdin,
@@ -387,6 +393,7 @@ mod renderer_viewer {
             png: &Path,
             width: u32,
             height: u32,
+            pixel_width: u32,
         ) -> Result<Self> {
             let helper =
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("native/macos/webkit_viewport.swift");
@@ -430,6 +437,7 @@ mod renderer_viewer {
                 .arg(png)
                 .arg(width.to_string())
                 .arg(height.to_string())
+                .arg(pixel_width.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
@@ -2062,17 +2070,19 @@ mod renderer_viewer {
         let mut progress = 0.0;
 
         let mut swift: Option<SwiftProcess> = None;
-        let mut last_geometry: Option<(u16, u16)> = None;
+        let mut last_geometry: Option<(u16, u16, u32)> = None;
         let mut resize_count = 0_usize;
         loop {
             let (columns, total_rows) = terminal::size()?;
             let rows = total_rows.saturating_sub(1).max(1);
             let width = u32::from(columns.max(1)).saturating_mul(8);
             let height = u32::from(rows).saturating_mul(16);
+            let pixel_width = terminal_pixel_width();
             let mut helper = if let Some(mut existing) = swift.take() {
-                if last_geometry != Some((columns, rows)) {
+                if last_geometry != Some((columns, rows, pixel_width)) {
                     let response = existing.request(&json!({
-                        "type": "resize", "width": width, "height": height
+                        "type": "resize", "width": width, "height": height,
+                        "pixelWidth": pixel_width
                     }))?;
                     if response["kind"] != "resized" {
                         bail!("unexpected WebKit resize reply: {response}");
@@ -2080,14 +2090,15 @@ mod renderer_viewer {
                 }
                 existing
             } else {
-                let mut process = SwiftProcess::start(&html, source_dir, &output, width, height)?;
+                let mut process =
+                    SwiftProcess::start(&html, source_dir, &output, width, height, pixel_width)?;
                 let ready = process.response()?;
                 if ready["kind"] != "ready" {
                     bail!("expected WebKit readiness response: {ready}");
                 }
                 process
             };
-            last_geometry = Some((columns, rows));
+            last_geometry = Some((columns, rows, pixel_width));
             // DOM metrics and preview coordinates must be regenerated after
             // WebKit's CSS reflow, even though the WKWebView process is reused.
             let outline_reply = if hybrid {
@@ -2283,7 +2294,8 @@ mod renderer_viewer {
         let width = u32::from(cols).saturating_mul(8);
         let height = u32::from(rows).saturating_mul(16);
         eprintln!("Starting persistent WKWebView (initial Swift compilation may take time)...");
-        let mut swift = SwiftProcess::start(&html, dir, &output, width, height)?;
+        let mut swift =
+            SwiftProcess::start(&html, dir, &output, width, height, terminal_pixel_width())?;
         let ready = swift.response()?;
         if ready["kind"] != "ready" {
             bail!("expected WebKit readiness response: {ready}");
