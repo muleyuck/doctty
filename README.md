@@ -16,7 +16,7 @@
 
 If you live in [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/), you no longer need to leave the terminal to read a README.
 
-The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by terminals including Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js. At startup, `doctty` asks the terminal whether it accepts Kitty graphics and enables interactive mode only when it does, so multiplexers that answer for their panes, such as Herdr, work too. Ghostty and Kitty are the primary targets.
+The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by terminals including Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js. At startup, `doctty` asks the terminal whether it accepts Kitty graphics and enables interactive mode only when it does, so multiplexers that answer for their panes work too. Ghostty and Kitty are the primary targets; Herdr panes are validated with Herdr 0.9.5 inside Ghostty.
 
 ## Features
 
@@ -110,7 +110,7 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 ## Requirements
 
-- **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required)
+- **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required), or a [Herdr](https://herdr.dev/) pane inside Ghostty (Herdr's `terminal.kitty_graphics` option, on by default)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
 - **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built renderer archive). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
