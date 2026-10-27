@@ -289,12 +289,21 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 self.emit(["kind": "error", "message": error.localizedDescription])
                 return
             }
+            // Encode the CGImage directly; a TIFF round trip through
+            // NSBitmapImageRep doubled the encode time.
+            let png = NSMutableData()
             guard
                 let image,
-                let tiff = image.tiffRepresentation,
-                let bitmap = NSBitmapImageRep(data: tiff),
-                let png = bitmap.representation(using: .png, properties: [:])
+                let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                let destination = CGImageDestinationCreateWithData(
+                    png, "public.png" as CFString, 1, nil
+                )
             else {
+                self.emit(["kind": "error", "message": "could not encode viewport PNG"])
+                return
+            }
+            CGImageDestinationAddImage(destination, cgImage, nil)
+            guard CGImageDestinationFinalize(destination) else {
                 self.emit(["kind": "error", "message": "could not encode viewport PNG"])
                 return
             }
@@ -313,7 +322,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                     "captureMs": captureMs,
                     "encodeMs": encodeMs,
                     "writeMs": writeMs,
-                    "pngBytes": png.count
+                    "pngBytes": png.length
                 ])
             } catch {
                 self.emit(["kind": "error", "message": error.localizedDescription])
