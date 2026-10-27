@@ -2240,10 +2240,11 @@ mod renderer_viewer {
         Ok(())
     }
 
-    // The public CLI selects only the low-CPU capture-after-settle pipeline.
+    // The public CLI prefetches tiles while scrolling. Capturing only after
+    // settling kept the preview on screen during scrolls; prefetching costs
+    // about 3% -> 8% of a core while scrolling and nothing at rest (#41).
     fn hybrid_image_flags(first: &OsStr) -> (bool, bool) {
-        let standard = first == "--hybrid-image";
-        (standard, standard)
+        (first == "--hybrid-image", false)
     }
 
     pub fn run() -> Result<()> {
@@ -2515,9 +2516,10 @@ mod renderer_viewer {
 
         #[test]
         fn hybrid_image_selects_standard_renderer() {
+            // Tiles are prefetched while scrolling, not only after settling.
             assert_eq!(
                 hybrid_image_flags(OsStr::new("--hybrid-image")),
-                (true, true)
+                (true, false)
             );
             assert_eq!(
                 hybrid_image_flags(OsStr::new("--hybrid-image-eco")),
