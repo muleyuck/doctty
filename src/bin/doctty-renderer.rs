@@ -152,8 +152,8 @@ mod renderer_viewer {
         }
     }
 
-    // In the standard mode, the raster outline handles uncached movement.
-    // WebKit only fills the settled viewport, not speculative future tiles.
+    // With capture-after-settle (not the CLI default), the raster outline
+    // handles uncached movement and WebKit fills only the settled viewport.
     fn should_capture_settled(idle_for: Duration, tile_ready: bool) -> bool {
         idle_for >= HYBRID_SETTLE_AFTER && !tile_ready
     }
@@ -194,8 +194,7 @@ mod renderer_viewer {
             KeyCode::Char('J') | KeyCode::PageDown => *position + page,
             KeyCode::Char('K') | KeyCode::PageUp => *position - page,
             // Match the production CLI: g jumps to top and G to the
-            // last scrollable viewport. Jumps use the existing redraw and
-            // capture-after-settle path; do not force WebKit prefetch.
+            // last scrollable viewport. Jumps use the existing redraw path.
             KeyCode::Char('g') if key.kind == KeyEventKind::Press => 0.0,
             KeyCode::Char('G') if key.kind == KeyEventKind::Press => {
                 (document_height - f64::from(viewport_height)).max(0.0)
