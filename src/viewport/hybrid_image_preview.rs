@@ -333,9 +333,14 @@ fn font_database() -> Arc<usvg::fontdb::Database> {
     }))
 }
 
+/// Pixel size of one preview tile for a viewport, shared with the renderer's
+/// terminal image budget.
+pub(crate) fn raster_size(width: u32, height: u32) -> (u32, u32) {
+    (width.div_ceil(2).clamp(1, 2048), height.clamp(1, 4096))
+}
+
 fn render_png(scene: &Scene, origin: f64, width: u32, height: u32) -> Result<(Vec<u8>, u32, u32)> {
-    let out_width = width.div_ceil(2).clamp(1, 2048);
-    let out_height = height.clamp(1, 4096);
+    let (out_width, out_height) = raster_size(width, height);
     let svg = preview_svg(scene, origin, width, height);
     let options = Options {
         font_family: "Helvetica".to_string(),
