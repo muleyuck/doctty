@@ -153,12 +153,6 @@ mod renderer_viewer {
         }
     }
 
-    // With capture-after-settle (not the CLI default), the raster outline
-    // handles uncached movement and WebKit fills only the settled viewport.
-    fn should_capture_settled(idle_for: Duration, tile_ready: bool) -> bool {
-        idle_for >= HYBRID_SETTLE_AFTER && !tile_ready
-    }
-
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ScrollDirection {
         Forward,
@@ -1668,7 +1662,6 @@ mod renderer_viewer {
         initial_position: f64,
         outline: Option<Vec<OutlineItem>>,
         image_scene: Option<hybrid_image_preview::Scene>,
-        capture_after_settle: bool,
         watcher: Option<&mut WatchState>,
         first_link: Option<&str>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
@@ -1943,10 +1936,11 @@ mod renderer_viewer {
                     }
                 }
 
-                if pending.is_none()
-                    && (!capture_after_settle
-                        || should_capture_settled(idle_for, selected.is_some()))
-                {
+                // Tiles are prefetched while scrolling. Capturing only after
+                // settling kept the preview on screen during scrolls; prefetching
+                // costs about 3% -> 8% of a core while scrolling and nothing at
+                // rest (#41).
+                if pending.is_none() {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
                     let origin = if recovery {
@@ -2088,7 +2082,6 @@ mod renderer_viewer {
         theme: Theme,
         hybrid: bool,
         hybrid_image: bool,
-        capture_after_settle: bool,
         watch: bool,
     ) -> Result<()> {
         let source_dir = document.parent().context("source directory unavailable")?;
@@ -2194,7 +2187,6 @@ mod renderer_viewer {
                 initial_position,
                 outline,
                 scene,
-                capture_after_settle,
                 watcher.as_mut(),
                 first_link.as_deref(),
             )?;
@@ -2276,20 +2268,13 @@ mod renderer_viewer {
         Ok(())
     }
 
-    // The public CLI prefetches tiles while scrolling. Capturing only after
-    // settling kept the preview on screen during scrolls; prefetching costs
-    // about 3% -> 8% of a core while scrolling and nothing at rest (#41).
-    fn hybrid_image_flags(first: &OsStr) -> (bool, bool) {
-        (first == "--hybrid-image", false)
-    }
-
     pub fn run() -> Result<()> {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("interactive mode requires Ghostty or Kitty");
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
-        let (hybrid_image, capture_after_settle) = hybrid_image_flags(&first);
+        let hybrid_image = first == "--hybrid-image";
         let hybrid = first == "--hybrid" || hybrid_image;
         let tiled = first == "--tiled" || hybrid;
         let arg = if tiled {
@@ -2314,14 +2299,7 @@ mod renderer_viewer {
             bail!("unexpected extra WebKit experiment option: {flag:?}");
         }
         if tiled {
-            return run_resizable_tiled(
-                &document,
-                theme,
-                hybrid,
-                hybrid_image,
-                capture_after_settle,
-                watch,
-            );
+            return run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
         }
         let (html, _temp_html, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
@@ -2557,26 +2535,6 @@ mod renderer_viewer {
         }
 
         #[test]
-        fn hybrid_image_selects_standard_renderer() {
-            // Tiles are prefetched while scrolling, not only after settling.
-            assert_eq!(
-                hybrid_image_flags(OsStr::new("--hybrid-image")),
-                (true, false)
-            );
-            assert_eq!(
-                hybrid_image_flags(OsStr::new("--hybrid-image-eco")),
-                (false, false)
-            );
-            assert_eq!(
-                hybrid_image_flags(OsStr::new("--hybrid-image-prefetch")),
-                (false, false)
-            );
-            assert_eq!(hybrid_image_flags(OsStr::new("--hybrid")), (false, false));
-            assert_eq!(hybrid_image_flags(OsStr::new("--tiled")), (false, false));
-            assert_eq!(hybrid_image_flags(OsStr::new("README.md")), (false, false));
-        }
-
-        #[test]
         fn webkit_theme_preserves_standalone_default_and_rejects_bad_values() {
             assert_eq!(webkit_theme(None).ok(), Some(Theme::Light));
             assert_eq!(
@@ -2779,15 +2737,6 @@ mod renderer_viewer {
             fs::remove_file(&source)?;
             assert!(!state.should_reload(Instant::now() + WATCH_POLL_INTERVAL));
             Ok(())
-        }
-
-        #[test]
-        fn renderer_mode_captures_only_a_missing_settled_viewport() {
-            assert!(!should_capture_settled(Duration::ZERO, false));
-            assert!(!should_capture_settled(Duration::from_millis(159), false));
-            assert!(should_capture_settled(HYBRID_SETTLE_AFTER, false));
-            assert!(should_capture_settled(Duration::from_secs(2), false));
-            assert!(!should_capture_settled(Duration::from_secs(2), true));
         }
 
         #[test]
