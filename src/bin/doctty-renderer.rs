@@ -59,9 +59,10 @@ mod renderer_viewer {
     // Experimental bounded tile store: four uploaded 2-viewport snapshots
     // and at most one additional in-flight image.
     const MAX_TILE_CACHE: usize = 4;
-    // Decoded bytes for cached tiles plus one in flight. Herdr panes evict
-    // Kitty images beyond 64 MiB, which blanks a tile doctty thinks is cached.
-    const TILE_CACHE_BUDGET_BYTES: usize = 56 * 1024 * 1024;
+    // Decoded bytes of every Kitty image doctty keeps in the terminal. Herdr
+    // panes evict images beyond 64 MiB, which blanks an image doctty thinks is
+    // cached; previews and tiles share this budget.
+    const PANE_IMAGE_BUDGET_BYTES: usize = 60 * 1024 * 1024;
     const LAST_TILE_IMAGE_ID: u32 = 93_006;
     // Alternating IDs let a resized frame arrive before the old placement is deleted.
     const FIRST_RESIZE_IMAGE_ID: u32 = 93_007;
@@ -377,6 +378,28 @@ mod renderer_viewer {
     // images over a 30 MiB base64 budget. 0 keeps WebKit's backing scale.
     fn terminal_pixel_width() -> u32 {
         terminal::window_size().map_or(0, |window| u32::from(window.width))
+    }
+
+    // A tile is `pixel_width` wide and two viewports tall, so its RGBA size is
+    // 8 * pixel_width^2 * height / width. Large panes trade resolution for a
+    // tile Herdr can still display.
+    fn snapshot_pixel_width(width: u32, height: u32, terminal_pixel_width: u32) -> u32 {
+        // Two cached tiles plus one in flight; this also keeps each tile under
+        // Herdr's ~23.5 MB per-image transfer limit.
+        let max_tile_bytes = tile_budget_bytes(width, height) / 3;
+        let limit = (max_tile_bytes as f64 * f64::from(width.max(1))
+            / (8.0 * f64::from(height.max(1))))
+        .sqrt()
+        .floor() as u32;
+        if terminal_pixel_width == 0 {
+            // 0 keeps WebKit's backing scale, at most 2x on macOS.
+            return if limit >= width.saturating_mul(2) {
+                0
+            } else {
+                limit.max(1)
+            };
+        }
+        terminal_pixel_width.min(limit.max(1))
     }
 
     struct SwiftProcess {
@@ -1441,9 +1464,23 @@ mod renderer_viewer {
             .map_or(usize::MAX, |(rank, _)| rank)
     }
 
+    // What the pane image budget leaves for WebKit tiles once every preview
+    // slot is filled. Extreme viewports keep at least a third for tiles.
+    fn tile_budget_bytes(viewport_width: u32, viewport_height: u32) -> usize {
+        let (preview_width, preview_height) =
+            hybrid_image_preview::raster_size(viewport_width, viewport_height);
+        let previews = hybrid_image_preview::MAX_PREVIEW_CACHE
+            * preview_width as usize
+            * preview_height as usize
+            * 4;
+        PANE_IMAGE_BUDGET_BYTES
+            .saturating_sub(previews)
+            .max(PANE_IMAGE_BUDGET_BYTES / 3)
+    }
+
     // Every tile in a geometry has the same size. At least two slots keep the
     // displayed tile replaceable.
-    fn tile_cache_capacity(cached: &[ImageCache]) -> usize {
+    fn tile_cache_capacity(cached: &[ImageCache], tile_budget: usize) -> usize {
         let Some(tile) = cached.first() else {
             return MAX_TILE_CACHE;
         };
@@ -1451,11 +1488,12 @@ mod renderer_viewer {
             .saturating_mul(tile.image_height as usize)
             .saturating_mul(4)
             .max(1);
-        (TILE_CACHE_BUDGET_BYTES / tile_bytes)
+        (tile_budget / tile_bytes)
             .saturating_sub(1)
             .clamp(2, MAX_TILE_CACHE)
     }
 
+    // Callers admit freely while the cache has room; this decides for a full one.
     fn should_admit_tile(
         cached: &[ImageCache],
         position: f64,
@@ -1465,9 +1503,6 @@ mod renderer_viewer {
         origin: f64,
         displayed_id: Option<u32>,
     ) -> bool {
-        if cached.len() < tile_cache_capacity(cached) {
-            return true;
-        }
         // Match evict_tile's actual selection, then admit only if the new
         // tile outranks the victim. Otherwise stop at a stable cache set.
         let victim = cached
@@ -1638,6 +1673,7 @@ mod renderer_viewer {
         first_link: Option<&str>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
+        let tile_budget = tile_budget_bytes(viewport_width, viewport_height);
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
         let (requests, responses, webkit_worker) = spawn_worker(
             swift,
@@ -1928,6 +1964,7 @@ mod renderer_viewer {
                         // The exact viewport recovery tile must not be blocked
                         // by the speculative prefetch priority guard.
                         recovery
+                            || cached.len() < tile_cache_capacity(&cached, tile_budget)
                             || should_admit_tile(
                                 &cached,
                                 position,
@@ -1938,7 +1975,7 @@ mod renderer_viewer {
                                 last_displayed.map(|v| v.0),
                             )
                     }) {
-                        if cached.len() >= tile_cache_capacity(&cached) {
+                        if cached.len() >= tile_cache_capacity(&cached, tile_budget) {
                             if let Some(old) = evict_tile(
                                 &mut cached,
                                 position,
@@ -1950,7 +1987,7 @@ mod renderer_viewer {
                                 out.flush()?;
                             }
                         }
-                        if cached.len() < tile_cache_capacity(&cached) {
+                        if cached.len() < tile_cache_capacity(&cached, tile_budget) {
                             if let Some(image_id) = tile_image_id(&cached) {
                                 requests.send(WorkerCommand::Snapshot {
                                     origin,
@@ -2076,7 +2113,7 @@ mod renderer_viewer {
             let rows = total_rows.saturating_sub(1).max(1);
             let width = u32::from(columns.max(1)).saturating_mul(8);
             let height = u32::from(rows).saturating_mul(16);
-            let pixel_width = terminal_pixel_width();
+            let pixel_width = snapshot_pixel_width(width, height, terminal_pixel_width());
             let mut helper = if let Some(mut existing) = swift.take() {
                 if last_geometry != Some((columns, rows, pixel_width)) {
                     let response = existing.request(&json!({
@@ -2294,8 +2331,14 @@ mod renderer_viewer {
         let width = u32::from(cols).saturating_mul(8);
         let height = u32::from(rows).saturating_mul(16);
         eprintln!("Starting persistent WKWebView (initial Swift compilation may take time)...");
-        let mut swift =
-            SwiftProcess::start(&html, dir, &output, width, height, terminal_pixel_width())?;
+        let mut swift = SwiftProcess::start(
+            &html,
+            dir,
+            &output,
+            width,
+            height,
+            snapshot_pixel_width(width, height, terminal_pixel_width()),
+        )?;
         let ready = swift.response()?;
         if ready["kind"] != "ready" {
             bail!("expected WebKit readiness response: {ready}");
@@ -3375,24 +3418,93 @@ mod renderer_viewer {
 
         #[test]
         fn tile_cache_capacity_keeps_decoded_tiles_within_budget() {
-            assert_eq!(tile_cache_capacity(&[]), MAX_TILE_CACHE);
+            let budget = tile_budget_bytes(808, 912);
+            assert_eq!(tile_cache_capacity(&[], budget), MAX_TILE_CACHE);
             // Small tiles keep the full prefetch window.
             assert_eq!(
-                tile_cache_capacity(&[cached_with_size(800, 2000)]),
+                tile_cache_capacity(&[cached_with_size(800, 2000)], budget),
                 MAX_TILE_CACHE
             );
             // A 101x58-cell Herdr pane at its 1414px pixel width: about 18 MB
             // per tile, so two cached tiles plus one in flight fit.
-            let tile = cached_with_size(1414, 3192);
-            let capacity = tile_cache_capacity(&[tile]);
+            let capacity = tile_cache_capacity(&[cached_with_size(1414, 3192)], budget);
             assert_eq!(capacity, 2);
-            assert!((capacity + 1) * 1414 * 3192 * 4 <= TILE_CACHE_BUDGET_BYTES);
+            assert!((capacity + 1) * 1414 * 3192 * 4 <= budget);
         }
 
         #[test]
         fn tile_cache_capacity_never_drops_below_displayed_plus_one() {
             // Below two, the displayed tile could never be replaced.
-            assert_eq!(tile_cache_capacity(&[cached_with_size(4000, 8000)]), 2);
+            let budget = tile_budget_bytes(808, 912);
+            assert_eq!(
+                tile_cache_capacity(&[cached_with_size(4000, 8000)], budget),
+                2
+            );
+        }
+
+        fn tile_bytes(pixel_width: u32, width: u32, height: u32) -> usize {
+            // Tiles are two viewports tall at the snapshot's aspect ratio.
+            let tile_height = u64::from(pixel_width) * u64::from(height) * 2 / u64::from(width);
+            pixel_width as usize * tile_height as usize * 4
+        }
+
+        fn preview_reserve(width: u32, height: u32) -> usize {
+            let (preview_width, preview_height) = hybrid_image_preview::raster_size(width, height);
+            hybrid_image_preview::MAX_PREVIEW_CACHE
+                * preview_width as usize
+                * preview_height as usize
+                * 4
+        }
+
+        #[test]
+        fn tile_budget_leaves_room_for_cached_previews() {
+            for (width, height) in [(808, 912), (1632, 912), (2560, 1440)] {
+                assert_eq!(
+                    tile_budget_bytes(width, height) + preview_reserve(width, height),
+                    PANE_IMAGE_BUDGET_BYTES
+                );
+            }
+        }
+
+        #[test]
+        fn snapshot_pixel_width_keeps_terminal_width_when_tiles_fit() {
+            // 101x57 cells at 1414 px: 1414x3192 tiles (18 MB) already fit.
+            assert_eq!(snapshot_pixel_width(808, 912, 1414), 1414);
+            // Without reported pixels a pane whose 2x tile fits keeps the
+            // backing scale; 808x912 points at 2x would be 23.6 MB.
+            assert_eq!(snapshot_pixel_width(640, 400, 0), 0);
+            assert!(snapshot_pixel_width(808, 912, 0) < 808 * 2);
+        }
+
+        #[test]
+        fn snapshot_pixel_width_caps_tall_panes_and_unreported_pixels() {
+            // 101x80 cells: 1414x4424 tiles would be 25 MB.
+            let pixel_width = snapshot_pixel_width(808, 1264, 1414);
+            assert!(pixel_width < 1414);
+            assert!(tile_bytes(pixel_width, 808, 1264) <= tile_budget_bytes(808, 1264) / 3);
+            // A wide pane must be capped even if the terminal reports no
+            // pixels; WebKit would otherwise use up to a 2x backing scale.
+            let pixel_width = snapshot_pixel_width(1632, 912, 0);
+            assert!(pixel_width > 0 && pixel_width <= 1632 * 2);
+            assert!(tile_bytes(pixel_width, 1632, 912) <= tile_budget_bytes(1632, 912) / 3);
+        }
+
+        #[test]
+        fn snapshot_pixel_width_keeps_tiles_and_previews_within_the_pane_budget() {
+            // 204x57 cells at 2856 px: 36.5 MB tiles plus 3 MB previews.
+            // 5K full screen: previews alone are 22 MB.
+            for (width, height, pixels) in [(1632, 912, 2856), (2560, 1440, 5120)] {
+                let pixel_width = snapshot_pixel_width(width, height, pixels);
+                assert!(pixel_width > 0 && pixel_width < pixels);
+                let per_tile = tile_budget_bytes(width, height) / 3;
+                assert!(tile_bytes(pixel_width, width, height) <= per_tile);
+                assert!(tile_bytes(pixel_width + 8, width, height) > per_tile);
+                // Two cached tiles plus one in flight, plus all previews.
+                assert!(
+                    3 * tile_bytes(pixel_width, width, height) + preview_reserve(width, height)
+                        <= PANE_IMAGE_BUDGET_BYTES
+                );
+            }
         }
 
         #[test]
