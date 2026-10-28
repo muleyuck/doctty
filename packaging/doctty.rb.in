@@ -16,7 +16,8 @@ cask "doctty" do
   binary "doctty-macos-arm64/doctty-cli", target: "doctty"
 
   caveats <<~EOS
-    doctty requires Ghostty or Kitty for interactive rendering.
+    doctty needs a terminal with Kitty graphics support, such as Ghostty,
+    Kitty, or a Herdr pane inside Ghostty, for interactive rendering.
 
     This build is ad-hoc signed and is NOT Apple-notarized. Gatekeeper may
     independently block doctty and its native or Swift/WebKit helpers.

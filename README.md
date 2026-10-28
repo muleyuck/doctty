@@ -136,7 +136,7 @@ directory is not committed.
 | Symptom                            | What to try                                                                                                          |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `doctty: command not found`           | Ensure Cargo's bin directory (usually `$HOME/.cargo/bin`) is on `PATH`.                                                   |
-| Plain text instead of rich viewer  | Requires a TTY in Ghostty or Kitty. Pipes and redirects trigger headless mode by design.                             |
+| Plain text instead of rich viewer  | Requires a TTY in a terminal with Kitty graphics support (Ghostty, Kitty, or a Herdr pane inside Ghostty). Pipes and redirects trigger headless mode by design. |
 | Mermaid diagrams show placeholders | Install `mmdc` or use `npx @mermaid-js/mermaid-cli`. Use `--no-mermaid` to skip entirely.                            |
 | Graphic / snapshot issues          | Rich rendering uses WebKit on macOS. Check terminal output for diagnostic details.                                   |
 
