@@ -2285,7 +2285,7 @@ mod renderer_viewer {
 
     pub fn run() -> Result<()> {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
-            bail!("interactive mode requires Ghostty or Kitty");
+            bail!("interactive mode requires stdin and stdout to be a terminal");
         }
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
