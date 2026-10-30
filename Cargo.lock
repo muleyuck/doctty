@@ -876,6 +876,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "signal-hook",
  "syntect",
  "tempfile",
  "thiserror 2.0.18",

@@ -24,7 +24,7 @@ mod renderer_viewer {
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicU64, Ordering},
             mpsc::{self, Receiver, Sender, TryRecvError},
         },
@@ -839,6 +839,64 @@ mod renderer_viewer {
     struct HtmlLease {
         _file: Option<tempfile::NamedTempFile>,
         _isolated_assets: Option<tempfile::TempDir>,
+        path: PathBuf,
+    }
+
+    // Closing the terminal window or pane sends SIGHUP, whose default action
+    // exits without running destructors and would leave the lease next to the
+    // user's Markdown. A flag checked by the viewer loop is not enough: once
+    // the terminal is gone, crossterm 0.29 keeps re-reading the EOF tty inside
+    // event::poll and never returns to the loop.
+    static LEASED_PATHS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    impl HtmlLease {
+        fn new(
+            file: Option<tempfile::NamedTempFile>,
+            isolated_assets: Option<tempfile::TempDir>,
+        ) -> Self {
+            let path = file
+                .as_ref()
+                .map(|file| file.path().to_path_buf())
+                .or_else(|| isolated_assets.as_ref().map(|dir| dir.path().to_path_buf()))
+                .unwrap_or_default();
+            if let Ok(mut paths) = LEASED_PATHS.lock() {
+                paths.push(path.clone());
+            }
+            Self {
+                _file: file,
+                _isolated_assets: isolated_assets,
+                path,
+            }
+        }
+    }
+
+    impl Drop for HtmlLease {
+        fn drop(&mut self) {
+            if let Ok(mut paths) = LEASED_PATHS.lock() {
+                paths.retain(|path| path != &self.path);
+            }
+        }
+    }
+
+    fn remove_leases_on_termination() -> Result<()> {
+        use signal_hook::{
+            consts::{SIGHUP, SIGTERM},
+            iterator::Signals,
+            low_level::emulate_default_handler,
+        };
+        let mut signals = Signals::new([SIGHUP, SIGTERM])?;
+        thread::spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                if let Ok(paths) = LEASED_PATHS.lock() {
+                    for path in paths.iter() {
+                        let _ = fs::remove_file(path).or_else(|_| fs::remove_dir_all(path));
+                    }
+                }
+                // Keep the previous immediate exit for these signals.
+                let _ = emulate_default_handler(signal);
+            }
+        });
+        Ok(())
     }
 
     fn asset_file_url(path: &Path) -> String {
@@ -1045,10 +1103,7 @@ mod renderer_viewer {
                     file.flush()?;
                     return Ok((
                         file.path().to_path_buf(),
-                        Some(HtmlLease {
-                            _file: Some(file),
-                            _isolated_assets: None,
-                        }),
+                        Some(HtmlLease::new(Some(file), None)),
                         first_link,
                     ));
                 }
@@ -1069,10 +1124,7 @@ mod renderer_viewer {
         let (html_path, stage) = stage_isolated_html(&html, root)?;
         Ok((
             html_path,
-            Some(HtmlLease {
-                _file: None,
-                _isolated_assets: Some(stage),
-            }),
+            Some(HtmlLease::new(None, Some(stage))),
             first_link,
         ))
     }
@@ -2302,6 +2354,7 @@ mod renderer_viewer {
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("interactive mode requires stdin and stdout to be a terminal");
         }
+        remove_leases_on_termination()?;
         let mut arguments = std::env::args_os().skip(1);
         let first = arguments.next().unwrap_or_else(|| "README.md".into());
         let hybrid_image = first == "--hybrid-image";
@@ -2633,6 +2686,23 @@ mod renderer_viewer {
             assert!(html.starts_with(read_root));
             assert!(!markdown.starts_with(read_root));
             assert!(content.contains("Read-only docs"));
+            Ok(())
+        }
+
+        #[test]
+        fn html_lease_is_registered_for_signal_cleanup_until_dropped() -> Result<()> {
+            let file = tempfile::NamedTempFile::new()?;
+            let path = file.path().to_path_buf();
+            let lease = HtmlLease::new(Some(file), None);
+            let registered = |path: &Path| {
+                LEASED_PATHS
+                    .lock()
+                    .is_ok_and(|paths| paths.iter().any(|leased| leased == path))
+            };
+            assert!(registered(&path));
+            drop(lease);
+            assert!(!registered(&path));
+            assert!(!path.exists());
             Ok(())
         }
 
