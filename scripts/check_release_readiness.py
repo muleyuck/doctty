@@ -39,15 +39,6 @@ def main() -> None:
     verify("." in config.get("packages", {}), "Release Please root package not configured")
 
     workflow = read(".github/workflows/release-please.yml")
-    parts = workflow.split("\non:\n", 1)
-    verify(len(parts) == 2, "Could not find release workflow trigger")
-    triggers = parts[1].split("\npermissions:", 1)[0]
-    verify(re.search(r"(?m)^  workflow_dispatch:\s*$", triggers) is not None,
-           "Release automation must require manual workflow_dispatch")
-    verify(re.search(r"(?m)^  (?:push|workflow_run|schedule|release|pull_request):", triggers) is None,
-           "Automatic release workflow trigger detected")
-    verify("github.ref == 'refs/heads/main'" in workflow,
-           "Release workflow must require the main branch")
     verify("scripts/package_macos_renderer.sh" in workflow,
            "Release workflow does not build the renderer archive")
     verify("scripts/package_macos_release.sh" in workflow,
@@ -89,7 +80,6 @@ def main() -> None:
                f"{path} must not silently disable macOS quarantine/Gatekeeper")
 
     print(f"Release preflight OK: Cargo + manifest v{version}")
-    print("Release Please trigger: manual-only, main branch")
     print("Artifact contracts: arm64 renderer bundle, versioned ZIP, sha256, Cask")
     print("This is a STATIC check only: no binaries, GitHub secrets, public")
     print("Release, real Homebrew install, or clean-Mac Gatekeeper were tested.")

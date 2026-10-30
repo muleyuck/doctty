@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
 
-      - name: Check first-release config and safe manual-only publication
+      - name: Check release config and artifact contracts
         shell: bash
         run: |
           python3 scripts/check_release_readiness.py
