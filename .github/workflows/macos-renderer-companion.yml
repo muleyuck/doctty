@@ -25,7 +25,7 @@ jobs:
       - name: Compile cached optimized Swift helper
         run: |
           bash scripts/build_macos_webkit_helper.sh --build-only > "$RUNNER_TEMP/doctty-swift-helper-path"
-      - name: Smoke optimized Swift helper PNG and protocol
+      - name: Smoke optimized Swift helper image and protocol
         run: |
           python3 -m py_compile tests/smoke/smoke_compiled_swift_webkit.py
           python3 tests/smoke/smoke_compiled_swift_webkit.py "$(cat "$RUNNER_TEMP/doctty-swift-helper-path")"

@@ -47,7 +47,6 @@ mod renderer_viewer {
         io::browser,
         render::{github_html::build_github_html, markdown::parse_document},
     };
-    use image::{ImageDecoder, codecs::png::PngDecoder};
     use serde_json::{Value, json};
 
     const FIRST_IMAGE_ID: u32 = 93_001;
@@ -250,7 +249,7 @@ mod renderer_viewer {
     }
 
     // Per-run high-water marks: retain diagnostics after the screen catches up.
-    // 'snap' includes WebKit capture + PNG encoding, 'upload' measures the
+    // 'snap' includes WebKit capture + image encoding, 'upload' measures the
     // Kitty terminal transfer. Skipped captures still count towards snap.
     #[derive(Default)]
     struct TileTimingStats {
@@ -306,7 +305,7 @@ mod renderer_viewer {
         last_encode_ms: f64,
         last_write_ms: f64,
         last_upload_ms: f64,
-        png_bytes: usize,
+        image_bytes: usize,
     }
 
     impl ImageCache {
@@ -406,7 +405,7 @@ mod renderer_viewer {
         fn start(
             html: &Path,
             source_dir: &Path,
-            png: &Path,
+            output: &Path,
             width: u32,
             height: u32,
             pixel_width: u32,
@@ -450,7 +449,7 @@ mod renderer_viewer {
             let mut child = command
                 .arg(html)
                 .arg(&read_root)
-                .arg(png)
+                .arg(output)
                 .arg(width.to_string())
                 .arg(height.to_string())
                 .arg(pixel_width.to_string())
@@ -544,11 +543,11 @@ mod renderer_viewer {
                 || current_position + h > snapshot_y + 2.0 * h + 0.5)
     }
 
-    // WebKit operations and PNG uploading run off the event loop. The worker
+    // WebKit operations and image uploading run off the event loop. The worker
     // transmits images without placing them; only the UI thread changes placements.
     fn spawn_worker(
         mut swift: SwiftProcess,
-        png_path: PathBuf,
+        image_path: PathBuf,
         viewport_width: u32,
         viewport_height: u32,
         latest_tiled_position: Option<Arc<AtomicU64>>,
@@ -593,17 +592,17 @@ mod renderer_viewer {
                                 })
                             };
                             // A long scroll can make a capture obsolete while
-                            // WebKit is rendering it. Avoid needless PNG reads
+                            // WebKit is rendering it. Avoid needless image reads
                             // and Kitty transfers if the viewport has moved on.
                             if obsolete() {
                                 return Ok(None);
                             }
-                            let png = fs::read(&png_path).context("missing prefetched PNG")?;
-                            let decoder = PngDecoder::new(io::Cursor::new(&png))?;
-                            let (image_width, image_height) = decoder.dimensions();
+                            let image =
+                                fs::read(&image_path).context("missing prefetched image")?;
+                            let (image_width, image_height) = snapshot_dimensions(&response)?;
                             let scale = f64::from(image_width) / f64::from(viewport_width);
                             if scale <= 0.0 {
-                                bail!("invalid prefetched PNG width");
+                                bail!("invalid prefetched image width");
                             }
                             // The user can move again during file IO/decoding.
                             // Recheck just before the expensive Kitty upload.
@@ -613,7 +612,7 @@ mod renderer_viewer {
                             // Never place the image before the complete transmission.
                             let upload_started = Instant::now();
                             let mut stdout = io::stdout().lock();
-                            upload_png(&mut stdout, image_id, &png)?;
+                            upload_rgb(&mut stdout, image_id, &image, image_width, image_height)?;
                             stdout.flush()?;
                             let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
                             Ok(Some(ImageCache {
@@ -628,7 +627,7 @@ mod renderer_viewer {
                                 last_encode_ms: encode_ms,
                                 last_write_ms: write_ms,
                                 last_upload_ms: upload_ms,
-                                png_bytes: png.len(),
+                                image_bytes: image.len(),
                             }))
                         })();
                         match result {
@@ -720,7 +719,7 @@ mod renderer_viewer {
             // Erase only preview text, not cached Kitty image data.
             execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::FromCursorDown))?;
         }
-        // Re-place pixels already stored in the terminal: zero PNG encoding/transfer.
+        // Re-place pixels already stored in the terminal: zero image encoding/transfer.
         place_image(
             &mut out,
             cache.image_id,
@@ -1101,13 +1100,45 @@ mod renderer_viewer {
         Ok(())
     }
 
+    fn snapshot_dimensions(response: &Value) -> Result<(u32, u32)> {
+        let dimension = |key: &str| {
+            response[key]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .with_context(|| format!("WebKit snapshot reply lacks {key}: {response}"))
+        };
+        Ok((dimension("imageWidth")?, dimension("imageHeight")?))
+    }
+
+    // The WebKit helper writes zlib-compressed RGB (see zlibRGB in
+    // webkit_viewport.swift).
+    fn upload_rgb(
+        out: &mut impl Write,
+        image_id: u32,
+        data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        upload_image(
+            out,
+            &format!("f=24,o=z,s={width},v={height}"),
+            image_id,
+            data,
+        )
+    }
+
     fn upload_png(out: &mut impl Write, image_id: u32, png: &[u8]) -> Result<()> {
-        let payload = STANDARD.encode(png);
+        upload_image(out, "f=100", image_id, png)
+    }
+
+    fn upload_image(out: &mut impl Write, format: &str, image_id: u32, data: &[u8]) -> Result<()> {
+        let payload = STANDARD.encode(data);
         let total_chunks = payload.len().div_ceil(CHUNK_SIZE);
         for (index, chunk) in payload.as_bytes().chunks(CHUNK_SIZE).enumerate() {
             let more = u8::from(index + 1 < total_chunks);
             if index == 0 {
-                write!(out, "\x1b_Ga=t,t=d,f=100,i={image_id},q=2,m={more};")?;
+                write!(out, "\x1b_Ga=t,t=d,{format},i={image_id},q=2,m={more};")?;
             } else {
                 write!(out, "\x1b_Gm={more};")?;
             }
@@ -1147,7 +1178,7 @@ mod renderer_viewer {
 
     fn render_scroll(
         helper: &mut SwiftProcess,
-        png_path: &Path,
+        image_path: &Path,
         position: f64,
         columns: u16,
         rows: u16,
@@ -1173,9 +1204,8 @@ mod renderer_viewer {
             if result["kind"] != "snapshot" {
                 bail!("unexpected WebKit response: {result}");
             }
-            let png = fs::read(png_path).context("missing viewport PNG")?;
-            let decoder = PngDecoder::new(io::Cursor::new(&png))?;
-            let (image_width, image_height) = decoder.dimensions();
+            let image = fs::read(image_path).context("missing viewport image")?;
+            let (image_width, image_height) = snapshot_dimensions(&result)?;
             let scale = f64::from(image_width) / f64::from(viewport_width);
             if scale <= 0.0 || f64::from(image_height) < f64::from(viewport_height) * scale {
                 bail!("cached image smaller than viewport: {image_width}x{image_height}");
@@ -1202,12 +1232,12 @@ mod renderer_viewer {
                 last_encode_ms: result["encodeMs"].as_f64().unwrap_or(0.0),
                 last_write_ms: result["writeMs"].as_f64().unwrap_or(0.0),
                 last_upload_ms: 0.0,
-                png_bytes: png.len(),
+                image_bytes: image.len(),
             };
             let source_offset = new_cache.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Keep the previous image visible while uploading the next image.
-            upload_png(&mut out, new_id, &png)?;
+            upload_rgb(&mut out, new_id, &image, image_width, image_height)?;
             place_image(
                 &mut out,
                 new_id,
@@ -1238,11 +1268,11 @@ mod renderer_viewer {
 
         let current = cache.as_ref().context("viewport cache missing")?;
         let status = format!(
-            "j/k scroll J/K page y copy q quit | {} y={position:.0}/{:.0} snap={:.0}ms PNG={}B redraw={:.0}ms",
+            "j/k scroll J/K page y copy q quit | {} y={position:.0}/{:.0} snap={:.0}ms IMG={}B redraw={:.0}ms",
             if cache_hit { "cache HIT" } else { "cache MISS" },
             current.document_height,
             current.last_snapshot_ms,
-            current.png_bytes,
+            current.image_bytes,
             started.elapsed().as_secs_f64() * 1000.0
         );
         let mut out = io::stdout().lock();
@@ -1612,7 +1642,7 @@ mod renderer_viewer {
     }
 
     // Independent prototype for comparison with the original single-prefetch
-    // viewer. All costly WebKit captures and PNG transfers stay on the worker.
+    // viewer. All costly WebKit captures and image transfers stay on the worker.
     // The event loop never waits for a snapshot. Images held by Kitty are
     // bounded to tile_cache_capacity + one upload and freed on eviction/exit.
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1653,7 +1683,7 @@ mod renderer_viewer {
 
     fn run_tiled(
         swift: SwiftProcess,
-        png_path: PathBuf,
+        image_path: PathBuf,
         columns: u16,
         rows: u16,
         viewport_width: u32,
@@ -1670,7 +1700,7 @@ mod renderer_viewer {
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
         let (requests, responses, webkit_worker) = spawn_worker(
             swift,
-            png_path,
+            image_path,
             viewport_width,
             viewport_height,
             Some(Arc::clone(&latest_position)),
@@ -2094,7 +2124,7 @@ mod renderer_viewer {
         };
         let (mut html, mut _temp_html, mut first_link) = html_input(document, theme)?;
         let work = tempfile::tempdir()?;
-        let output = work.path().join("viewport.png");
+        let output = work.path().join("viewport.rgbz");
         let _session = TerminalSession::enter()?;
         let mut progress = 0.0;
 
@@ -2303,7 +2333,7 @@ mod renderer_viewer {
         }
         let (html, _temp_html, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
-        let output = work.path().join("viewport.png");
+        let output = work.path().join("viewport.rgbz");
         let (cols, total_rows) = terminal::size()?;
         let rows = total_rows.saturating_sub(1).max(1);
         let width = u32::from(cols).saturating_mul(8);
@@ -2780,6 +2810,26 @@ mod renderer_viewer {
         }
 
         #[test]
+        fn rgb_tiles_declare_kitty_raw_format_and_size_in_first_chunk_only() -> Result<()> {
+            let mut out = Vec::new();
+            upload_rgb(&mut out, 7, &vec![0; CHUNK_SIZE], 1414, 3136)?;
+            let text = String::from_utf8(out)?;
+            assert!(text.starts_with("\x1b_Ga=t,t=d,f=24,o=z,s=1414,v=3136,i=7,q=2,m=1;"));
+            assert_eq!(text.matches("f=24").count(), 1);
+            assert!(text.contains("\x1b_Gm=0;"));
+            Ok(())
+        }
+
+        #[test]
+        fn snapshot_dimensions_require_positive_width_and_height() -> Result<()> {
+            let reply = json!({"imageWidth": 1414, "imageHeight": 3136});
+            assert_eq!(snapshot_dimensions(&reply)?, (1414, 3136));
+            assert!(snapshot_dimensions(&json!({"imageWidth": 1414})).is_err());
+            assert!(snapshot_dimensions(&json!({"imageWidth": 0, "imageHeight": 1})).is_err());
+            Ok(())
+        }
+
+        #[test]
         fn tile_timing_marks_include_skipped_snapshots_and_uploaded_tiles() {
             let mut stats = TileTimingStats::default();
             stats.observe_snapshot(420.0);
@@ -2811,7 +2861,7 @@ mod renderer_viewer {
             assert!(!snapshot_is_obsolete(0.0, 1000.0, 1000.0, 1000));
             assert!(!snapshot_is_obsolete(0.0, 2000.0, 1000.0, 1000));
             // A long forward or backward gesture makes an in-flight capture
-            // irrelevant before its potentially costly PNG upload.
+            // irrelevant before its potentially costly image upload.
             assert!(snapshot_is_obsolete(0.0, 5000.0, 1000.0, 1000));
             assert!(snapshot_is_obsolete(3000.0, 0.0, 3000.0, 1000));
             // Moving rapidly within an overlapping snapshot stays valid.
@@ -3353,7 +3403,7 @@ mod renderer_viewer {
                 last_encode_ms: 0.0,
                 last_write_ms: 0.0,
                 last_upload_ms: 0.0,
-                png_bytes: 100,
+                image_bytes: 100,
             }
         }
 

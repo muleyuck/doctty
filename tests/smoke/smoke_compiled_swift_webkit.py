@@ -8,11 +8,11 @@ it does not queue input until WebKit has finished loading.
 import json
 import os
 import select
-import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ def test(binary: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="doctty-swift-compiled-") as directory:
         root = Path(directory)
         html = root / "fixture.html"
-        png = root / "viewport.png"
+        image = root / "viewport.rgbz"
         html.write_text(
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<style>body{margin:0;background:white}main{height:3500px}"
@@ -31,7 +31,7 @@ def test(binary: Path) -> None:
         stderr_path = root / "helper-stderr.log"
         with stderr_path.open("wb") as stderr:
             process = subprocess.Popen(
-                [str(binary.resolve()), str(html), str(root), str(png), "640", "400", "0"],
+                [str(binary.resolve()), str(html), str(root), str(image), "640", "400", "0"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
@@ -88,19 +88,19 @@ def test(binary: Path) -> None:
                 assert abs(snapshot["actualY"] - 128) <= 2, snapshot
                 assert abs(snapshot["requestedY"] - 128) <= 2, snapshot
                 assert metrics["requests"] == metrics["completed"] == 1, metrics
-                data = png.read_bytes()
-                assert data[:8] == b"\x89PNG\r\n\x1a\n", "PNG magic missing"
-                assert data[12:16] == b"IHDR", "PNG IHDR missing"
-                width, height = struct.unpack(">II", data[16:24])
+                data = image.read_bytes()
+                width, height = snapshot["imageWidth"], snapshot["imageHeight"]
                 assert width >= 640 and height >= 800, (width, height)
-                assert snapshot["pngBytes"] == len(data), snapshot
+                # Kitty f=24,o=z: zlib-compressed, tightly packed RGB.
+                assert len(zlib.decompress(data)) == width * height * 3, snapshot
+                assert snapshot["imageBytes"] == len(data), snapshot
                 print(
                     json.dumps(
                         {
                             "status": "passed",
                             "document_height": ready["height"],
-                            "png_dimensions": [width, height],
-                            "png_bytes": len(data),
+                            "image_dimensions": [width, height],
+                            "image_bytes": len(data),
                             "snapshot_elapsed_ms": snapshot["elapsedMs"],
                         }
                     )
@@ -111,8 +111,9 @@ def test(binary: Path) -> None:
                     {"type": "resize", "width": 640, "height": 400, "pixelWidth": 960},
                     "resized",
                 )
-                request({"type": "snapshot", "y": 0}, "snapshot")
-                scaled_width, scaled_height = struct.unpack(">II", png.read_bytes()[16:24])
+                scaled = request({"type": "snapshot", "y": 0}, "snapshot")
+                scaled_width, scaled_height = scaled["imageWidth"], scaled["imageHeight"]
+                assert len(zlib.decompress(image.read_bytes())) == scaled_width * scaled_height * 3
                 assert scaled_width == 960, (scaled_width, scaled_height)
                 assert abs(scaled_height - 1200) <= 2, (scaled_width, scaled_height)
 
