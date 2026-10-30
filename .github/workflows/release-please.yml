@@ -1,17 +1,23 @@
 name: Release Please
 
-# Staged on main, but never publishes from an ordinary push or merge.
-# A maintainer must explicitly start this workflow on main after release review.
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
 
 permissions: {}
 
 jobs:
   release-please:
-    # A manual action on main is required: merging the distribution PR
-    # cannot create a release PR, a version tag, a Release, or a tap update.
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    # The branches filter matches the branch of the triggering run, so a fork
+    # whose head branch is called main would otherwise reach this job.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push' }}
     permissions:
       contents: write
       pull-requests: write
@@ -100,4 +106,3 @@ jobs:
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
 
 # No notarization/signing credentials, no actions on pull requests.
-# Deployment is manual-only until a separate reviewed change enables automatic releases.
