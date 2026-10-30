@@ -1,8 +1,9 @@
-// Experimental renderer: a single WKWebView serves repeated viewport PNG captures.
+// Experimental renderer: a single WKWebView serves repeated viewport captures.
 // Protocol: newline-delimited JSON on stdin/stdout. No production app changes.
 import AppKit
 import Foundation
 import WebKit
+import zlib
 
 final class ViewportRunner: NSObject, WKNavigationDelegate {
     private let htmlURL: URL
@@ -272,6 +273,38 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         }
     }
 
+    // Kitty f=24,o=z payload. Snapshots are opaque, and terminal multiplexers
+    // such as Herdr decode PNG to RGBA before forwarding it, so RGB sends a
+    // quarter fewer bytes. Level 1 zlib is also smaller and faster than PNG
+    // for these captures.
+    static func zlibRGB(_ image: CGImage) -> Data? {
+        let width = image.width, height = image.height
+        // Raw Kitty pixels carry no color profile and are read as sRGB.
+        var rgb = [UInt8](repeating: 0, count: width * height * 3)
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = rgba.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            rgb.withUnsafeMutableBufferPointer { target in
+                for pixel in 0..<(width * height) {
+                    target[pixel * 3] = buffer[pixel * 4]
+                    target[pixel * 3 + 1] = buffer[pixel * 4 + 1]
+                    target[pixel * 3 + 2] = buffer[pixel * 4 + 2]
+                }
+            }
+            return true
+        }
+        guard drawn else { return nil }
+        var length = compressBound(uLong(rgb.count))
+        var output = [UInt8](repeating: 0, count: Int(length))
+        guard compress2(&output, &length, rgb, uLong(rgb.count), 1) == Z_OK else { return nil }
+        return Data(output[0..<Int(length)])
+    }
+
     private func capture(started: Date, requestedY: Double, actualY: Double) {
         let configuration = WKSnapshotConfiguration()
         configuration.rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
@@ -289,28 +322,18 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 self.emit(["kind": "error", "message": error.localizedDescription])
                 return
             }
-            // Encode the CGImage directly; a TIFF round trip through
-            // NSBitmapImageRep doubled the encode time.
-            let png = NSMutableData()
             guard
                 let image,
                 let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                let destination = CGImageDestinationCreateWithData(
-                    png, "public.png" as CFString, 1, nil
-                )
+                let encoded = Self.zlibRGB(cgImage)
             else {
-                self.emit(["kind": "error", "message": "could not encode viewport PNG"])
-                return
-            }
-            CGImageDestinationAddImage(destination, cgImage, nil)
-            guard CGImageDestinationFinalize(destination) else {
-                self.emit(["kind": "error", "message": "could not encode viewport PNG"])
+                self.emit(["kind": "error", "message": "could not encode viewport image"])
                 return
             }
             let encodeMs = Date().timeIntervalSince(encodeStarted) * 1000
             do {
                 let writeStarted = Date()
-                try png.write(to: self.outputURL, options: .atomic)
+                try encoded.write(to: self.outputURL, options: .atomic)
                 let writeMs = Date().timeIntervalSince(writeStarted) * 1000
                 self.snapshotCompleted += 1
                 self.emit([
@@ -322,7 +345,9 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                     "captureMs": captureMs,
                     "encodeMs": encodeMs,
                     "writeMs": writeMs,
-                    "pngBytes": png.length
+                    "imageWidth": cgImage.width,
+                    "imageHeight": cgImage.height,
+                    "imageBytes": encoded.count
                 ])
             } catch {
                 self.emit(["kind": "error", "message": error.localizedDescription])
@@ -343,7 +368,7 @@ guard args.count == 7,
       let pixelWidth = Double(args[6]),
       width > 0, height > 0, pixelWidth >= 0
 else {
-    fputs("usage: webkit_viewport.swift HTML READ_ROOT OUTPUT_PNG WIDTH HEIGHT PIXEL_WIDTH\n", stderr)
+    fputs("usage: webkit_viewport.swift HTML READ_ROOT OUTPUT WIDTH HEIGHT PIXEL_WIDTH\n", stderr)
     exit(2)
 }
 
