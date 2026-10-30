@@ -3,9 +3,6 @@
   "release-type": "rust",
   "skip-github-release": false,
   "include-component-in-tag": false,
-  "plugins": [
-    "cargo-workspace"
-  ],
   "packages": {
     ".": {
       "changelog-sections": [
