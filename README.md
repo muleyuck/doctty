@@ -33,46 +33,41 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
 ## Quick start
 
-**macOS prebuilt renderer preview (draft, not an official release)**: the
-`macOS renderer bundle validation` GitHub Actions workflow produces
-an Apple Silicon (arm64) artifact named
-`doctty-renderer-prebuilt-macOS-arm64`, containing precompiled
-`doctty`, its Rust viewport companion and the optimized Swift/WebKit
-helper. Extract the inner `.tar.gz` and run in Ghostty or Kitty:
-
-```bash
-./doctty-macos-arm64/doctty README.md
-```
-
-The initial preview/release target is **Apple Silicon only**. Intel Mac
-support is deferred until there is clear demand. CI verifies the native
-arm64 architecture of all three executables. These are macOS 15 CI
-builds; support on earlier macOS versions has not been established.
-
-No Swift compiler, Rust toolchain or repository checkout is needed for this
-prebuilt renderer preview.
-
-**Planned turnray-style distribution (after release review):** CI will also
-produce a versioned Apple Silicon ZIP containing ad-hoc-signed native binaries,
-upload it with a SHA256 checksum to GitHub Releases, and optionally update the
-`muleyuck/tap` Homebrew Cask. The intended commands will be:
+**Homebrew (Apple Silicon):**
 
 ```bash
 brew install --cask muleyuck/tap/doctty
 doctty README.md
 ```
 
+Releases target **Apple Silicon only**; Intel Mac support is deferred until
+there is clear demand. They are built on macOS 15; support on earlier macOS
+versions has not been established. No Swift compiler or Rust toolchain is
+needed.
+
+**Manual download:** each [GitHub Release](https://github.com/muleyuck/doctty/releases)
+provides `doctty-<version>-macos-arm64.zip` and its SHA256 checksum. Keep the
+three executables together and run:
+
+```bash
+./doctty-macos-arm64/doctty README.md
+```
+
 The ZIP is **not Apple-notarized**. The Homebrew cask clears the download
-quarantine on its own bundle, so Gatekeeper does not block it. When you download the ZIP manually, macOS Gatekeeper may initially block
-`doctty` and may independently block `doctty-renderer` or `doctty-webkit-swift`.
-On a verified download, use **System Settings → Privacy & Security → Open Anyway**
+quarantine on its own bundle, so Gatekeeper does not block it. When you
+download the ZIP manually, macOS Gatekeeper may initially block `doctty` and
+may independently block `doctty-renderer` or `doctty-webkit-swift`. On a
+verified download, use **System Settings → Privacy & Security → Open Anyway**
 for each blocked executable as needed, then retry `doctty`. An initial
 `WebKit helper closed its output` error may mean the Swift helper was still
 blocked; it does **not** prove Gatekeeper is the cause of every such error.
 Only consider per-app approval after confirming the official release source
 and SHA256 checksum. Do **not** disable Gatekeeper globally or blindly remove
-quarantine. Until a real release is published, use the CI preview artifact
-above. Apple Developer Program enrollment is deferred.
+quarantine. Apple Developer Program enrollment is deferred.
+
+Unreleased builds of `main` are available as the
+`doctty-renderer-prebuilt-macOS-arm64` artifact of the
+`macOS renderer bundle validation` GitHub Actions workflow.
 
 **Building from source (developer workflow)** requires Rust 1.92+:
 
@@ -113,7 +108,7 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required), or a [Herdr](https://herdr.dev/) pane inside Ghostty (Herdr's `terminal.kitty_graphics` option, on by default)
 - **Protocol ecosystem**: The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is also implemented by Ghostty, Konsole, st (with a patch), Warp, wayst, WezTerm, iTerm2, and xterm.js
-- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (in the CI-built renderer archive). Linux runs in headless/plain-text mode.
+- **Rich rendering**: macOS with the bundled precompiled Swift/WebKit helper (included in the Homebrew cask and release ZIP). Linux runs in headless/plain-text mode.
 - **Mermaid** (optional): `mmdc` or `npx @mermaid-js/mermaid-cli`, or set `DOCTTY_MERMAID_CMD`
 
 ## Installation
@@ -127,7 +122,7 @@ cargo install --path . --locked
 Source installations require Swift's compiler (`swiftc`) on macOS at **build
 time only**, to embed the native WebKit helper. The app uses the same rendering
 implementation as the prebuilt archive. For a compiler-free installation,
-use the CI-built archive instead.
+use the Homebrew cask or the release ZIP instead.
 
 For development, `make build` creates `./bin/doctty`. The generated `bin/`
 directory is not committed.
