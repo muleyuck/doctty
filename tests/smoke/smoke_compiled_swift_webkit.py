@@ -16,6 +16,23 @@ import zlib
 from pathlib import Path
 
 
+# Syntax colours are inline styles on flat spans (as the highlighter emits).
+# Covers a tab, a span crossing a line break, an emoji, an overlong line and
+# trailing blank lines, which the outline must turn into aligned colour runs.
+LONG = "y" * 300
+CODE_FIXTURE = (
+    '<pre><code><span style="color:#ff0000;">fn</span> <span style="color:#00ff00;">a\tb</span>\n'
+    '<span style="color:#0000ff;">multi\nline</span> \U0001F642<span style="color:#ff0000;">x</span>\n'
+    f'<span style="color:#00ff00;">{LONG}</span>\n\n\n</code></pre>'
+)
+EXPECTED_RUNS = [
+    [[2, "#ff0000"], [1, ""], [6, "#00ff00"]],
+    [[5, "#0000ff"]],
+    [[4, "#0000ff"], [2, ""], [1, "#ff0000"]],
+    [[240, "#00ff00"]],
+]
+
+
 def test(binary: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="doctty-swift-compiled-") as directory:
         root = Path(directory)
@@ -25,7 +42,7 @@ def test(binary: Path) -> None:
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<style>body{margin:0;background:white}main{height:3500px}"
             "h1{padding:30px}</style></head><body><main>"
-            "<h1>Compiled Swift helper smoke test</h1></main></body></html>",
+            "<h1>Compiled Swift helper smoke test</h1>" + CODE_FIXTURE + "</main></body></html>",
             encoding="utf-8",
         )
         stderr_path = root / "helper-stderr.log"
@@ -85,6 +102,9 @@ def test(binary: Path) -> None:
                     "Compiled Swift helper smoke test" in item.get("text", "")
                     for item in outline["items"]
                 ), outline
+                code = next(item for item in outline["items"] if item["tag"] == "pre")
+                assert code["lines"] == ["fn a    b", "multi", "line \U0001F642x", LONG[:240]], code["lines"]
+                assert code["runs"] == EXPECTED_RUNS, code["runs"]
                 assert abs(snapshot["actualY"] - 128) <= 2, snapshot
                 assert abs(snapshot["requestedY"] - 128) <= 2, snapshot
                 assert metrics["requests"] == metrics["completed"] == 1, metrics

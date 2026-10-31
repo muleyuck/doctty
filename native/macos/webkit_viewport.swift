@@ -220,6 +220,26 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                   return match ? '#' + [match[1], match[2], match[3]]
                     .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
                 };
+                // Syntax colours are inline styles on the highlighter's spans:
+                // record them as per-line [character count, colour] runs.
+                if (code.lines) {
+                  const runs = [[]];
+                  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                  for (let node = walker.nextNode(); node && runs.length <= code.lines.length;
+                       node = walker.nextNode()) {
+                    const owner = node.parentElement && node.parentElement.closest('[style]');
+                    const color = owner && el.contains(owner) ? normalizedColor(owner.style.color || '') : '';
+                    node.data.replace(/\\t/g, '    ').split('\\n').forEach((part, index) => {
+                      if (index > 0) runs.push([]);
+                      const line = runs[runs.length - 1];
+                      // Only the first 240 characters of a line are drawn.
+                      const used = line.reduce((total, run) => total + run[0], 0);
+                      const count = Math.min(Array.from(part).length, 240 - used);
+                      if (count > 0) line.push([count, color]);
+                    });
+                  }
+                  code.runs = runs.slice(0, code.lines.length);
+                }
                 // Tables keep their cell grid and images their file, so the
                 // preview shows the same structure as the WebKit tile.
                 const table = tag === 'table' ? {

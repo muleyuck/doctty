@@ -46,6 +46,8 @@ pub(crate) struct StyledItem {
     pub(crate) lines: Vec<String>,
     pub(crate) padding_left: f64,
     pub(crate) padding_top: f64,
+    /// Per code line, syntax colour runs as (character count, colour).
+    pub(crate) runs: Vec<Vec<(usize, String)>>,
     /// Table cells, drawn as a grid instead of one flattened line.
     pub(crate) cells: Vec<TableCell>,
     /// Image source URL; only local `file://` images are drawn.
@@ -413,12 +415,28 @@ fn push_code_lines(
             continue;
         }
         let baseline = line_top + (line_height + font_size * 0.7) / 2.0;
-        let clipped: String = line.chars().take(max_chars).collect();
-        let text = xml_escape(&clipped);
         svg.push_str(&format!(
-            r#"<text x="{:.1}" y="{baseline:.1}" fill="{color}" font-family="Menlo" font-size="{font_size:.1}" xml:space="preserve">{text}</text>"#,
+            r#"<text x="{:.1}" y="{baseline:.1}" fill="{color}" font-family="Menlo" font-size="{font_size:.1}" xml:space="preserve">"#,
             x + padding_left
         ));
+        let mut chars = line.chars().take(max_chars);
+        for (count, run_color) in item.runs.get(index).into_iter().flatten() {
+            let segment: String = chars.by_ref().take(*count).collect();
+            if segment.is_empty() {
+                break;
+            }
+            if run_color.is_empty() {
+                svg.push_str(&xml_escape(&segment));
+            } else {
+                svg.push_str(&format!(
+                    r#"<tspan fill="{}">{}</tspan>"#,
+                    safe_color(run_color, color),
+                    xml_escape(&segment)
+                ));
+            }
+        }
+        svg.push_str(&xml_escape(&chars.collect::<String>()));
+        svg.push_str("</text>");
     }
 }
 
@@ -859,6 +877,111 @@ mod tests {
             svg.contains(r#"x="36.0""#),
             "text starts after the block padding"
         );
+    }
+
+    #[test]
+    fn code_preview_colors_each_syntax_run() {
+        let item = StyledItem {
+            y: 0.0,
+            x: 0.0,
+            width: 600.0,
+            height: 60.0,
+            font_size: 13.6,
+            line_height: 20.0,
+            tag: "pre".to_owned(),
+            text: "[code] fn main".to_owned(),
+            lines: vec!["fn main() {}".to_owned()],
+            runs: vec![vec![
+                (2, "#ff7b72".to_owned()),
+                (1, String::new()),
+                (4, "#d2a8ff".to_owned()),
+                (5, String::new()),
+            ]],
+            padding_top: 16.0,
+            ..StyledItem::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![item],
+        };
+        let svg = preview_svg(&scene, 0.0, 800, 400);
+        assert!(svg.contains(
+            r##"xml:space="preserve"><tspan fill="#ff7b72">fn</tspan> <tspan fill="#d2a8ff">main</tspan>() {}</text>"##
+        ));
+    }
+
+    #[test]
+    fn code_color_runs_escape_markup_and_stop_at_the_block_width() {
+        let item = StyledItem {
+            y: 0.0,
+            x: 0.0,
+            // 0.6 em * 10 px = 6 px per character: 60 px holds 10 characters.
+            width: 60.0,
+            height: 60.0,
+            font_size: 10.0,
+            line_height: 20.0,
+            tag: "pre".to_owned(),
+            text: "[code] a<b".to_owned(),
+            lines: vec!["a<b && c_overflowing".to_owned()],
+            runs: vec![vec![
+                (3, "#ff7b72".to_owned()),
+                (40, "not-a-color".to_owned()),
+            ]],
+            ..StyledItem::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![item],
+        };
+        let svg = preview_svg(&scene, 0.0, 800, 400);
+        assert!(svg.contains(r##"<tspan fill="#ff7b72">a&lt;b</tspan>"##));
+        assert!(svg.contains(r##"<tspan fill="#1f2328"> &amp;&amp; c_o</tspan></text>"##));
+        assert!(!svg.contains("verflowing"));
+    }
+
+    #[test]
+    fn code_color_runs_keep_alignment_for_short_missing_and_wide_runs() {
+        let item = StyledItem {
+            y: 0.0,
+            x: 0.0,
+            width: 600.0,
+            height: 100.0,
+            font_size: 10.0,
+            line_height: 20.0,
+            tag: "pre".to_owned(),
+            text: "[code] x".to_owned(),
+            lines: vec![
+                "abcdef".to_owned(),
+                "日本🙂ab".to_owned(),
+                "no runs here".to_owned(),
+            ],
+            // The third line has no run list at all.
+            runs: vec![
+                vec![(2, "#ff7b72".to_owned())],
+                vec![
+                    (2, "#d2a8ff".to_owned()),
+                    (1, String::new()),
+                    (2, "#79c0ff".to_owned()),
+                ],
+            ],
+            ..StyledItem::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![item],
+        };
+        let svg = preview_svg(&scene, 0.0, 800, 400);
+        assert!(
+            svg.contains(r##"<tspan fill="#ff7b72">ab</tspan>cdef</text>"##),
+            "characters past a short run list keep the text colour"
+        );
+        assert!(
+            svg.contains(
+                r##"<tspan fill="#d2a8ff">日本</tspan>🙂<tspan fill="#79c0ff">ab</tspan></text>"##
+            ),
+            "runs count characters, not bytes"
+        );
+        assert!(svg.contains(r#"xml:space="preserve">no runs here</text>"#));
     }
 
     #[test]

@@ -1378,6 +1378,22 @@ mod renderer_viewer {
         Ok(result)
     }
 
+    fn color_runs(line: &Value) -> Vec<(usize, String)> {
+        line.as_array()
+            .map(|runs| {
+                // Stop at a malformed run: skipping it would shift every later
+                // colour onto the wrong characters.
+                runs.iter()
+                    .take(240)
+                    .map_while(|run| {
+                        let count = usize::try_from(run[0].as_u64()?).ok()?;
+                        Some((count, run[1].as_str().unwrap_or("").to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn table_cell(cell: &Value) -> hybrid_image_preview::TableCell {
         let number = |name: &str| cell[name].as_f64().filter(|n| n.is_finite()).unwrap_or(0.0);
         let text = |name: &str| cell[name].as_str().unwrap_or("").to_owned();
@@ -1438,6 +1454,10 @@ mod renderer_viewer {
                     .unwrap_or_default(),
                 padding_left: number("paddingLeft", 0.0),
                 padding_top: number("paddingTop", 0.0),
+                runs: item["runs"]
+                    .as_array()
+                    .map(|lines| lines.iter().take(400).map(color_runs).collect())
+                    .unwrap_or_default(),
                 cells: item["cells"]
                     .as_array()
                     .map(|cells| cells.iter().take(400).map(table_cell).collect())
@@ -2981,6 +3001,24 @@ mod renderer_viewer {
             assert!(snapshot_dimensions(&json!({"imageWidth": 1414})).is_err());
             assert!(snapshot_dimensions(&json!({"imageWidth": 0, "imageHeight": 1})).is_err());
             Ok(())
+        }
+
+        #[test]
+        fn color_runs_stop_at_the_first_malformed_run() {
+            let runs = |value: Value| color_runs(&value);
+            assert_eq!(
+                runs(json!([[2, "#aaaaaa"], [-1, "#bbbbbb"], [3, "#cccccc"]])),
+                vec![(2, "#aaaaaa".to_owned())],
+                "a bad count must not let later colours shift left"
+            );
+            assert_eq!(
+                runs(json!([[2], [1, "#cccccc"]])),
+                vec![(2, String::new()), (1, "#cccccc".to_owned())],
+                "a missing colour draws in the text colour"
+            );
+            assert_eq!(runs(json!([["2", "#aaaaaa"]])), vec![]);
+            assert_eq!(runs(json!("not runs")), vec![]);
+            assert_eq!(runs(json!(vec![json!([1, ""]); 300])).len(), 240);
         }
 
         #[test]
