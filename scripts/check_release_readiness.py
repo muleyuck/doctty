@@ -76,8 +76,14 @@ def main() -> None:
         contents = read(path)
         verify("NOT Apple-notarized" in contents or "NOT notarized" in contents,
                f"{path} must state the lack of Apple notarization")
-        verify("xattr -dr" not in contents and "spctl --master-disable" not in contents,
-               f"{path} must not silently disable macOS quarantine/Gatekeeper")
+        verify("spctl --master-disable" not in contents,
+               f"{path} must not disable Gatekeeper system-wide")
+    # Like turnray, the cask clears quarantine on its own bundle only; a
+    # manually downloaded ZIP is still left to Gatekeeper.
+    verify('"com.apple.quarantine", "{{staged_path}}/doctty-macos-arm64"' in cask,
+           "Cask must clear quarantine on its own staged bundle only")
+    verify("xattr -dr" not in release_script,
+           "Release ZIP instructions must not tell users to clear quarantine")
 
     print(f"Release preflight OK: Cargo + manifest v{version}")
     print("Artifact contracts: arm64 renderer bundle, versioned ZIP, sha256, Cask")
