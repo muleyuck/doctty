@@ -62,7 +62,8 @@ brew install --cask muleyuck/tap/doctty
 doctty README.md
 ```
 
-The ZIP is **not Apple-notarized**. macOS Gatekeeper may initially block
+The ZIP is **not Apple-notarized**. The Homebrew cask clears the download
+quarantine on its own bundle, so Gatekeeper does not block it. When you download the ZIP manually, macOS Gatekeeper may initially block
 `doctty` and may independently block `doctty-renderer` or `doctty-webkit-swift`.
 On a verified download, use **System Settings → Privacy & Security → Open Anyway**
 for each blocked executable as needed, then retry `doctty`. An initial
