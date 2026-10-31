@@ -3,11 +3,9 @@
   "release-type": "rust",
   "skip-github-release": false,
   "include-component-in-tag": false,
-  "plugins": [
-    "cargo-workspace"
-  ],
   "packages": {
     ".": {
+      "bump-minor-pre-major": true,
       "changelog-sections": [
         {
           "type": "feat",
