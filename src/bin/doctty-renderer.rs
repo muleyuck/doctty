@@ -407,6 +407,8 @@ mod renderer_viewer {
         child: Child,
         input: std::process::ChildStdin,
         output: BufReader<std::process::ChildStdout>,
+        // The only directory WebKit may read; preview thumbnails obey it too.
+        read_root: PathBuf,
     }
 
     impl SwiftProcess {
@@ -472,6 +474,7 @@ mod renderer_viewer {
                 child,
                 input,
                 output,
+                read_root,
             })
         }
 
@@ -1375,6 +1378,23 @@ mod renderer_viewer {
         Ok(result)
     }
 
+    fn table_cell(cell: &Value) -> hybrid_image_preview::TableCell {
+        let number = |name: &str| cell[name].as_f64().filter(|n| n.is_finite()).unwrap_or(0.0);
+        let text = |name: &str| cell[name].as_str().unwrap_or("").to_owned();
+        hybrid_image_preview::TableCell {
+            x: number("x"),
+            y: number("y"),
+            width: number("width"),
+            height: number("height"),
+            text: text("text"),
+            header: cell["header"].as_bool().unwrap_or(false),
+            padding_left: number("paddingLeft"),
+            align: text("align"),
+            background: text("background"),
+            border: text("border"),
+        }
+    }
+
     fn parse_preview_scene(value: &Value) -> Result<hybrid_image_preview::Scene> {
         let items = value["items"].as_array().context("missing outline items")?;
         let mut scene = hybrid_image_preview::Scene {
@@ -1418,6 +1438,11 @@ mod renderer_viewer {
                     .unwrap_or_default(),
                 padding_left: number("paddingLeft", 0.0),
                 padding_top: number("paddingTop", 0.0),
+                cells: item["cells"]
+                    .as_array()
+                    .map(|cells| cells.iter().take(400).map(table_cell).collect())
+                    .unwrap_or_default(),
+                src: item["src"].as_str().unwrap_or("").to_owned(),
             });
         }
         scene.items.sort_by(|a, b| a.y.total_cmp(&b.y));
@@ -1803,6 +1828,7 @@ mod renderer_viewer {
         let mut document_height = initial.document_height;
         let tile_budget = tile_budget_bytes(viewport_width, viewport_height);
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
+        let read_root = swift.read_root.clone();
         let (requests, responses, webkit_worker) = spawn_worker(
             swift,
             image_path,
@@ -1817,6 +1843,7 @@ mod renderer_viewer {
                 viewport_width,
                 viewport_height,
                 Arc::clone(&latest_position),
+                read_root,
             );
             (Some(sender), Some(receiver), Some(worker))
         } else {

@@ -220,6 +220,30 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                   return match ? '#' + [match[1], match[2], match[3]]
                     .map(n => Number(n).toString(16).padStart(2, '0')).join('') : '';
                 };
+                // Tables keep their cell grid and images their file, so the
+                // preview shows the same structure as the WebKit tile.
+                const table = tag === 'table' ? {
+                  // el.rows excludes the rows of nested tables.
+                  cells: Array.from(el.rows).flatMap(row => Array.from(row.cells))
+                    .slice(0, 400).map(cell => {
+                    const box = cell.getBoundingClientRect();
+                    const cellStyle = window.getComputedStyle(cell);
+                    return {
+                      x: Math.round(box.left + window.scrollX),
+                      y: Math.round(box.top + window.scrollY),
+                      width: Math.round(box.width),
+                      height: Math.round(box.height),
+                      text: (cell.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+                      header: cell.tagName === 'TH',
+                      paddingLeft: parseFloat(cellStyle.paddingLeft) || 0,
+                      align: cellStyle.textAlign,
+                      background: normalizedColor(cellStyle.backgroundColor) ||
+                        normalizedColor(window.getComputedStyle(cell.parentElement).backgroundColor),
+                      border: normalizedColor(cellStyle.borderTopColor)
+                    };
+                  })
+                } : {};
+                const image = tag === 'img' ? { src: el.currentSrc || el.src || '' } : {};
                 items.push({
                   y: Math.round(rect.top + window.scrollY),
                   x: Math.round(rect.left + window.scrollX),
@@ -232,7 +256,9 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                   weight: parseInt(style.fontWeight, 10) || 400,
                   color: normalizedColor(style.color),
                   background: normalizedColor(style.backgroundColor),
-                  ...code
+                  ...code,
+                  ...table,
+                  ...image
                 });
               }
               return {

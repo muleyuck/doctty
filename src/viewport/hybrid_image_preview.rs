@@ -5,7 +5,9 @@
 //! uploaded images. Neither SVG rasterization nor PNG transfer runs on the
 //! terminal input thread.
 use std::{
+    collections::HashMap,
     io::{self, Write},
+    path::{Path, PathBuf},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -17,7 +19,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use resvg::{
-    tiny_skia::{Pixmap, Transform},
+    tiny_skia::{IntSize, Pixmap, PixmapPaint, Transform},
     usvg::{self, Options},
 };
 
@@ -44,6 +46,25 @@ pub(crate) struct StyledItem {
     pub(crate) lines: Vec<String>,
     pub(crate) padding_left: f64,
     pub(crate) padding_top: f64,
+    /// Table cells, drawn as a grid instead of one flattened line.
+    pub(crate) cells: Vec<TableCell>,
+    /// Image source URL; only local `file://` images are drawn.
+    pub(crate) src: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TableCell {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+    pub(crate) text: String,
+    pub(crate) header: bool,
+    pub(crate) padding_left: f64,
+    /// CSS text-align: "center", "right"/"end", or anything else for left.
+    pub(crate) align: String,
+    pub(crate) background: String,
+    pub(crate) border: String,
 }
 
 #[derive(Clone, Debug)]
@@ -134,10 +155,12 @@ pub(crate) fn spawn(
     viewport_width: u32,
     viewport_height: u32,
     latest_position: Arc<AtomicU64>,
+    read_root: PathBuf,
 ) -> (Sender<Request>, Receiver<Response>, thread::JoinHandle<()>) {
     let (requests, incoming) = mpsc::channel::<Request>();
     let (outgoing, responses) = mpsc::channel::<Response>();
     let worker = thread::spawn(move || {
+        let mut thumbnails = Thumbnails::new(&read_root);
         while let Ok(request) = incoming.recv() {
             let obsolete = || {
                 let current = f64::from_bits(latest_position.load(Ordering::Relaxed));
@@ -149,7 +172,13 @@ pub(crate) fn spawn(
             let reply = if obsolete() {
                 Response::Skipped
             } else {
-                match render_png(&scene, request.origin, viewport_width, viewport_height) {
+                match render_png(
+                    &scene,
+                    request.origin,
+                    viewport_width,
+                    viewport_height,
+                    &mut thumbnails,
+                ) {
                     Ok((png, width, height)) => {
                         if obsolete() {
                             Response::Skipped
@@ -296,6 +325,8 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
             svg.push_str(&format!(
                 r#"<rect x="{x:.1}" y="{top:.1}" width="{item_width:.1}" height="{visible:.1}" rx="4" fill="{fill}"/>"#
             ));
+        } else if item.tag == "table" && !item.cells.is_empty() {
+            // Cells paint their own backgrounds and borders.
         } else if item.tag == "pre" || item.tag == "table" {
             svg.push_str(&format!(
                 r#"<rect x="{x:.1}" y="{y:.1}" width="{item_width:.1}" height="{item_height:.1}" rx="4" fill="{fill}"/>"#
@@ -317,6 +348,10 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
                 f64::from(full_height),
                 &color,
             );
+            continue;
+        }
+        if item.tag == "table" && !item.cells.is_empty() {
+            push_table_cells(&mut svg, item, origin, f64::from(full_height), &color);
             continue;
         }
 
@@ -387,6 +422,145 @@ fn push_code_lines(
     }
 }
 
+fn push_table_cells(
+    svg: &mut String,
+    item: &StyledItem,
+    origin: f64,
+    full_height: f64,
+    color: &str,
+) {
+    let font_size = item.font_size.clamp(8.0, 42.0);
+    for cell in &item.cells {
+        let y = cell.y - origin;
+        if y >= full_height || y + cell.height <= 0.0 {
+            continue;
+        }
+        // A transparent border arrives empty: draw no grid line for it.
+        let border = if cell.border.is_empty() {
+            "none".to_owned()
+        } else {
+            safe_color(&cell.border, "#3d444d")
+        };
+        let fill = if cell.background.is_empty() {
+            "none".to_owned()
+        } else {
+            safe_color(&cell.background, "#0d1117")
+        };
+        svg.push_str(&format!(
+            r#"<rect x="{:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" fill="{fill}" stroke="{border}"/>"#,
+            cell.x, cell.width, cell.height
+        ));
+        let padding = cell.padding_left.clamp(0.0, cell.width / 2.0);
+        // Helvetica averages about 0.45 em per character in table text.
+        let max_chars = ((cell.width - 2.0 * padding) / (font_size * 0.45))
+            .floor()
+            .max(1.0) as usize;
+        let clipped: String = cell.text.chars().take(max_chars).collect();
+        if clipped.is_empty() {
+            continue;
+        }
+        let baseline = y + (cell.height + font_size * 0.7) / 2.0;
+        let weight = if cell.header { 600 } else { 400 };
+        let (anchor, text_x) = match cell.align.as_str() {
+            "center" => ("middle", cell.x + cell.width / 2.0),
+            "right" | "end" => ("end", cell.x + cell.width - padding),
+            _ => ("start", cell.x + padding),
+        };
+        svg.push_str(&format!(
+            r#"<text x="{text_x:.1}" y="{baseline:.1}" fill="{color}" font-family="Helvetica" font-weight="{weight}" font-size="{font_size:.1}" text-anchor="{anchor}">{}</text>"#,
+            xml_escape(&clipped)
+        ));
+    }
+}
+
+/// Downscaled local images, decoded once per source and size. Re-decoding a
+/// photo or a large GIF for every preview tile would dominate its render time.
+pub(crate) struct Thumbnails {
+    // Only files WebKit itself may read are decoded, so a document cannot
+    // surface a private image through the preview.
+    root: Option<PathBuf>,
+    cache: HashMap<(String, u32, u32), Option<Pixmap>>,
+    cached_bytes: usize,
+}
+
+const MAX_THUMBNAIL_SOURCE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_THUMBNAIL_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+impl Thumbnails {
+    pub(crate) fn new(read_root: &Path) -> Self {
+        Self {
+            root: std::fs::canonicalize(read_root).ok(),
+            cache: HashMap::new(),
+            cached_bytes: 0,
+        }
+    }
+
+    fn get(&mut self, src: &str, width: u32, height: u32) -> Option<&Pixmap> {
+        let key = (src.to_owned(), width, height);
+        if !self.cache.contains_key(&key) {
+            let thumbnail = self
+                .root
+                .as_deref()
+                .and_then(|root| load_thumbnail(root, src, width, height));
+            let size = thumbnail.as_ref().map_or(0, |pixmap| pixmap.data().len());
+            if self.cached_bytes + size > MAX_THUMBNAIL_CACHE_BYTES {
+                self.cache.clear();
+                self.cached_bytes = 0;
+            }
+            self.cached_bytes += size;
+            self.cache.insert(key.clone(), thumbnail);
+        }
+        self.cache.get(&key)?.as_ref()
+    }
+}
+
+fn local_file(src: &str) -> Option<PathBuf> {
+    let url = src.strip_prefix("file://")?;
+    let url = url.strip_prefix("localhost").unwrap_or(url);
+    let bytes = url.split(['?', '#']).next()?.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Some(PathBuf::from(String::from_utf8(decoded).ok()?))
+}
+
+fn load_thumbnail(root: &Path, src: &str, width: u32, height: u32) -> Option<Pixmap> {
+    let path = std::fs::canonicalize(local_file(src)?).ok()?;
+    let metadata = std::fs::metadata(&path).ok()?;
+    // A FIFO or device would block the worker; outside the root is off limits.
+    if !path.starts_with(root) || !metadata.is_file() || metadata.len() > MAX_THUMBNAIL_SOURCE_BYTES
+    {
+        return None;
+    }
+    let image = image::ImageReader::open(&path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let mut pixels = image
+        .resize_exact(width, height, image::imageops::FilterType::Triangle)
+        .into_rgba8()
+        .into_raw();
+    // tiny-skia stores premultiplied alpha.
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        let alpha = u16::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
+        }
+    }
+    Pixmap::from_vec(pixels, IntSize::from_wh(width, height)?)
+}
+
 fn font_database() -> Arc<usvg::fontdb::Database> {
     static DATABASE: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
     Arc::clone(DATABASE.get_or_init(|| {
@@ -402,7 +576,13 @@ pub(crate) fn raster_size(width: u32, height: u32) -> (u32, u32) {
     (width.div_ceil(2).clamp(1, 2048), height.clamp(1, 4096))
 }
 
-fn render_png(scene: &Scene, origin: f64, width: u32, height: u32) -> Result<(Vec<u8>, u32, u32)> {
+fn render_png(
+    scene: &Scene,
+    origin: f64,
+    width: u32,
+    height: u32,
+    thumbnails: &mut Thumbnails,
+) -> Result<(Vec<u8>, u32, u32)> {
     let (out_width, out_height) = raster_size(width, height);
     let svg = preview_svg(scene, origin, width, height);
     let options = Options {
@@ -421,7 +601,49 @@ fn render_png(scene: &Scene, origin: f64, width: u32, height: u32) -> Result<(Ve
         ),
         &mut pixmap.as_mut(),
     );
-    Ok((pixmap.encode_png()?, out_width, out_height))
+    let scale_x = f64::from(out_width) / f64::from(width.max(1));
+    let scale_y = f64::from(out_height) / f64::from(height.max(1).saturating_mul(2));
+    let end = origin + f64::from(height.saturating_mul(2));
+    for item in scene
+        .items
+        .iter()
+        .filter(|item| item.tag == "img" && item.y < end && item.y + item.height > origin)
+    {
+        let thumb_width = (item.width * scale_x)
+            .round()
+            .clamp(1.0, f64::from(out_width)) as u32;
+        let thumb_height = (item.height * scale_y).round().clamp(1.0, 4096.0) as u32;
+        if let Some(thumbnail) = thumbnails.get(&item.src, thumb_width, thumb_height) {
+            pixmap.draw_pixmap(
+                (item.x * scale_x).round() as i32,
+                ((item.y - origin) * scale_y).round() as i32,
+                thumbnail.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+    Ok((encode_png(&pixmap)?, out_width, out_height))
+}
+
+// The preview is opaque (the page background is painted first), so its
+// premultiplied pixels are already straight RGBA. Fast compression keeps
+// photos from dominating the render time.
+fn encode_png(pixmap: &Pixmap) -> Result<Vec<u8>> {
+    use image::{
+        ExtendedColorType, ImageEncoder,
+        codecs::png::{CompressionType, FilterType, PngEncoder},
+    };
+    let mut png = Vec::new();
+    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(
+            pixmap.data(),
+            pixmap.width(),
+            pixmap.height(),
+            ExtendedColorType::Rgba8,
+        )?;
+    Ok(png)
 }
 
 fn upload_png(out: &mut impl Write, id: u32, png: &[u8]) -> Result<()> {
@@ -664,6 +886,87 @@ mod tests {
         let svg = preview_svg(&scene, 0.0, 800, 600);
         assert!(svg.contains("line 58"));
         assert!(svg.contains(r#"y="0.0" width="600.0" height="1201.0""#));
+    }
+
+    #[test]
+    fn table_preview_draws_each_cell_with_its_alignment() {
+        let cell = |x: f64, text: &str, align: &str| TableCell {
+            x,
+            y: 40.0,
+            width: 100.0,
+            height: 36.0,
+            text: text.to_owned(),
+            padding_left: 13.0,
+            align: align.to_owned(),
+            border: "#3d444d".to_owned(),
+            ..TableCell::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![StyledItem {
+                y: 40.0,
+                x: 0.0,
+                width: 300.0,
+                height: 36.0,
+                font_size: 16.0,
+                tag: "table".to_owned(),
+                text: "[table] a 1 b".to_owned(),
+                cells: vec![
+                    cell(0.0, "a", ""),
+                    cell(100.0, "1", "right"),
+                    cell(200.0, "b", "center"),
+                ],
+                ..StyledItem::default()
+            }],
+        };
+        let svg = preview_svg(&scene, 0.0, 400, 200);
+        assert_eq!(svg.matches(r##"stroke="#3d444d""##).count(), 3);
+        assert!(svg.contains(r#"x="13.0""#) && svg.contains(r#"text-anchor="start">a<"#));
+        assert!(svg.contains(r#"x="187.0""#) && svg.contains(r#"text-anchor="end">1<"#));
+        assert!(svg.contains(r#"x="250.0""#) && svg.contains(r#"text-anchor="middle">b<"#));
+        assert!(
+            !svg.contains("[table]"),
+            "cells replace the flattened table text"
+        );
+    }
+
+    #[test]
+    fn local_image_is_drawn_from_a_cached_thumbnail() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("red dot.png");
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255])).save(&path)?;
+        let src = format!("file://{}", path.display()).replace(' ', "%20");
+        assert_eq!(local_file(&src).as_deref(), Some(path.as_path()));
+        assert_eq!(local_file("https://example.com/a.png"), None);
+
+        let scene = Scene {
+            background: "#ffffff".to_owned(),
+            items: vec![StyledItem {
+                y: 0.0,
+                x: 0.0,
+                width: 200.0,
+                height: 200.0,
+                tag: "img".to_owned(),
+                text: "[image] dot".to_owned(),
+                src,
+                ..StyledItem::default()
+            }],
+        };
+        let mut thumbnails = Thumbnails::new(dir.path());
+        let (png, _, _) = render_png(&scene, 0.0, 400, 200, &mut thumbnails)?;
+        let decoded = image::load_from_memory(&png)?.into_rgba8();
+        assert_eq!(decoded.get_pixel(10, 10).0, [255, 0, 0, 255]);
+        assert_eq!(thumbnails.cache.len(), 1);
+        render_png(&scene, 0.0, 400, 200, &mut thumbnails)?;
+        assert_eq!(thumbnails.cache.len(), 1, "the thumbnail is decoded once");
+
+        // The same image is off limits once it lies outside the read root.
+        let other_root = tempfile::tempdir()?;
+        let mut confined = Thumbnails::new(other_root.path());
+        let (png, _, _) = render_png(&scene, 0.0, 400, 200, &mut confined)?;
+        let decoded = image::load_from_memory(&png)?.into_rgba8();
+        assert_ne!(decoded.get_pixel(10, 10).0, [255, 0, 0, 255]);
+        Ok(())
     }
 
     #[test]
