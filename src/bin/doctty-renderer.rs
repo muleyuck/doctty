@@ -18,6 +18,7 @@ mod hybrid_image_preview;
 #[cfg(target_os = "macos")]
 mod renderer_viewer {
     use std::{
+        collections::VecDeque,
         ffi::OsStr,
         fs,
         io::{self, BufRead, BufReader, IsTerminal, Write},
@@ -69,6 +70,13 @@ mod renderer_viewer {
     const HYBRID_PREVIEW_AFTER: Duration = Duration::from_millis(80);
     const HYBRID_SETTLE_AFTER: Duration = Duration::from_millis(160);
     const HYBRID_PREVIEW_FRAME: Duration = Duration::from_millis(33);
+    // Moving more than half a viewport within this window is faster than
+    // reading. WebKit tiles captured then are stale before they can be placed:
+    // paging with a held J placed 3 of them in 15 s while WebKit used 35% of a
+    // core and every one was still sent to the terminal. Matching the settle
+    // delay lets the recovery capture start as soon as the user stops.
+    const FAST_MOTION_WINDOW: Duration = HYBRID_SETTLE_AFTER;
+    const FAST_MOTION_VIEWPORTS: f64 = 0.5;
     // Watch only metadata at a bounded cadence. Debounce atomic saves to
     // avoid starting a new WKWebView while the editor is still writing.
     const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(150);
@@ -1654,6 +1662,39 @@ mod renderer_viewer {
         Hold,
     }
 
+    #[derive(Default)]
+    struct MotionWindow {
+        samples: VecDeque<(Instant, f64)>,
+    }
+
+    impl MotionWindow {
+        fn record(&mut self, now: Instant, position: f64) {
+            self.samples.push_back((now, position));
+            self.prune(now);
+        }
+
+        fn is_fast(&mut self, now: Instant, viewport_height: u32) -> bool {
+            self.prune(now);
+            let (low, high) = self
+                .samples
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), (_, y)| {
+                    (low.min(*y), high.max(*y))
+                });
+            high - low > f64::from(viewport_height) * FAST_MOTION_VIEWPORTS
+        }
+
+        fn prune(&mut self, now: Instant) {
+            while self
+                .samples
+                .front()
+                .is_some_and(|(at, _)| now.saturating_duration_since(*at) > FAST_MOTION_WINDOW)
+            {
+                self.samples.pop_front();
+            }
+        }
+    }
+
     // Once the user has seen the preview, keep it for the rest of a fast
     // gesture. Repeated image/text switches at cache boundaries are jarring.
     // Idle and tile availability are both required to restore WebKit.
@@ -1795,6 +1836,7 @@ mod renderer_viewer {
         let mut last_preview_position: Option<u64> = None;
         let mut last_preview_frame: Option<Instant> = None;
         let mut last_movement_at = Instant::now();
+        let mut motion = MotionWindow::default();
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
@@ -2033,8 +2075,10 @@ mod renderer_viewer {
                 // Tiles are prefetched while scrolling. Capturing only after
                 // settling kept the preview on screen during scrolls; prefetching
                 // costs about 3% -> 8% of a core while scrolling and nothing at
-                // rest (#41).
-                if pending.is_none() {
+                // rest (#41). Faster than reading, the preview covers the
+                // motion and captures wait; without a preview they continue.
+                let fast = outline.is_some() && motion.is_fast(now, viewport_height);
+                if pending.is_none() && !fast {
                     let recovery =
                         outline.is_some() && selected.is_none() && idle_for >= HYBRID_SETTLE_AFTER;
                     let origin = if recovery {
@@ -2135,6 +2179,7 @@ mod renderer_viewer {
                     }
                     if position != previous_position {
                         last_movement_at = Instant::now();
+                        motion.record(last_movement_at, position);
                     }
                     // Publish every accepted movement, including reversals, before
                     // returning to the drawing loop.
@@ -2909,6 +2954,33 @@ mod renderer_viewer {
             assert!(snapshot_dimensions(&json!({"imageWidth": 1414})).is_err());
             assert!(snapshot_dimensions(&json!({"imageWidth": 0, "imageHeight": 1})).is_err());
             Ok(())
+        }
+
+        #[test]
+        fn motion_is_fast_only_when_moving_faster_than_reading() {
+            let start = Instant::now();
+            let at = |ms: u64| start + Duration::from_millis(ms);
+            let mut held_j = MotionWindow::default();
+            for step in 0..20 {
+                held_j.record(at(step * 30), step as f64 * 16.0);
+            }
+            assert!(
+                !held_j.is_fast(at(600), 900),
+                "line-by-line scrolling stays readable"
+            );
+
+            let mut paging = MotionWindow::default();
+            paging.record(at(0), 0.0);
+            assert!(
+                !paging.is_fast(at(0), 900),
+                "a single page jump is not a fast scroll"
+            );
+            paging.record(at(50), 765.0);
+            assert!(paging.is_fast(at(50), 900));
+            assert!(
+                !paging.is_fast(at(400), 900),
+                "stopping ends the fast motion"
+            );
         }
 
         #[test]
