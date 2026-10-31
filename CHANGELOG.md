@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/muleyuck/doctty/compare/v0.2.0...v0.2.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* clear quarantine on the Homebrew cask's own bundle ([#56](https://github.com/muleyuck/doctty/issues/56)) ([e36a2b8](https://github.com/muleyuck/doctty/commit/e36a2b8c8405f558974418e71278e14d30ed1a50))
+
+
+### Performance Improvements
+
+* make the low-quality preview match the WebKit tile and stop wasted captures ([#57](https://github.com/muleyuck/doctty/issues/57)) ([bef231b](https://github.com/muleyuck/doctty/commit/bef231b32cbb190b6f6a8fcfe13c4596e47aa6b2))
+
 ## [0.2.0](https://github.com/muleyuck/doctty/compare/v0.1.1...v0.2.0) (2026-10-31)
 
 
