@@ -200,6 +200,17 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                   text = '[table] ' + text;
                 }
                 const style = window.getComputedStyle(el);
+                // Code keeps its own line breaks and indentation so the preview
+                // has the same shape as the WebKit tile it stands in for.
+                const code = tag === 'pre' ? {
+                  lines: (el.textContent || '').replace(/\\t/g, '    ').split('\\n')
+                    .slice(0, 400).map(line => line.slice(0, 240)),
+                  paddingLeft: parseFloat(style.paddingLeft) || 0,
+                  paddingTop: parseFloat(style.paddingTop) || 0
+                } : {};
+                while (code.lines && code.lines.length && !code.lines[code.lines.length - 1].trim()) {
+                  code.lines.pop();
+                }
                 const normalizedColor = value => {
                   if (value.startsWith('rgba(') &&
                       Number(value.slice(value.lastIndexOf(',') + 1).replace(')', '').trim()) === 0) {
@@ -220,7 +231,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                   lineHeight: parseFloat(style.lineHeight) || 24,
                   weight: parseInt(style.fontWeight, 10) || 400,
                   color: normalizedColor(style.color),
-                  background: normalizedColor(style.backgroundColor)
+                  background: normalizedColor(style.backgroundColor),
+                  ...code
                 });
               }
               return {

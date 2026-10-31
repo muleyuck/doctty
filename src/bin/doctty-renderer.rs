@@ -1398,6 +1398,18 @@ mod renderer_viewer {
                 background: item["background"].as_str().unwrap_or("").to_owned(),
                 tag: item["tag"].as_str().unwrap_or("p").to_owned(),
                 text: text.to_owned(),
+                lines: item["lines"]
+                    .as_array()
+                    .map(|lines| {
+                        lines
+                            .iter()
+                            .take(400)
+                            .filter_map(|line| line.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                padding_left: number("paddingLeft", 0.0),
+                padding_top: number("paddingTop", 0.0),
             });
         }
         scene.items.sort_by(|a, b| a.y.total_cmp(&b.y));

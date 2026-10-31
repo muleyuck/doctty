@@ -40,6 +40,10 @@ pub(crate) struct StyledItem {
     pub(crate) background: String,
     pub(crate) tag: String,
     pub(crate) text: String,
+    /// Code block lines with their original breaks and indentation.
+    pub(crate) lines: Vec<String>,
+    pub(crate) padding_left: f64,
+    pub(crate) padding_top: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -283,7 +287,16 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
         let item_height = item.height.clamp(line_height, 1000.0);
         let color = safe_color(&item.color, "#1f2328");
         let fill = safe_color(&item.background, &background);
-        if item.tag == "pre" || item.tag == "table" {
+        if item.tag == "pre" && !item.lines.is_empty() {
+            // Code is drawn to the block's real height, so its background
+            // must cover the whole visible part rather than the 1000 px clamp.
+            let top = y.max(-1.0);
+            let bottom = (y + item.height).min(f64::from(full_height) + 1.0);
+            let visible = (bottom - top).max(0.0);
+            svg.push_str(&format!(
+                r#"<rect x="{x:.1}" y="{top:.1}" width="{item_width:.1}" height="{visible:.1}" rx="4" fill="{fill}"/>"#
+            ));
+        } else if item.tag == "pre" || item.tag == "table" {
             svg.push_str(&format!(
                 r#"<rect x="{x:.1}" y="{y:.1}" width="{item_width:.1}" height="{item_height:.1}" rx="4" fill="{fill}"/>"#
             ));
@@ -291,6 +304,19 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
             svg.push_str(&format!(
                 r#"<rect x="{x:.1}" y="{y:.1}" width="{item_width:.1}" height="{item_height:.1}" rx="4" fill="{fill}" stroke="{color}" stroke-opacity="0.25"/>"#
             ));
+            continue;
+        }
+
+        if item.tag == "pre" && !item.lines.is_empty() {
+            push_code_lines(
+                &mut svg,
+                item,
+                x,
+                y,
+                item_width,
+                f64::from(full_height),
+                &color,
+            );
             continue;
         }
 
@@ -322,6 +348,43 @@ fn preview_svg(scene: &Scene, origin: f64, width: u32, height: u32) -> String {
     }
     svg.push_str("</svg>");
     svg
+}
+
+// Monospaced lines are drawn unwrapped and clipped at the block edge, as
+// WebKit scrolls an overlong <pre> line instead of wrapping it.
+fn push_code_lines(
+    svg: &mut String,
+    item: &StyledItem,
+    x: f64,
+    y: f64,
+    width: f64,
+    full_height: f64,
+    color: &str,
+) {
+    let font_size = item.font_size.clamp(8.0, 42.0);
+    let line_height = item.line_height.max(font_size * 1.15).min(70.0);
+    let padding_left = item.padding_left.clamp(0.0, width / 2.0);
+    let top = y + item.padding_top.clamp(0.0, 200.0);
+    // Menlo advances about 0.6 em per character.
+    let max_chars = ((width - 2.0 * padding_left) / (font_size * 0.6))
+        .floor()
+        .max(1.0) as usize;
+    for (index, line) in item.lines.iter().enumerate() {
+        let line_top = top + index as f64 * line_height;
+        if line_top >= full_height || line_top >= y + item.height {
+            break;
+        }
+        if line_top + line_height <= 0.0 || line.trim().is_empty() {
+            continue;
+        }
+        let baseline = line_top + (line_height + font_size * 0.7) / 2.0;
+        let clipped: String = line.chars().take(max_chars).collect();
+        let text = xml_escape(&clipped);
+        svg.push_str(&format!(
+            r#"<text x="{:.1}" y="{baseline:.1}" fill="{color}" font-family="Menlo" font-size="{font_size:.1}" xml:space="preserve">{text}</text>"#,
+            x + padding_left
+        ));
+    }
 }
 
 fn font_database() -> Arc<usvg::fontdb::Database> {
@@ -534,6 +597,73 @@ mod tests {
         );
         assert!(preview_wrap_lines("hello", 0, 2).is_empty());
         assert_eq!(preview_wrap_lines("日本語", 1, 3), vec!["日", "本", "語"]);
+    }
+
+    #[test]
+    fn code_preview_keeps_lines_and_indentation_and_stops_at_the_block() {
+        let item = StyledItem {
+            y: 100.0,
+            x: 20.0,
+            width: 400.0,
+            height: 16.0 + 3.0 * 20.0,
+            font_size: 13.6,
+            line_height: 20.0,
+            tag: "pre".to_owned(),
+            text: "[code] fn main() {}".to_owned(),
+            lines: vec![
+                "fn main() {".to_owned(),
+                String::new(),
+                "    let x = 1 < 2;".to_owned(),
+                "}".to_owned(),
+                "hidden".to_owned(),
+            ],
+            padding_left: 16.0,
+            padding_top: 16.0,
+            ..StyledItem::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![item],
+        };
+        let svg = preview_svg(&scene, 0.0, 800, 400);
+        assert!(svg.contains(r#"xml:space="preserve">    let x = 1 &lt; 2;</text>"#));
+        assert_eq!(
+            svg.matches("<text").count(),
+            2,
+            "blank and overflowing lines are skipped"
+        );
+        assert!(!svg.contains("hidden"));
+        assert!(
+            svg.contains(r#"x="36.0""#),
+            "text starts after the block padding"
+        );
+    }
+
+    #[test]
+    fn tall_code_block_background_covers_every_visible_line() {
+        let item = StyledItem {
+            y: 0.0,
+            x: 8.0,
+            width: 600.0,
+            height: 32.0 + 100.0 * 20.0,
+            font_size: 13.6,
+            line_height: 20.0,
+            background: "#161b22".to_owned(),
+            tag: "pre".to_owned(),
+            text: "[code] long".to_owned(),
+            lines: (0..100).map(|index| format!("line {index}")).collect(),
+            padding_left: 16.0,
+            padding_top: 16.0,
+            ..StyledItem::default()
+        };
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items: vec![item],
+        };
+        // The 1200 px tile shows lines well past the old 1000 px rect clamp.
+        let svg = preview_svg(&scene, 0.0, 800, 600);
+        assert!(svg.contains("line 58"));
+        assert!(svg.contains(r#"y="0.0" width="600.0" height="1201.0""#));
     }
 
     #[test]
