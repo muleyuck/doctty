@@ -29,7 +29,7 @@ The [Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/
 | **System/light/dark themes** | `system` by default, with explicit `light` / `dark` overrides                                  |
 | **Watch mode**               | `--watch` auto-reloads on file change                                                          |
 | **Pipe-friendly**            | Plain-text fallback when stdout is not a TTY — works in CI and scripts                         |
-| **Vim navigation**           | `j`/`k`/`g`/`G`/PageUp/PageDown                                                                |
+| **Vim navigation**           | `j`/`k`, `gg`/`G`, `Ctrl-f`/`Ctrl-b`, `Ctrl-d`/`Ctrl-u`, PageUp/PageDown                      |
 
 ## Quick start
 
@@ -93,16 +93,18 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 
 ### Keyboard shortcuts
 
-| Key                   | Action               |
-| --------------------- | -------------------- |
-| `j` / `Down`          | Scroll down          |
-| `k` / `Up`            | Scroll up            |
-| `g`                   | Jump to top          |
-| `G`                   | Jump to bottom       |
-| `PageUp` / `PageDown` | Page scroll          |
-| `r`                   | Reload file          |
-| `o`                   | Open link in browser |
-| `q`                   | Quit                 |
+| Key                              | Action               |
+| -------------------------------- | -------------------- |
+| `j` / `Down`                     | Scroll down          |
+| `k` / `Up`                       | Scroll up            |
+| `Ctrl-f` / `PageDown`            | Page down            |
+| `Ctrl-b` / `PageUp`              | Page up              |
+| `Ctrl-d` / `Ctrl-u`              | Half page down / up  |
+| `gg`                             | Jump to top          |
+| `G`                              | Jump to bottom       |
+| `r`                              | Reload file          |
+| `o`                              | Open link in browser |
+| `q`                              | Quit                 |
 
 ## Requirements
 
