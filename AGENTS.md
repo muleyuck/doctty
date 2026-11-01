@@ -27,7 +27,8 @@ Do not preload unrelated project history for a small edit.
 - `.pre-commit-config.yml` checks YAML/TOML, merge conflicts, Rust formatting, type checking, Clippy and tests.
 - Run `make build` to compile the release binary and update the local, Git-ignored `bin/doctty`. On macOS, the build target also codesigns it.
 - `cargo install --path . --locked` installs from a source checkout.
-- GitHub Actions runs `make ci` on Linux and `cargo build --release --locked` on macOS.
+- GitHub Actions runs `make ci` on Linux; on macOS it runs `cargo build --release --locked` and
+  the macOS-only `doctty-renderer` tests.
 - Do not commit generated binaries or resurrect the removed install script and self-update command; versioned GitHub Releases/Homebrew distribution is a separate future task.
 
 ## Change and verification policy

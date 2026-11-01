@@ -20,6 +20,8 @@ jobs:
   macos-build:
     uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1
     with:
-      test-command: cargo build --release --locked
+      # The renderer and its preview are macOS-only, so Linux `make ci` never
+      # compiles or tests them.
+      test-command: cargo build --release --locked && cargo test --locked --all-features --bin doctty-renderer
       install-args: rust
       runs-on: macos-latest
