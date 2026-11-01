@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/muleyuck/doctty/compare/v0.2.0...v0.3.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* a single g no longer jumps to the top; press gg. The undocumented J and K no longer scroll; use Ctrl-f/Ctrl-b or PageDown/PageUp.
+
+### Features
+
+* use Vim's default keys for paging and jumping to the top ([#61](https://github.com/muleyuck/doctty/issues/61)) ([a5f3fba](https://github.com/muleyuck/doctty/commit/a5f3fbaadc6514cb8f1927737b15c39a692ac60b))
+
+
+### Bug Fixes
+
+* clear quarantine on the Homebrew cask's own bundle ([#56](https://github.com/muleyuck/doctty/issues/56)) ([e36a2b8](https://github.com/muleyuck/doctty/commit/e36a2b8c8405f558974418e71278e14d30ed1a50))
+* keep viewing when Markdown contains U+FFFE or U+FFFF ([#63](https://github.com/muleyuck/doctty/issues/63)) ([a9d9335](https://github.com/muleyuck/doctty/commit/a9d9335f244744a55b32217c9967a10b76f1b098))
+
+
+### Performance Improvements
+
+* make the low-quality preview match the WebKit tile and stop wasted captures ([#57](https://github.com/muleyuck/doctty/issues/57)) ([bef231b](https://github.com/muleyuck/doctty/commit/bef231b32cbb190b6f6a8fcfe13c4596e47aa6b2))
+
 ## [0.2.0](https://github.com/muleyuck/doctty/compare/v0.1.1...v0.2.0) (2026-10-31)
 
 
