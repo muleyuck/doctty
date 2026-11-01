@@ -45,8 +45,8 @@ Keep all executables in the same directory. Open Markdown in Ghostty or Kitty:
   ./doctty /absolute/path/to/README.md
 
 Supported CLI options include --theme light/dark/system, --watch,
---no-mermaid, and the normal keyboard navigation (j/k, g/G,
-PageUp/PageDown, r, o, q). Standard piped output remains unchanged.
+--no-mermaid, and Vim-style keyboard navigation (j/k, gg/G,
+Ctrl-f/Ctrl-b, Ctrl-d/Ctrl-u, PageUp/PageDown, r, o, q). Standard piped output remains unchanged.
 
 Neither a Rust toolchain nor the Swift compiler is needed to run this
 prebuilt bundle. macOS supplies WebKit at runtime.

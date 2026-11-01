@@ -38,7 +38,7 @@ mod renderer_viewer {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use crossterm::{
         cursor,
-        event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+        event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
         execute,
         terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     };
@@ -177,27 +177,42 @@ mod renderer_viewer {
 
     // Apply individual keys in order so clamping and direction changes retain
     // their original semantics. The caller batches redraws, not navigation.
+    // Keys follow Vim's defaults: Ctrl-f/Ctrl-b page, Ctrl-d/Ctrl-u half
+    // page, and `g` is a prefix that waits for a second `g` to reach the top.
     fn apply_key(
         key: KeyEvent,
         position: &mut f64,
         direction: &mut ScrollDirection,
+        pending_g: &mut bool,
         document_height: f64,
         viewport_height: u32,
     ) -> InputAction {
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
             return InputAction::Continue;
         }
+        let after_g = key.kind == KeyEventKind::Press && std::mem::take(pending_g);
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
         let step = 16.0;
         let page = f64::from(viewport_height) * 0.85;
+        let half_page = f64::from(viewport_height) * 0.5;
         let next = match key.code {
+            KeyCode::Char('f') if control => *position + page,
+            KeyCode::Char('b') if control => *position - page,
+            KeyCode::Char('d') if control => *position + half_page,
+            KeyCode::Char('u') if control => *position - half_page,
             KeyCode::Char('q') | KeyCode::Esc => return InputAction::Quit,
             KeyCode::Char('j') | KeyCode::Down => *position + step,
             KeyCode::Char('k') | KeyCode::Up => *position - step,
-            KeyCode::Char('J') | KeyCode::PageDown => *position + page,
-            KeyCode::Char('K') | KeyCode::PageUp => *position - page,
-            // Match the production CLI: g jumps to top and G to the
-            // last scrollable viewport. Jumps use the existing redraw path.
-            KeyCode::Char('g') if key.kind == KeyEventKind::Press => 0.0,
+            KeyCode::PageDown => *position + page,
+            KeyCode::PageUp => *position - page,
+            // Jumps use the existing redraw path.
+            KeyCode::Char('g') if key.kind == KeyEventKind::Press => {
+                if !after_g {
+                    *pending_g = true;
+                    return InputAction::Continue;
+                }
+                0.0
+            }
             KeyCode::Char('G') if key.kind == KeyEventKind::Press => {
                 (document_height - f64::from(viewport_height)).max(0.0)
             }
@@ -745,7 +760,7 @@ mod renderer_viewer {
         }
         execute!(out, cursor::MoveTo(0, rows), Clear(ClearType::CurrentLine))?;
         let status = format!(
-            "{state} snap={:.0}ms upload={:.0}ms place={:.0}ms y={position:.0}/{:.0} | j/k J/K q",
+            "{state} snap={:.0}ms upload={:.0}ms place={:.0}ms y={position:.0}/{:.0} | j/k ^f/^b q",
             cache.last_snapshot_ms,
             cache.last_upload_ms,
             started.elapsed().as_secs_f64() * 1000.0,
@@ -1331,7 +1346,7 @@ mod renderer_viewer {
 
         let current = cache.as_ref().context("viewport cache missing")?;
         let status = format!(
-            "j/k scroll J/K page y copy q quit | {} y={position:.0}/{:.0} snap={:.0}ms IMG={}B redraw={:.0}ms",
+            "j/k scroll ^f/^b page y copy q quit | {} y={position:.0}/{:.0} snap={:.0}ms IMG={}B redraw={:.0}ms",
             if cache_hit { "cache HIT" } else { "cache MISS" },
             current.document_height,
             current.last_snapshot_ms,
@@ -1855,6 +1870,7 @@ mod renderer_viewer {
         let mut cached = vec![initial];
         let mut position = initial_position;
         let mut direction = ScrollDirection::Forward;
+        let mut pending_g = false;
         let mut pending: Option<u32> = None;
         let mut skipped_uploads = 0usize;
         let mut tile_timings = TileTimingStats::default();
@@ -2186,6 +2202,7 @@ mod renderer_viewer {
                         key,
                         &mut position,
                         &mut direction,
+                        &mut pending_g,
                         document_height,
                         viewport_height,
                     ) {
@@ -2511,6 +2528,7 @@ mod renderer_viewer {
         let mut prefetched: Option<ImageCache> = None;
         let mut last_displayed: Option<(u32, u64)> = None;
         let mut direction = ScrollDirection::Forward;
+        let mut pending_g = false;
         let mut cache_wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
 
@@ -2660,7 +2678,14 @@ mod renderer_viewer {
                 let Event::Key(key) = event::read()? else {
                     continue;
                 };
-                match apply_key(key, &mut position, &mut direction, document_height, height) {
+                match apply_key(
+                    key,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    document_height,
+                    height,
+                ) {
                     InputAction::Quit => break 'viewer,
                     InputAction::Select => requests.send(WorkerCommand::Select)?,
                     InputAction::OpenLink => {
@@ -2685,7 +2710,6 @@ mod renderer_viewer {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crossterm::event::KeyModifiers;
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
@@ -2833,21 +2857,43 @@ mod renderer_viewer {
         fn link_action_only_fires_on_press_not_key_repeat_or_release() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             let pressed = key(KeyCode::Char('o'));
             assert_eq!(
-                apply_key(pressed, &mut position, &mut direction, 2000.0, 1000),
+                apply_key(
+                    pressed,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    2000.0,
+                    1000
+                ),
                 InputAction::OpenLink
             );
             let mut repeated = pressed;
             repeated.kind = KeyEventKind::Repeat;
             assert_eq!(
-                apply_key(repeated, &mut position, &mut direction, 2000.0, 1000),
+                apply_key(
+                    repeated,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    2000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             let mut released = pressed;
             released.kind = KeyEventKind::Release;
             assert_eq!(
-                apply_key(released, &mut position, &mut direction, 2000.0, 1000),
+                apply_key(
+                    released,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    2000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             assert_eq!(position, 0.0);
@@ -3359,9 +3405,17 @@ mod renderer_viewer {
         fn batches_arrow_scroll_without_losing_distance() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             for code in [KeyCode::Down, KeyCode::Down, KeyCode::Down] {
                 assert_eq!(
-                    apply_key(key(code), &mut position, &mut direction, 10_000.0, 1000),
+                    apply_key(
+                        key(code),
+                        &mut position,
+                        &mut direction,
+                        &mut pending_g,
+                        10_000.0,
+                        1000
+                    ),
                     InputAction::Continue
                 );
             }
@@ -3373,12 +3427,14 @@ mod renderer_viewer {
         fn limits_displacement_per_input_batch() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             for _ in 0..MAX_INPUT_BATCH {
                 assert_eq!(
                     apply_key(
                         key(KeyCode::Down),
                         &mut position,
                         &mut direction,
+                        &mut pending_g,
                         10_000.0,
                         1000
                     ),
@@ -3392,8 +3448,16 @@ mod renderer_viewer {
         fn preserves_clamping_and_direction_during_reversal() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             for code in [KeyCode::Up, KeyCode::Down, KeyCode::Up] {
-                let _ = apply_key(key(code), &mut position, &mut direction, 10_000.0, 1000);
+                let _ = apply_key(
+                    key(code),
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000,
+                );
             }
             assert_eq!(position, 0.0);
             assert_eq!(direction, ScrollDirection::Backward);
@@ -3402,6 +3466,7 @@ mod renderer_viewer {
                 key(KeyCode::PageDown),
                 &mut position,
                 &mut direction,
+                &mut pending_g,
                 1100.0,
                 1000,
             );
@@ -3410,14 +3475,84 @@ mod renderer_viewer {
         }
 
         #[test]
+        fn keys_follow_vim_defaults() {
+            let press = |code: KeyCode, modifiers: KeyModifiers| KeyEvent::new(code, modifiers);
+            let run = |keys: &[KeyEvent], start: f64| {
+                let mut position = start;
+                let mut direction = ScrollDirection::Forward;
+                let mut pending_g = false;
+                for key in keys {
+                    let _ = apply_key(
+                        *key,
+                        &mut position,
+                        &mut direction,
+                        &mut pending_g,
+                        10_000.0,
+                        1000,
+                    );
+                }
+                position
+            };
+            let ctrl = |c: char| press(KeyCode::Char(c), KeyModifiers::CONTROL);
+            let plain = |c: char| key(KeyCode::Char(c));
+
+            assert_eq!(run(&[ctrl('f')], 1000.0), 1850.0, "Ctrl-f pages down");
+            assert_eq!(run(&[ctrl('b')], 1000.0), 150.0, "Ctrl-b pages up");
+            assert_eq!(
+                run(&[ctrl('d')], 1000.0),
+                1500.0,
+                "Ctrl-d scrolls half a page"
+            );
+            assert_eq!(
+                run(&[ctrl('u')], 1000.0),
+                500.0,
+                "Ctrl-u scrolls half a page"
+            );
+            assert_eq!(
+                run(&[plain('f'), plain('d')], 1000.0),
+                1000.0,
+                "without Ctrl nothing moves"
+            );
+            assert_eq!(
+                run(&[plain('J'), plain('K')], 1000.0),
+                1000.0,
+                "J and K no longer scroll"
+            );
+
+            assert_eq!(run(&[plain('g')], 1000.0), 1000.0, "a single g only waits");
+            assert_eq!(
+                run(&[plain('g'), plain('g')], 1000.0),
+                0.0,
+                "gg goes to the top"
+            );
+            assert_eq!(
+                run(&[plain('g'), plain('j'), plain('g')], 1000.0),
+                1016.0,
+                "another key cancels the pending g"
+            );
+            assert_eq!(
+                run(&[plain('g'), plain('G')], 1000.0),
+                9000.0,
+                "g then G goes to the bottom"
+            );
+            assert_eq!(
+                run(&[plain('g'), ctrl('f')], 1000.0),
+                1850.0,
+                "g then Ctrl-f pages"
+            );
+        }
+
+        #[test]
         fn g_and_capital_g_jump_to_document_edges_without_changing_scroll_contract() {
             let mut position = 320.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             assert_eq!(
                 apply_key(
                     key(KeyCode::Char('G')),
                     &mut position,
                     &mut direction,
+                    &mut pending_g,
                     10_000.0,
                     1000
                 ),
@@ -3426,16 +3561,19 @@ mod renderer_viewer {
             assert_eq!(position, 9000.0);
             assert_eq!(direction, ScrollDirection::Forward);
 
-            assert_eq!(
-                apply_key(
-                    key(KeyCode::Char('g')),
-                    &mut position,
-                    &mut direction,
-                    10_000.0,
-                    1000
-                ),
-                InputAction::Continue
-            );
+            for _ in 0..2 {
+                assert_eq!(
+                    apply_key(
+                        key(KeyCode::Char('g')),
+                        &mut position,
+                        &mut direction,
+                        &mut pending_g,
+                        10_000.0,
+                        1000
+                    ),
+                    InputAction::Continue
+                );
+            }
             assert_eq!(position, 0.0);
             assert_eq!(direction, ScrollDirection::Backward);
 
@@ -3445,6 +3583,7 @@ mod renderer_viewer {
                 key(KeyCode::Char('G')),
                 &mut position,
                 &mut direction,
+                &mut pending_g,
                 10_000.0,
                 1000,
             );
@@ -3452,6 +3591,7 @@ mod renderer_viewer {
                 key(KeyCode::Char('k')),
                 &mut position,
                 &mut direction,
+                &mut pending_g,
                 10_000.0,
                 1000,
             );
@@ -3463,10 +3603,18 @@ mod renderer_viewer {
         fn g_and_capital_g_ignore_repeat_and_clamp_short_documents() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             let mut repeat = key(KeyCode::Char('G'));
             repeat.kind = KeyEventKind::Repeat;
             assert_eq!(
-                apply_key(repeat, &mut position, &mut direction, 10_000.0, 1000),
+                apply_key(
+                    repeat,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             assert_eq!(position, 0.0);
@@ -3474,7 +3622,14 @@ mod renderer_viewer {
             let mut released = key(KeyCode::Char('g'));
             released.kind = KeyEventKind::Release;
             assert_eq!(
-                apply_key(released, &mut position, &mut direction, 10_000.0, 1000),
+                apply_key(
+                    released,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             assert_eq!(position, 0.0);
@@ -3483,6 +3638,7 @@ mod renderer_viewer {
                     key(KeyCode::Char('G')),
                     &mut position,
                     &mut direction,
+                    &mut pending_g,
                     400.0,
                     1000
                 ),
@@ -3495,9 +3651,17 @@ mod renderer_viewer {
         fn manual_reload_requires_a_press_and_preserves_scroll_position() {
             let mut position = 630.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             let pressed = key(KeyCode::Char('r'));
             assert_eq!(
-                apply_key(pressed, &mut position, &mut direction, 10_000.0, 1000),
+                apply_key(
+                    pressed,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000
+                ),
                 InputAction::Reload
             );
             assert_eq!(position, 630.0);
@@ -3507,13 +3671,27 @@ mod renderer_viewer {
             let mut repeated = pressed;
             repeated.kind = KeyEventKind::Repeat;
             assert_eq!(
-                apply_key(repeated, &mut position, &mut direction, 10_000.0, 1000),
+                apply_key(
+                    repeated,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             let mut released = pressed;
             released.kind = KeyEventKind::Release;
             assert_eq!(
-                apply_key(released, &mut position, &mut direction, 10_000.0, 1000),
+                apply_key(
+                    released,
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    10_000.0,
+                    1000
+                ),
                 InputAction::Continue
             );
             assert_eq!(position, 630.0);
@@ -3545,11 +3723,13 @@ mod renderer_viewer {
         fn preserves_control_keys_and_ignores_key_releases() {
             let mut position = 0.0;
             let mut direction = ScrollDirection::Forward;
+            let mut pending_g = false;
             assert_eq!(
                 apply_key(
                     key(KeyCode::Char('y')),
                     &mut position,
                     &mut direction,
+                    &mut pending_g,
                     2000.0,
                     1000
                 ),
@@ -3560,6 +3740,7 @@ mod renderer_viewer {
                     key(KeyCode::Char('q')),
                     &mut position,
                     &mut direction,
+                    &mut pending_g,
                     2000.0,
                     1000
                 ),
@@ -3567,7 +3748,14 @@ mod renderer_viewer {
             );
             let mut released = key(KeyCode::Down);
             released.kind = KeyEventKind::Release;
-            let _ = apply_key(released, &mut position, &mut direction, 2000.0, 1000);
+            let _ = apply_key(
+                released,
+                &mut position,
+                &mut direction,
+                &mut pending_g,
+                2000.0,
+                1000,
+            );
             assert_eq!(position, 0.0);
         }
 
