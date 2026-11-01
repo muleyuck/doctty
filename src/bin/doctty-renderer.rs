@@ -1866,6 +1866,7 @@ mod renderer_viewer {
         };
         let mut preview_tiles: Vec<hybrid_image_preview::Tile> = Vec::new();
         let mut preview_pending = false;
+        let mut unrendered_preview_origin: Option<f64> = None;
         let mut placed_preview_id: Option<u32> = None;
         let mut cached = vec![initial];
         let mut position = initial_position;
@@ -1911,6 +1912,13 @@ mod renderer_viewer {
                             }
                             Ok(hybrid_image_preview::Response::Skipped) => {
                                 preview_pending = false;
+                            }
+                            // The preview only covers a missing WebKit tile; losing
+                            // one must not end the session the user is reading,
+                            // and the same origin is not retried every frame.
+                            Ok(hybrid_image_preview::Response::Unrendered(origin)) => {
+                                preview_pending = false;
+                                unrendered_preview_origin = Some(origin);
                             }
                             Ok(hybrid_image_preview::Response::Failed(error)) => {
                                 bail!("raster preview worker: {error}");
@@ -2104,12 +2112,14 @@ mod renderer_viewer {
                                     viewport_height,
                                     document_height,
                                 );
-                                sender.send(hybrid_image_preview::Request {
-                                    origin,
-                                    image_id,
-                                    requested_at: position,
-                                })?;
-                                preview_pending = true;
+                                if unrendered_preview_origin != Some(origin) {
+                                    sender.send(hybrid_image_preview::Request {
+                                        origin,
+                                        image_id,
+                                        requested_at: position,
+                                    })?;
+                                    preview_pending = true;
+                                }
                             }
                         }
                     }

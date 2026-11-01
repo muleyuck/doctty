@@ -111,6 +111,9 @@ pub(crate) struct Request {
 pub(crate) enum Response {
     Ready(Tile),
     Skipped,
+    /// The tile at this origin could not be drawn; nothing was uploaded.
+    Unrendered(f64),
+    /// Writing the tile to the terminal failed.
     Failed(String),
 }
 
@@ -200,7 +203,7 @@ pub(crate) fn spawn(
                             }
                         }
                     }
-                    Err(error) => Response::Failed(error.to_string()),
+                    Err(_) => Response::Unrendered(request.origin),
                 }
             };
             if outgoing.send(reply).is_err() {
@@ -231,7 +234,9 @@ fn xml_escape(text: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
-            c if c.is_control() => {}
+            // U+FFFE and U+FFFF are not XML characters; usvg rejects the
+            // whole SVG if one reaches it.
+            c if c.is_control() || c == '\u{FFFE}' || c == '\u{FFFF}' => {}
             other => out.push(other),
         }
     }
@@ -450,7 +455,7 @@ fn push_table_cells(
             r#"<rect x="{:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" fill="{fill}" stroke="{border}"/>"#,
             cell.x, cell.width, cell.height
         ));
-        let padding = cell.padding_left.clamp(0.0, cell.width / 2.0);
+        let padding = cell.padding_left.clamp(0.0, cell.width.max(0.0) / 2.0);
         // Helvetica averages about 0.45 em per character in table text.
         let max_chars = ((cell.width - 2.0 * padding) / (font_size * 0.45))
             .floor()
@@ -966,6 +971,61 @@ mod tests {
         let (png, _, _) = render_png(&scene, 0.0, 400, 200, &mut confined)?;
         let decoded = image::load_from_memory(&png)?.into_rgba8();
         assert_ne!(decoded.get_pixel(10, 10).0, [255, 0, 0, 255]);
+        Ok(())
+    }
+
+    #[test]
+    fn xml_noncharacters_in_text_do_not_break_the_preview() -> Result<()> {
+        let items = vec![
+            StyledItem {
+                y: 0.0,
+                width: 600.0,
+                height: 30.0,
+                font_size: 16.0,
+                line_height: 24.0,
+                tag: "p".to_owned(),
+                text: "a\u{FFFE}b".to_owned(),
+                ..StyledItem::default()
+            },
+            StyledItem {
+                y: 40.0,
+                width: 600.0,
+                height: 60.0,
+                font_size: 13.6,
+                line_height: 20.0,
+                tag: "pre".to_owned(),
+                text: "[code] x".to_owned(),
+                lines: vec!["c\u{FFFF}d".to_owned()],
+                ..StyledItem::default()
+            },
+            StyledItem {
+                y: 120.0,
+                width: 300.0,
+                height: 36.0,
+                font_size: 16.0,
+                tag: "table".to_owned(),
+                text: "[table] e".to_owned(),
+                cells: vec![TableCell {
+                    y: 120.0,
+                    width: 300.0,
+                    height: 36.0,
+                    text: "e\u{FFFF}f".to_owned(),
+                    ..TableCell::default()
+                }],
+                ..StyledItem::default()
+            },
+        ];
+        let scene = Scene {
+            background: "#0d1117".to_owned(),
+            items,
+        };
+        assert!(!preview_svg(&scene, 0.0, 800, 400).contains(['\u{FFFE}', '\u{FFFF}']));
+        let mut negative = scene.clone();
+        negative.items[2].cells[0].width = -5.0;
+        negative.items[2].cells[0].padding_left = 13.0;
+        let _ = preview_svg(&negative, 0.0, 800, 400);
+        let mut thumbnails = Thumbnails::new(Path::new("/nonexistent"));
+        render_png(&scene, 0.0, 800, 400, &mut thumbnails)?;
         Ok(())
     }
 
