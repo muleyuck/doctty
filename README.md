@@ -106,6 +106,9 @@ doctty ./README.md | head -n 50            # plain-text output (pipe/CI)
 | `o`                              | Open link in browser |
 | `q`                              | Quit                 |
 
+tmux and Herdr use `Ctrl-b` as their default prefix, so it never reaches
+doctty there; use `PageUp` or `Ctrl-u` instead.
+
 ## Requirements
 
 - **Terminal**: [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/) ([Kitty Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) required), or a [Herdr](https://herdr.dev/) pane inside Ghostty (Herdr's `terminal.kitty_graphics` option, on by default)
