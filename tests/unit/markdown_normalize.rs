@@ -197,6 +197,95 @@ fn parses_html_img_tag_with_width_as_image_block() {
 }
 
 #[test]
+fn decodes_html_entities_in_html_blocks_like_a_browser() {
+    let source = "<div>&copy; &times 3 &#x1F600; &#0; &unknown; a & b</div>\n";
+
+    assert_eq!(
+        paragraph_texts(source),
+        vec!["\u{a9} \u{d7} 3 \u{1F600} \u{FFFD} &unknown; a & b"]
+    );
+}
+
+#[test]
+fn keeps_escaped_tags_in_html_blocks_as_text() {
+    let source = "<div>&lt;b&gt;not a tag&lt;/b&gt;</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["<b>not a tag</b>"]);
+}
+
+#[test]
+fn ends_a_tag_only_at_a_greater_than_sign_outside_quotes() {
+    let source = "<p title=\"a>b\" data-x='c>d'>shown</p>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["shown"]);
+}
+
+#[test]
+fn treats_html_tag_names_case_insensitively() {
+    let source = "<DIV>Upper<BR>case<SCRIPT>hidden</Script></DIV>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["Upper\ncase"]);
+}
+
+#[test]
+fn accepts_self_closing_br_with_a_space() {
+    assert_eq!(
+        paragraph_texts("<div>one<br />two</div>\n"),
+        vec!["one\ntwo"]
+    );
+}
+
+#[test]
+fn keeps_a_less_than_sign_not_followed_by_a_tag_name() {
+    let source = "<div>1 <2 and 3 < 4 and </ 5</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["1 <2 and 3 < 4 and </ 5"]);
+}
+
+#[test]
+fn keeps_a_tag_with_an_unterminated_quote_as_text() {
+    let source = "<div>open <span title=\"unterminated</div>\n";
+
+    assert_eq!(
+        paragraph_texts(source),
+        vec!["open <span title=\"unterminated"]
+    );
+}
+
+#[test]
+fn drops_the_rest_of_an_html_block_after_an_unclosed_comment() {
+    let source = "<div>kept <!-- never closed\nhidden</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["kept"]);
+}
+
+#[test]
+fn collapses_nested_block_tags_into_one_line_break() {
+    let source = "<div>\n  <div><p>first</p></div>\n</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["first"]);
+    assert_eq!(
+        paragraph_texts("<div><p>first</p><p>second</p></div>\n"),
+        vec!["first\nsecond"]
+    );
+}
+
+#[test]
+fn keeps_multibyte_text_around_tags() {
+    let source = "<div>日本語<b>太字</b>テキスト</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["日本語太字テキスト"]);
+}
+
+#[test]
+fn emits_no_block_for_an_html_block_without_text() {
+    assert_eq!(
+        paragraph_texts("<div>   </div>\n\n<p><!-- only a comment --></p>\n"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn turns_inline_br_into_a_line_break() {
     assert_eq!(
         paragraph_texts("Before <br/> after.\n"),
@@ -215,8 +304,8 @@ fn strips_inline_tags_and_keeps_their_text() {
 #[test]
 fn replaces_an_inline_img_with_its_alt_text() {
     assert_eq!(
-        paragraph_texts("Logo <img src=\"logo.png\" alt=\"doctty\"> here.\n"),
-        vec!["Logo doctty here."]
+        paragraph_texts("Logo <img src=\"logo.png\" alt=\"A &amp; B\"> here.\n"),
+        vec!["Logo A & B here."]
     );
 }
 

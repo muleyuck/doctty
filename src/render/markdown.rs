@@ -342,9 +342,9 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
 fn inline_html_text(literal: &str) -> String {
     match parse_html_tag(literal) {
         Some(tag) if tag.name == "br" => "\n".to_string(),
-        Some(tag) if tag.name == "img" && !tag.closing => {
-            extract_html_attr(literal, "alt").unwrap_or_default()
-        }
+        Some(tag) if tag.name == "img" && !tag.closing => extract_html_attr(literal, "alt")
+            .map(|alt| htmlize::unescape_attribute(alt).into_owned())
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -425,7 +425,7 @@ fn html_to_text(html: &str) -> String {
     }
     text.push_str(rest);
 
-    decode_basic_entities(&text)
+    htmlize::unescape(text)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -480,48 +480,6 @@ fn is_html_line_break(name: &str) -> bool {
             | "tr"
             | "ul"
     )
-}
-
-/// Comrak keeps its entity table private, so HTML block text decodes only
-/// the common named entities and numeric references.
-fn decode_basic_entities(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut rest = text;
-
-    while let Some(start) = rest.find('&') {
-        output.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let decoded = rest.find(';').and_then(|end| {
-            let decoded = match &rest[1..end] {
-                "amp" => Some('&'),
-                "lt" => Some('<'),
-                "gt" => Some('>'),
-                "quot" => Some('"'),
-                "apos" => Some('\''),
-                "nbsp" => Some(' '),
-                entity => entity.strip_prefix('#').and_then(|number| {
-                    let code = match number.strip_prefix(['x', 'X']) {
-                        Some(hex) => u32::from_str_radix(hex, 16).ok(),
-                        None => number.parse().ok(),
-                    };
-                    code.and_then(char::from_u32)
-                }),
-            };
-            decoded.map(|c| (c, end))
-        });
-        match decoded {
-            Some((c, end)) => {
-                output.push(c);
-                rest = &rest[end + 1..];
-            }
-            None => {
-                output.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    output.push_str(rest);
-    output
 }
 
 fn extract_html_img(html: &str) -> Option<BlockKind> {
