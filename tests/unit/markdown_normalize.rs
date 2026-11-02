@@ -78,22 +78,50 @@ fn skips_layout_only_html_blocks() {
     );
 }
 
-#[test]
-fn preserves_non_layout_html_blocks_as_plain_text() {
-    let source = "<table><tr><td>cell</td></tr></table>\n";
-
+fn paragraph_texts(source: &str) -> Vec<String> {
     let document = match parse_document("docs/example.md".into(), source) {
         Ok(document) => document,
         Err(error) => panic!("document should parse: {error}"),
     };
+    document
+        .blocks
+        .iter()
+        .map(|block| match &block.kind {
+            BlockKind::Paragraph { text } => text.plain(),
+            other => panic!("expected only paragraphs, got: {other:?}"),
+        })
+        .collect()
+}
 
-    assert!(matches!(
-        document.blocks.as_slice(),
-        [doctty::core::document::Block {
-            kind: BlockKind::Paragraph { .. },
-            ..
-        }]
-    ));
+#[test]
+fn strips_tags_from_html_blocks_and_keeps_their_text() {
+    let source = "<table>\n  <tr><th>Name</th><th>Value</th></tr>\n  <tr>\n    <td>a &amp; b</td>\n    <td>1 &lt; 2 &#x2713;</td>\n  </tr>\n</table>\n";
+
+    assert_eq!(
+        paragraph_texts(source),
+        vec!["Name Value\na & b 1 < 2 \u{2713}".to_string()]
+    );
+}
+
+#[test]
+fn keeps_details_summary_text_and_drops_the_closing_tag() {
+    let source = "<details><summary>Click me</summary>\n\nbody\n\n</details>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["Click me", "body"]);
+}
+
+#[test]
+fn drops_html_comments_and_script_or_style_contents() {
+    let source = "<!-- hidden -->\n\n<style>.x { color: red }</style>\n\n<p>shown<script>alert(1)</script></p>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["shown"]);
+}
+
+#[test]
+fn keeps_a_less_than_sign_that_does_not_open_a_tag() {
+    let source = "<div>\na < b and c > d\n</div>\n";
+
+    assert_eq!(paragraph_texts(source), vec!["a < b and c > d"]);
 }
 
 #[test]
@@ -169,21 +197,27 @@ fn parses_html_img_tag_with_width_as_image_block() {
 }
 
 #[test]
-fn keeps_inline_html_as_plain_text() {
-    let source = "Before <br/> after.\n";
+fn turns_inline_br_into_a_line_break() {
+    assert_eq!(
+        paragraph_texts("Before <br/> after.\n"),
+        vec!["Before\nafter."]
+    );
+}
 
-    let document = match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document,
-        Err(error) => panic!("document should parse: {error}"),
-    };
+#[test]
+fn strips_inline_tags_and_keeps_their_text() {
+    assert_eq!(
+        paragraph_texts("Press <kbd>Ctrl</kbd>+<kbd>C</kbd><!-- note -->.\n"),
+        vec!["Press Ctrl+C."]
+    );
+}
 
-    assert!(matches!(
-        document.blocks.as_slice(),
-        [doctty::core::document::Block {
-            kind: BlockKind::Paragraph { text },
-            ..
-        }] if text.plain() == "Before <br/> after."
-    ));
+#[test]
+fn replaces_an_inline_img_with_its_alt_text() {
+    assert_eq!(
+        paragraph_texts("Logo <img src=\"logo.png\" alt=\"doctty\"> here.\n"),
+        vec!["Logo doctty here."]
+    );
 }
 
 #[test]

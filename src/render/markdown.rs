@@ -194,7 +194,10 @@ fn collect_text_segments<'a>(
 ) {
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
-            let value = text.to_string();
+            let mut value = text.to_string();
+            if parts.last().is_some_and(|part| part.text.ends_with('\n')) {
+                value = value.trim_start_matches(' ').to_string();
+            }
             if !value.is_empty() {
                 parts.push(InlineSegment { text: value, style });
             }
@@ -224,11 +227,14 @@ fn collect_text_segments<'a>(
             }
         }
         NodeValue::HtmlInline(literal) => {
-            if !literal.is_empty() {
-                parts.push(InlineSegment {
-                    text: literal.clone(),
-                    style,
-                });
+            let text = inline_html_text(literal);
+            if text == "\n"
+                && let Some(last) = parts.last_mut()
+            {
+                last.text.truncate(last.text.trim_end_matches(' ').len());
+            }
+            if !text.is_empty() {
+                parts.push(InlineSegment { text, style });
             }
         }
         NodeValue::TaskItem(task) => {
@@ -327,25 +333,195 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
         return Some(image);
     }
 
-    let trimmed = literal.trim();
-    if is_layout_only_html(trimmed) {
-        return None;
-    }
-
-    let text = StyledText::from_plain(literal.trim_end_matches(['\r', '\n']).to_string());
+    let text = StyledText::from_plain(html_to_text(literal));
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
 }
 
-fn is_layout_only_html(html: &str) -> bool {
-    let tag = html
-        .trim_start_matches('<')
-        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
-        .next()
-        .unwrap_or("");
+/// Comrak emits each inline tag as its own node, so only the tag itself is
+/// handled here; the text between tags arrives as ordinary text nodes.
+fn inline_html_text(literal: &str) -> String {
+    match parse_html_tag(literal) {
+        Some(tag) if tag.name == "br" => "\n".to_string(),
+        Some(tag) if tag.name == "img" && !tag.closing => {
+            extract_html_attr(literal, "alt").unwrap_or_default()
+        }
+        _ => String::new(),
+    }
+}
+
+struct HtmlTag {
+    name: String,
+    closing: bool,
+    len: usize,
+}
+
+/// Parses the tag at the start of `html`. Comments, declarations and a
+/// `<` that does not open a tag yield `None`.
+fn parse_html_tag(html: &str) -> Option<HtmlTag> {
+    let rest = html.strip_prefix('<')?;
+    let (closing, rest) = match rest.strip_prefix('/') {
+        Some(after) => (true, after),
+        None => (false, rest),
+    };
+    if !rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .unwrap_or(rest.len());
+    let name = rest[..name_len].to_ascii_lowercase();
+
+    let mut quote = None;
+    for (offset, c) in rest[name_len..].char_indices() {
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '>') => {
+                let len = html.len() - rest.len() + name_len + offset + 1;
+                return Some(HtmlTag { name, closing, len });
+            }
+            (None, _) => {}
+        }
+    }
+    None
+}
+
+/// Plain-text rendering of an HTML block: tags are removed, their text is
+/// kept, and block-level elements and `<br>` start a new line.
+fn html_to_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut rest = html;
+
+    while let Some(index) = rest.find(|c: char| c == '<' || c.is_whitespace()) {
+        text.push_str(&rest[..index]);
+        rest = &rest[index..];
+
+        if let Some(after) = rest.strip_prefix(char::is_whitespace) {
+            push_html_space(&mut text);
+            rest = after;
+        } else if let Some(after_open) = rest.strip_prefix("<!--") {
+            rest = after_open
+                .find("-->")
+                .map_or("", |end| &after_open[end + "-->".len()..]);
+        } else if let Some(tag) = parse_html_tag(rest) {
+            rest = &rest[tag.len..];
+            if !tag.closing && matches!(tag.name.as_str(), "script" | "style") {
+                let close = format!("</{}", tag.name);
+                rest = rest
+                    .to_ascii_lowercase()
+                    .find(&close)
+                    .and_then(|end| rest[end..].find('>').map(|gt| &rest[end + gt + 1..]))
+                    .unwrap_or("");
+            } else if is_html_line_break(&tag.name) {
+                text.push('\n');
+            } else if matches!(tag.name.as_str(), "td" | "th") {
+                push_html_space(&mut text);
+            }
+        } else {
+            text.push('<');
+            rest = &rest[1..];
+        }
+    }
+    text.push_str(rest);
+
+    decode_basic_entities(&text)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn push_html_space(text: &mut String) {
+    if !text.ends_with([' ', '\n']) {
+        text.push(' ');
+    }
+}
+
+fn is_html_line_break(name: &str) -> bool {
     matches!(
-        tag,
-        "div" | "p" | "br" | "center" | "details" | "summary" | "section" | "span"
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "br"
+            | "caption"
+            | "center"
+            | "dd"
+            | "details"
+            | "div"
+            | "dl"
+            | "dt"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "summary"
+            | "table"
+            | "tbody"
+            | "tfoot"
+            | "thead"
+            | "tr"
+            | "ul"
     )
+}
+
+/// Comrak keeps its entity table private, so HTML block text decodes only
+/// the common named entities and numeric references.
+fn decode_basic_entities(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find('&') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let decoded = rest.find(';').and_then(|end| {
+            let decoded = match &rest[1..end] {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                entity => entity.strip_prefix('#').and_then(|number| {
+                    let code = match number.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                        None => number.parse().ok(),
+                    };
+                    code.and_then(char::from_u32)
+                }),
+            };
+            decoded.map(|c| (c, end))
+        });
+        match decoded {
+            Some((c, end)) => {
+                output.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                output.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 fn extract_html_img(html: &str) -> Option<BlockKind> {
