@@ -57,7 +57,7 @@ fn normalize_block<'a>(node: &'a AstNode<'a>) -> Option<BlockKind> {
     match &node.data.borrow().value {
         NodeValue::Heading(heading) => Some(BlockKind::Heading {
             level: heading.level,
-            text: collect_styled_text(node),
+            text: collect_single_line_text(node),
         }),
         NodeValue::Paragraph => normalize_paragraph(node),
         NodeValue::BlockQuote => Some(normalize_quote(node)),
@@ -133,11 +133,10 @@ fn normalize_table<'a>(node: &'a AstNode<'a>) -> BlockKind {
         .children()
         .map(|row| {
             row.children()
-                .map(collect_styled_text)
-                .filter(|cell| !cell.is_empty())
+                .map(collect_single_line_text)
                 .collect::<Vec<_>>()
         })
-        .filter(|row| !row.is_empty())
+        .filter(|row| !row.iter().all(StyledText::is_empty))
         .collect();
 
     BlockKind::Table { rows }
@@ -181,25 +180,66 @@ fn parse_callout(text: &str) -> Option<(CalloutKind, StyledText)> {
 
 fn collect_styled_text<'a>(node: &'a AstNode<'a>) -> StyledText {
     let mut segments = Vec::new();
-    collect_text_segments(node, InlineStyle::default(), &mut segments);
+    collect_text_segments(node, InlineStyle::default(), &mut segments, &mut None);
     StyledText {
         segments: normalize_segments(segments),
     }
+}
+
+/// Headings and table cells are printed on one line, so line breaks inside
+/// them (such as `<br>`) become spaces.
+fn collect_single_line_text<'a>(node: &'a AstNode<'a>) -> StyledText {
+    let mut text = collect_styled_text(node);
+    for segment in &mut text.segments {
+        segment.text = segment.text.replace('\n', " ");
+    }
+    // Code spans keep their spaces, as the author wrote them on purpose.
+    let mut leading_blank = 0;
+    for segment in &mut text.segments {
+        if segment.style.code {
+            break;
+        }
+        segment.text = segment.text.trim_ascii_start().to_string();
+        if !segment.text.is_empty() {
+            break;
+        }
+        leading_blank += 1;
+    }
+    text.segments.drain(..leading_blank);
+    while let Some(last) = text.segments.last_mut()
+        && !last.style.code
+    {
+        last.text.truncate(last.text.trim_ascii_end().len());
+        if !last.text.is_empty() {
+            break;
+        }
+        text.segments.pop();
+    }
+    text
 }
 
 fn collect_text_segments<'a>(
     node: &'a AstNode<'a>,
     style: InlineStyle,
     parts: &mut Vec<InlineSegment>,
+    br_index: &mut Option<usize>,
 ) {
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
-            let mut value = text.to_string();
-            if parts.last().is_some_and(|part| part.text.ends_with('\n')) {
-                value = value.trim_start_matches(' ').to_string();
-            }
+            let follows_br = parts
+                .len()
+                .checked_sub(1)
+                .is_some_and(|last| *br_index == Some(last));
+            let value = if follows_br {
+                text.trim_start_matches(' ')
+            } else {
+                text
+            };
             if !value.is_empty() {
-                parts.push(InlineSegment { text: value, style });
+                parts.push(InlineSegment {
+                    text: value.to_string(),
+                    style,
+                });
             }
         }
         NodeValue::Code(code) => {
@@ -230,8 +270,12 @@ fn collect_text_segments<'a>(
             let text = inline_html_text(literal);
             if text == "\n"
                 && let Some(last) = parts.last_mut()
+                && !last.style.code
             {
                 last.text.truncate(last.text.trim_end_matches(' ').len());
+            }
+            if text == "\n" {
+                *br_index = Some(parts.len());
             }
             if !text.is_empty() {
                 parts.push(InlineSegment { text, style });
@@ -246,7 +290,7 @@ fn collect_text_segments<'a>(
                 style,
             });
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
         }
         NodeValue::FootnoteReference(reference) => {
@@ -257,7 +301,7 @@ fn collect_text_segments<'a>(
         }
         NodeValue::Link(link) => {
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
             if !link.url.is_empty() {
                 parts.push(InlineSegment {
@@ -272,7 +316,7 @@ fn collect_text_segments<'a>(
                 ..style
             };
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
         }
         NodeValue::Emph => {
@@ -281,7 +325,7 @@ fn collect_text_segments<'a>(
                 ..style
             };
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
         }
         NodeValue::LineBreak | NodeValue::SoftBreak => {
@@ -292,12 +336,12 @@ fn collect_text_segments<'a>(
         }
         NodeValue::Image(_) => {
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
         }
         _ => {
             for child in node.children() {
-                collect_text_segments(child, style, parts);
+                collect_text_segments(child, style, parts, br_index);
             }
         }
     }
@@ -340,9 +384,9 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
 /// Comrak emits each inline tag as its own node, so only the tag itself is
 /// handled here; the text between tags arrives as ordinary text nodes.
 fn inline_html_text(literal: &str) -> String {
-    match parse_html_tag(literal) {
-        Some(tag) if tag.name == "br" => "\n".to_string(),
-        Some(tag) if tag.name == "img" && !tag.closing => extract_html_attr(literal, "alt")
+    match parse_html_tag(literal, QuoteEnds::of(literal)) {
+        Ok(tag) if tag.name == "br" => "\n".to_string(),
+        Ok(tag) if tag.name == "img" && !tag.closing => extract_html_attr(literal, "alt")
             .map(|alt| htmlize::unescape_attribute(alt).into_owned())
             .unwrap_or_default(),
         _ => String::new(),
@@ -355,16 +399,60 @@ struct HtmlTag {
     len: usize,
 }
 
-/// Parses the tag at the start of `html`. Comments, declarations and a
-/// `<` that does not open a tag yield `None`.
-fn parse_html_tag(html: &str) -> Option<HtmlTag> {
-    let rest = html.strip_prefix('<')?;
+/// The first `len` bytes cannot start a tag anywhere, so callers keep them as
+/// text without scanning them again.
+struct NotATag {
+    len: usize,
+}
+
+/// Byte offsets of the last `"` and `'` in the input. A quote opened there
+/// has nothing to close it, so it is read as an ordinary character; this
+/// keeps one unbalanced quote from swallowing the rest of the block.
+#[derive(Clone, Copy)]
+struct QuoteEnds {
+    double: Option<usize>,
+    single: Option<usize>,
+}
+
+impl QuoteEnds {
+    fn of(html: &str) -> Self {
+        Self {
+            double: html.rfind('"'),
+            single: html.rfind('\''),
+        }
+    }
+
+    fn skip(self, bytes: usize) -> Self {
+        Self {
+            double: self.double.and_then(|at| at.checked_sub(bytes)),
+            single: self.single.and_then(|at| at.checked_sub(bytes)),
+        }
+    }
+
+    fn can_close(self, quote: char, at: usize) -> bool {
+        let last = if quote == '"' {
+            self.double
+        } else {
+            self.single
+        };
+        last.is_some_and(|last| at < last)
+    }
+}
+
+/// Parses the tag at the start of `html`. Comments and declarations are not
+/// tags.
+///
+/// Unlike a browser, an unquoted `<` ends the attempt, and callers skip the
+/// whole failed span: rescanning it from each stray `<` made stripping
+/// quadratic.
+fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag> {
+    let rest = html.strip_prefix('<').ok_or(NotATag { len: 1 })?;
     let (closing, rest) = match rest.strip_prefix('/') {
         Some(after) => (true, after),
         None => (false, rest),
     };
     if !rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
-        return None;
+        return Err(NotATag { len: 1 });
     }
     let name_len = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
@@ -372,19 +460,60 @@ fn parse_html_tag(html: &str) -> Option<HtmlTag> {
     let name = rest[..name_len].to_ascii_lowercase();
 
     let mut quote = None;
+    let mut after_equals = false;
     for (offset, c) in rest[name_len..].char_indices() {
-        match (quote, c) {
-            (Some(q), _) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(c),
-            (None, '>') => {
-                let len = html.len() - rest.len() + name_len + offset + 1;
-                return Some(HtmlTag { name, closing, len });
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
             }
-            (None, _) => {}
+            continue;
+        }
+        match c {
+            '>' => {
+                let len = html.len() - rest.len() + name_len + offset + 1;
+                return Ok(HtmlTag { name, closing, len });
+            }
+            '<' => {
+                let len = html.len() - rest.len() + name_len + offset;
+                return Err(NotATag { len });
+            }
+            '"' | '\''
+                if after_equals
+                    && quote_ends.can_close(c, html.len() - rest.len() + name_len + offset) =>
+            {
+                quote = Some(c)
+            }
+            _ => {}
+        }
+        if !c.is_ascii_whitespace() {
+            after_equals = c == '=';
         }
     }
-    None
+    Err(NotATag { len: html.len() })
+}
+
+/// Returns the input after the `</name ...>` that closes a raw-text element
+/// such as `<script>`, or `""` when it is never closed.
+fn skip_raw_text_element<'a>(html: &'a str, name: &str) -> &'a str {
+    let mut search_from = 0;
+    while let Some(found) = html[search_from..].find("</") {
+        let name_start = search_from + found + "</".len();
+        let after_name = name_start + name.len();
+        let closes = html
+            .get(name_start..after_name)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
+            && html[after_name..]
+                .chars()
+                .next()
+                .is_none_or(|c| c.is_ascii_whitespace() || matches!(c, '/' | '>'));
+        if closes {
+            return html[after_name..]
+                .find('>')
+                .map_or("", |gt| &html[after_name + gt + 1..]);
+        }
+        search_from = name_start;
+    }
+    ""
 }
 
 /// Plain-text rendering of an HTML block: tags are removed, their text is
@@ -392,42 +521,51 @@ fn parse_html_tag(html: &str) -> Option<HtmlTag> {
 fn html_to_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut rest = html;
+    // Input before this offset is known not to hold a tag.
+    let mut text_until = 0;
+    let quote_ends = QuoteEnds::of(html);
 
-    while let Some(index) = rest.find(|c: char| c == '<' || c.is_whitespace()) {
+    // HTML collapses only ASCII whitespace; NBSP and U+3000 are content.
+    while let Some(index) = rest.find(|c: char| c == '<' || c.is_ascii_whitespace()) {
         text.push_str(&rest[..index]);
         rest = &rest[index..];
+        let offset = html.len() - rest.len();
 
-        if let Some(after) = rest.strip_prefix(char::is_whitespace) {
+        if let Some(after) = rest.strip_prefix(|c: char| c.is_ascii_whitespace()) {
             push_html_space(&mut text);
             rest = after;
-        } else if let Some(after_open) = rest.strip_prefix("<!--") {
+            continue;
+        }
+        if offset < text_until {
+            text.push('<');
+            rest = &rest[1..];
+            continue;
+        }
+        if let Some(after_open) = rest.strip_prefix("<!--") {
             rest = after_open
                 .find("-->")
                 .map_or("", |end| &after_open[end + "-->".len()..]);
-        } else if let Some(tag) = parse_html_tag(rest) {
-            rest = &rest[tag.len..];
-            if !tag.closing && matches!(tag.name.as_str(), "script" | "style") {
-                let close = format!("</{}", tag.name);
-                rest = rest
-                    .to_ascii_lowercase()
-                    .find(&close)
-                    .and_then(|end| rest[end..].find('>').map(|gt| &rest[end + gt + 1..]))
-                    .unwrap_or("");
-            } else if is_html_line_break(&tag.name) {
-                text.push('\n');
-            } else if matches!(tag.name.as_str(), "td" | "th") {
-                push_html_space(&mut text);
+            continue;
+        }
+        match parse_html_tag(rest, quote_ends.skip(offset)) {
+            Ok(tag) => {
+                rest = &rest[tag.len..];
+                if !tag.closing && matches!(tag.name.as_str(), "script" | "style") {
+                    rest = skip_raw_text_element(rest, &tag.name);
+                } else if is_html_line_break(&tag.name) {
+                    text.push('\n');
+                } else if matches!(tag.name.as_str(), "td" | "th") {
+                    push_html_space(&mut text);
+                }
             }
-        } else {
-            text.push('<');
-            rest = &rest[1..];
+            Err(NotATag { len }) => text_until = offset + len,
         }
     }
     text.push_str(rest);
 
     htmlize::unescape(text)
         .lines()
-        .map(str::trim)
+        .map(str::trim_ascii)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
