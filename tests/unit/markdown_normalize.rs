@@ -506,3 +506,153 @@ fn ends_script_only_at_a_closing_tag_followed_by_space_slash_or_gt() {
         vec!["ab"]
     );
 }
+
+fn block_kinds(source: &str) -> Vec<BlockKind> {
+    match parse_document("docs/example.md".into(), source) {
+        Ok(document) => document
+            .blocks
+            .into_iter()
+            .map(|block| block.kind)
+            .collect(),
+        Err(error) => panic!("document should parse: {error}"),
+    }
+}
+
+#[test]
+fn keeps_text_and_links_of_a_readme_hero_block_with_an_image() {
+    let source = "<div align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\">\n  <h1>Project</h1>\n  <p><a href=\"https://ci.example\"><img src=\"badge.svg\" alt=\"CI\"></a> <a href=\"https://example.com/docs\">Docs</a></p>\n</div>\n";
+
+    assert_eq!(
+        paragraph_texts(source),
+        vec!["Logo\nProject\nCI <https://ci.example> Docs <https://example.com/docs>"]
+    );
+}
+
+#[test]
+fn keeps_a_block_with_only_a_linked_image_as_an_image() {
+    assert!(matches!(
+        block_kinds("<p align=\"center\"><a href=\"https://x.dev\"><img src=\"a.png\" alt=\"A\"></a></p>\n").as_slice(),
+        [BlockKind::Image { src, alt, .. }] if src == "a.png" && alt == "A"
+    ));
+}
+
+#[test]
+fn reads_image_attributes_in_any_html_attribute_syntax() {
+    for (tag, alt) in [
+        ("<img src='a.png' alt='Single'>", "Single"),
+        ("<IMG SRC=\"a.png\" ALT=\"Upper\">", "Upper"),
+        ("<img src=a.png alt=Unquoted>", "Unquoted"),
+        ("<img src = \"a.png\" alt = \"Spaced\">", "Spaced"),
+        (
+            "<img data-alt=\"wrong\" src=\"a.png\" alt=\"right\">",
+            "right",
+        ),
+        ("<img src=\"a.png\" alt=\"A &amp; B\">", "A & B"),
+    ] {
+        assert!(
+            matches!(
+                block_kinds(&format!("{tag}\n")).as_slice(),
+                [BlockKind::Image { src, alt: found, .. }] if src == "a.png" && found == alt
+            ),
+            "tag: {tag}"
+        );
+        assert_eq!(
+            paragraph_texts(&format!("Logo {tag} here.\n")),
+            vec![format!("Logo {alt} here.")],
+            "inline tag: {tag}"
+        );
+    }
+}
+
+#[test]
+fn prints_the_url_of_an_html_link_like_a_markdown_link() {
+    assert_eq!(
+        paragraph_texts(
+            "See <a href=\"https://example.com\">the site</a> and <a name=\"x\">anchor</a>.\n"
+        ),
+        vec!["See the site <https://example.com> and anchor."]
+    );
+    assert_eq!(
+        paragraph_texts("<p>See <a href='https://example.com?a=1&amp;b=2'>docs</a>.</p>\n"),
+        vec!["See docs <https://example.com?a=1&b=2>."]
+    );
+}
+
+#[test]
+fn prints_html_list_items_with_markers() {
+    let source = "<ul>\n  <li>first</li>\n  <li>second</li>\n</ul>\n\n<ol start=\"3\">\n  <li>third</li>\n  <li>fourth</li>\n</ol>\n";
+
+    assert_eq!(
+        paragraph_texts(source),
+        vec!["- first\n- second", "3. third\n4. fourth"]
+    );
+}
+
+#[test]
+fn prints_an_html_rule_as_a_rule() {
+    assert!(matches!(
+        block_kinds("<hr>\n").as_slice(),
+        [BlockKind::Rule]
+    ));
+    assert_eq!(
+        paragraph_texts("<p>above<hr>below</p>\n"),
+        vec!["above\n---\nbelow"]
+    );
+}
+
+#[test]
+fn keeps_the_whitespace_of_an_html_pre_block() {
+    let source = "<pre>\n  indented <b>bold</b> &lt;tag&gt;<!-- note -->\n\n    deeper\n</pre>\n";
+
+    assert!(matches!(
+        block_kinds(source).as_slice(),
+        [BlockKind::CodeFence { language: None, code }]
+            if code == "  indented bold <tag>\n\n    deeper"
+    ));
+}
+
+#[test]
+fn does_not_join_an_entity_split_by_a_tag() {
+    assert_eq!(
+        paragraph_texts("<div>&am<span>p;</span></div>\n"),
+        vec!["&amp;"]
+    );
+}
+
+#[test]
+fn numbers_ordered_lists_without_overflowing() {
+    assert_eq!(
+        paragraph_texts("<ol start=\"-9223372036854775808\"><li>A</li></ol>\n"),
+        vec!["-9223372036854775808. A"]
+    );
+    assert_eq!(
+        paragraph_texts("<ol start=\"9223372036854775807\"><li>A</li><li>B</li></ol>\n"),
+        vec!["9223372036854775807. A\n9223372036854775807. B"]
+    );
+}
+
+#[test]
+fn applies_tag_handling_inside_a_pre_block() {
+    let source = "<pre>shown<script>alert(1)</script><style>.x {}</style> <img src=\"x\" alt=\"Logo\"> end</pre>\n";
+
+    assert!(matches!(
+        block_kinds(source).as_slice(),
+        [BlockKind::CodeFence { language: None, code }] if code == "shown Logo end"
+    ));
+}
+
+#[test]
+fn treats_a_block_with_several_pre_elements_as_ordinary_html() {
+    assert_eq!(
+        paragraph_texts("<pre>  first</pre><p>middle</p><pre>  last</pre>\n"),
+        vec!["first\nmiddle\nlast"]
+    );
+}
+
+#[test]
+fn keeps_alt_text_of_every_image_when_one_has_no_src() {
+    assert_eq!(
+        paragraph_texts("<p><img src=\"a.png\" alt=\"A\"> <img alt=\"B\"></p>\n"),
+        vec!["A B"]
+    );
+}

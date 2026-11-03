@@ -180,7 +180,12 @@ fn parse_callout(text: &str) -> Option<(CalloutKind, StyledText)> {
 
 fn collect_styled_text<'a>(node: &'a AstNode<'a>) -> StyledText {
     let mut segments = Vec::new();
-    collect_text_segments(node, InlineStyle::default(), &mut segments, &mut None);
+    collect_text_segments(
+        node,
+        InlineStyle::default(),
+        &mut segments,
+        &mut InlineHtmlState::default(),
+    );
     StyledText {
         segments: normalize_segments(segments),
     }
@@ -222,14 +227,14 @@ fn collect_text_segments<'a>(
     node: &'a AstNode<'a>,
     style: InlineStyle,
     parts: &mut Vec<InlineSegment>,
-    br_index: &mut Option<usize>,
+    html: &mut InlineHtmlState,
 ) {
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
             let follows_br = parts
                 .len()
                 .checked_sub(1)
-                .is_some_and(|last| *br_index == Some(last));
+                .is_some_and(|last| html.br_index == Some(last));
             let value = if follows_br {
                 text.trim_start_matches(' ')
             } else {
@@ -266,21 +271,7 @@ fn collect_text_segments<'a>(
                 parts.push(InlineSegment { text: value, style });
             }
         }
-        NodeValue::HtmlInline(literal) => {
-            let text = inline_html_text(literal);
-            if text == "\n"
-                && let Some(last) = parts.last_mut()
-                && !last.style.code
-            {
-                last.text.truncate(last.text.trim_end_matches(' ').len());
-            }
-            if text == "\n" {
-                *br_index = Some(parts.len());
-            }
-            if !text.is_empty() {
-                parts.push(InlineSegment { text, style });
-            }
-        }
+        NodeValue::HtmlInline(literal) => collect_inline_html(literal, style, parts, html),
         NodeValue::TaskItem(task) => {
             let marker = task
                 .symbol
@@ -290,7 +281,7 @@ fn collect_text_segments<'a>(
                 style,
             });
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
         }
         NodeValue::FootnoteReference(reference) => {
@@ -301,7 +292,7 @@ fn collect_text_segments<'a>(
         }
         NodeValue::Link(link) => {
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
             if !link.url.is_empty() {
                 parts.push(InlineSegment {
@@ -316,7 +307,7 @@ fn collect_text_segments<'a>(
                 ..style
             };
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
         }
         NodeValue::Emph => {
@@ -325,7 +316,7 @@ fn collect_text_segments<'a>(
                 ..style
             };
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
         }
         NodeValue::LineBreak | NodeValue::SoftBreak => {
@@ -336,12 +327,12 @@ fn collect_text_segments<'a>(
         }
         NodeValue::Image(_) => {
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
         }
         _ => {
             for child in node.children() {
-                collect_text_segments(child, style, parts, br_index);
+                collect_text_segments(child, style, parts, html);
             }
         }
     }
@@ -373,23 +364,72 @@ fn normalize_segments(parts: Vec<InlineSegment>) -> Vec<InlineSegment> {
 }
 
 fn normalize_html_block(literal: &str) -> Option<BlockKind> {
-    if let Some(image) = extract_html_img(literal) {
-        return Some(image);
+    if let Some(code) = html_pre_block(literal) {
+        return Some(BlockKind::CodeFence {
+            language: None,
+            code,
+        });
     }
 
-    let text = StyledText::from_plain(html_to_text(literal));
+    let converted = html_to_text(literal);
+    if let ([image], 1, false) = (
+        converted.images.as_slice(),
+        converted.image_count,
+        converted.has_text,
+    ) {
+        return Some(image.clone());
+    }
+    if converted.text == "---" {
+        return Some(BlockKind::Rule);
+    }
+    let text = StyledText::from_plain(converted.text);
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
+}
+
+/// State carried between inline HTML nodes of one paragraph.
+#[derive(Default)]
+struct InlineHtmlState {
+    /// Index in the collected parts of the newline that the last `<br>` added.
+    br_index: Option<usize>,
+    /// `href` of the open `<a>`, printed after its text like a Markdown link.
+    href: Option<String>,
 }
 
 /// Comrak emits each inline tag as its own node, so only the tag itself is
 /// handled here; the text between tags arrives as ordinary text nodes.
-fn inline_html_text(literal: &str) -> String {
-    match parse_html_tag(literal, QuoteEnds::of(literal)) {
-        Ok(tag) if tag.name == "br" => "\n".to_string(),
-        Ok(tag) if tag.name == "img" && !tag.closing => extract_html_attr(literal, "alt")
-            .map(|alt| htmlize::unescape_attribute(alt).into_owned())
-            .unwrap_or_default(),
-        _ => String::new(),
+fn collect_inline_html(
+    literal: &str,
+    style: InlineStyle,
+    parts: &mut Vec<InlineSegment>,
+    state: &mut InlineHtmlState,
+) {
+    let Ok(tag) = parse_html_tag(literal, QuoteEnds::of(literal)) else {
+        return;
+    };
+    let source = &literal[..tag.len];
+    let text = match (tag.name.as_str(), tag.closing) {
+        ("br", _) => {
+            if let Some(last) = parts.last_mut()
+                && !last.style.code
+            {
+                last.text.truncate(last.text.trim_end_matches(' ').len());
+            }
+            state.br_index = Some(parts.len());
+            "\n".to_string()
+        }
+        ("img", false) => html_attr(source, "alt").unwrap_or_default(),
+        ("a", false) => {
+            state.href = html_attr(source, "href").filter(|href| !href.is_empty());
+            return;
+        }
+        ("a", true) => match state.href.take() {
+            Some(href) => format!(" <{href}>"),
+            None => return,
+        },
+        _ => return,
+    };
+    if !text.is_empty() {
+        parts.push(InlineSegment { text, style });
     }
 }
 
@@ -492,12 +532,14 @@ fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag>
     Err(NotATag { len: html.len() })
 }
 
-/// Returns the input after the `</name ...>` that closes a raw-text element
-/// such as `<script>`, or `""` when it is never closed.
-fn skip_raw_text_element<'a>(html: &'a str, name: &str) -> &'a str {
+/// Finds the first `</name ...>` in `html`, returning where it starts and
+/// ends. It is found without parsing what lies before it, as the contents
+/// of `<script>`, `<style>` and `<pre>` are read up to it.
+fn find_closing_tag(html: &str, name: &str) -> Option<(usize, usize)> {
     let mut search_from = 0;
     while let Some(found) = html[search_from..].find("</") {
-        let name_start = search_from + found + "</".len();
+        let start = search_from + found;
+        let name_start = start + "</".len();
         let after_name = name_start + name.len();
         let closes = html
             .get(name_start..after_name)
@@ -507,19 +549,45 @@ fn skip_raw_text_element<'a>(html: &'a str, name: &str) -> &'a str {
                 .next()
                 .is_none_or(|c| c.is_ascii_whitespace() || matches!(c, '/' | '>'));
         if closes {
-            return html[after_name..]
+            let end = html[after_name..]
                 .find('>')
-                .map_or("", |gt| &html[after_name + gt + 1..]);
+                .map_or(html.len(), |gt| after_name + gt + 1);
+            return Some((start, end));
         }
         search_from = name_start;
     }
-    ""
+    None
 }
 
-/// Plain-text rendering of an HTML block: tags are removed, their text is
-/// kept, and block-level elements and `<br>` start a new line.
-fn html_to_text(html: &str) -> String {
+/// Returns the input after the element that `<name>` opened, or `""` when it
+/// is never closed.
+fn skip_raw_text_element<'a>(html: &'a str, name: &str) -> &'a str {
+    find_closing_tag(html, name).map_or("", |(_, end)| &html[end..])
+}
+
+struct HtmlBlockText {
+    text: String,
+    /// Images that have a `src`.
+    images: Vec<BlockKind>,
+    /// All `<img>` tags, with or without `src`.
+    image_count: usize,
+    /// Whether anything other than images was printed.
+    has_text: bool,
+}
+
+/// Plain-text rendering of an HTML block. Only tags common in READMEs get
+/// special output: block-level elements and `<br>` start a new line, list
+/// items get a marker, `<a href>` prints its URL like a Markdown link,
+/// `<img>` prints its alt text and `<hr>` prints `---`. Other tags are
+/// removed and their text is kept.
+fn html_to_text(html: &str) -> HtmlBlockText {
     let mut text = String::with_capacity(html.len());
+    let mut images = Vec::new();
+    let mut image_count = 0;
+    let mut has_text = false;
+    let mut href: Option<String> = None;
+    // `None` for `<ul>`, the next item number for `<ol>`.
+    let mut lists: Vec<Option<i64>> = Vec::new();
     let mut rest = html;
     // Input before this offset is known not to hold a tag.
     let mut text_until = 0;
@@ -527,7 +595,7 @@ fn html_to_text(html: &str) -> String {
 
     // HTML collapses only ASCII whitespace; NBSP and U+3000 are content.
     while let Some(index) = rest.find(|c: char| c == '<' || c.is_ascii_whitespace()) {
-        text.push_str(&rest[..index]);
+        push_html_text(&mut text, &mut has_text, &rest[..index]);
         rest = &rest[index..];
         let offset = html.len() - rest.len();
 
@@ -537,7 +605,7 @@ fn html_to_text(html: &str) -> String {
             continue;
         }
         if offset < text_until {
-            text.push('<');
+            push_html_text(&mut text, &mut has_text, "<");
             rest = &rest[1..];
             continue;
         }
@@ -547,28 +615,151 @@ fn html_to_text(html: &str) -> String {
                 .map_or("", |end| &after_open[end + "-->".len()..]);
             continue;
         }
-        match parse_html_tag(rest, quote_ends.skip(offset)) {
-            Ok(tag) => {
-                rest = &rest[tag.len..];
-                if !tag.closing && matches!(tag.name.as_str(), "script" | "style") {
-                    rest = skip_raw_text_element(rest, &tag.name);
-                } else if is_html_line_break(&tag.name) {
-                    text.push('\n');
-                } else if matches!(tag.name.as_str(), "td" | "th") {
+        let tag = match parse_html_tag(rest, quote_ends.skip(offset)) {
+            Ok(tag) => tag,
+            Err(NotATag { len }) => {
+                text_until = offset + len;
+                continue;
+            }
+        };
+        let source = &rest[..tag.len];
+        rest = &rest[tag.len..];
+        match (tag.name.as_str(), tag.closing) {
+            ("script" | "style", false) => rest = skip_raw_text_element(rest, &tag.name),
+            ("img", false) => {
+                image_count += 1;
+                let alt = html_attr(source, "alt").unwrap_or_default();
+                if let Some(src) = html_attr(source, "src") {
+                    images.push(BlockKind::Image {
+                        src,
+                        alt: alt.clone(),
+                        title: html_attr(source, "title"),
+                    });
+                }
+                text.push_str(&alt);
+            }
+            ("a", false) => href = html_attr(source, "href").filter(|href| !href.is_empty()),
+            ("a", true) => {
+                if let Some(href) = href.take() {
                     push_html_space(&mut text);
+                    text.push_str(&format!("<{href}>"));
                 }
             }
-            Err(NotATag { len }) => text_until = offset + len,
+            ("ul", false) => {
+                lists.push(None);
+                text.push('\n');
+            }
+            ("ol", false) => {
+                let start =
+                    html_attr(source, "start").and_then(|start| start.trim().parse::<i64>().ok());
+                lists.push(Some(start.unwrap_or(1)));
+                text.push('\n');
+            }
+            ("ul" | "ol", true) => {
+                lists.pop();
+                text.push('\n');
+            }
+            ("li", false) => {
+                let marker = match lists.last_mut() {
+                    Some(Some(number)) => {
+                        let marker = format!("{number}. ");
+                        *number = number.saturating_add(1);
+                        marker
+                    }
+                    _ => "- ".to_string(),
+                };
+                text.push('\n');
+                text.push_str(&marker);
+                has_text = true;
+            }
+            ("hr", _) => {
+                text.push_str("\n---\n");
+                has_text = true;
+            }
+            ("td" | "th", _) => push_html_space(&mut text),
+            (name, _) if is_html_line_break(name) => text.push('\n'),
+            _ => {}
         }
     }
-    text.push_str(rest);
+    push_html_text(&mut text, &mut has_text, rest);
 
-    htmlize::unescape(text)
+    let text = text
         .lines()
         .map(str::trim_ascii)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    HtmlBlockText {
+        text,
+        images,
+        image_count,
+        has_text,
+    }
+}
+
+/// Entities never contain `<` or whitespace, so each chunk between them
+/// decodes on its own; decoding chunks one by one keeps a reference split
+/// by a tag, such as `&am<b>p;`, from being joined.
+fn push_html_text(text: &mut String, has_text: &mut bool, chunk: &str) {
+    if !chunk.is_empty() {
+        text.push_str(&htmlize::unescape(chunk));
+        *has_text = true;
+    }
+}
+
+/// Returns the text of a block that is a single `<pre>` element, keeping its
+/// whitespace. Tags inside it are removed.
+fn html_pre_block(html: &str) -> Option<String> {
+    let html = html.trim_ascii();
+    let open = parse_html_tag(html, QuoteEnds::of(html)).ok()?;
+    if open.name != "pre" || open.closing {
+        return None;
+    }
+    let body = &html[open.len..];
+    let (close_at, close_end) = find_closing_tag(body, "pre")?;
+    if close_end != body.len() {
+        return None;
+    }
+    // HTML drops the line break right after `<pre>`.
+    let body = &body[..close_at];
+    let body = body
+        .strip_prefix("\r\n")
+        .or_else(|| body.strip_prefix('\n'))
+        .unwrap_or(body);
+
+    let mut code = String::with_capacity(body.len());
+    let mut rest = body;
+    let quote_ends = QuoteEnds::of(body);
+    while let Some(index) = rest.find('<') {
+        code.push_str(&htmlize::unescape(&rest[..index]));
+        rest = &rest[index..];
+        if let Some(after_open) = rest.strip_prefix("<!--") {
+            rest = after_open
+                .find("-->")
+                .map_or("", |end| &after_open[end + "-->".len()..]);
+            continue;
+        }
+        let offset = body.len() - rest.len();
+        match parse_html_tag(rest, quote_ends.skip(offset)) {
+            Ok(tag) => {
+                let source = &rest[..tag.len];
+                rest = &rest[tag.len..];
+                match (tag.name.as_str(), tag.closing) {
+                    ("br", _) => code.push('\n'),
+                    ("img", false) => code.push_str(&html_attr(source, "alt").unwrap_or_default()),
+                    ("script" | "style", false) => rest = skip_raw_text_element(rest, &tag.name),
+                    _ => {}
+                }
+            }
+            Err(NotATag { len }) => {
+                code.push_str(&htmlize::unescape(&rest[..len]));
+                rest = &rest[len..];
+            }
+        }
+    }
+    code.push_str(&htmlize::unescape(rest));
+    let code = code.trim_end_matches(['\r', '\n']).to_string();
+    (!code.trim_ascii().is_empty()).then_some(code)
 }
 
 fn push_html_space(text: &mut String) {
@@ -620,25 +811,46 @@ fn is_html_line_break(name: &str) -> bool {
     )
 }
 
-fn extract_html_img(html: &str) -> Option<BlockKind> {
-    let trimmed = html.trim();
-    let img_start = trimmed.find("<img")?;
-    let after_img = trimmed[img_start + 4..].trim();
-    let img_end = after_img.find("/>").or_else(|| after_img.find('>'))?;
-    let img_content = after_img[..img_end].trim();
-
-    let src = extract_html_attr(img_content, "src")?;
-    let alt = extract_html_attr(img_content, "alt").unwrap_or_default();
-    let title = extract_html_attr(img_content, "title");
-
-    Some(BlockKind::Image { src, alt, title })
-}
-
-fn extract_html_attr(html: &str, name: &str) -> Option<String> {
-    let needle = format!(r#"{name}=""#);
-    let start = html.find(&needle)? + needle.len();
-    let end = html[start..].find('"')?;
-    Some(html[start..start + end].to_string())
+/// Reads attribute `name` from the source of one start tag, following the
+/// HTML attribute syntax: case-insensitive names, and values that are
+/// double-quoted, single-quoted or unquoted.
+fn html_attr(tag: &str, name: &str) -> Option<String> {
+    let tag = tag.strip_prefix('<')?;
+    let mut rest = tag.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '-');
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+        if rest.is_empty() || rest.starts_with('>') {
+            return None;
+        }
+        let name_len = rest
+            .find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))
+            .unwrap_or(rest.len())
+            .max(1);
+        let attr_name = &rest[..name_len];
+        rest = rest[name_len..].trim_ascii_start();
+        let mut value = "";
+        if let Some(after_equals) = rest.strip_prefix('=') {
+            rest = after_equals.trim_ascii_start();
+            let value_len = match rest.chars().next() {
+                Some(quote @ ('"' | '\'')) => {
+                    let end = rest[1..].find(quote).map_or(rest.len(), |end| end + 1);
+                    value = &rest[1..end];
+                    (end + 1).min(rest.len())
+                }
+                _ => {
+                    let end = rest
+                        .find(|c: char| c.is_ascii_whitespace() || c == '>')
+                        .unwrap_or(rest.len());
+                    value = &rest[..end];
+                    end
+                }
+            };
+            rest = &rest[value_len..];
+        }
+        if attr_name.eq_ignore_ascii_case(name) {
+            return Some(htmlize::unescape_attribute(value).into_owned());
+        }
+    }
 }
 
 fn collect_links<'a>(node: &'a AstNode<'a>, links: &mut Vec<String>) {
