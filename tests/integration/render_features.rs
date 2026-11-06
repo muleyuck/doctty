@@ -73,6 +73,32 @@ fn headless_render_supports_stdin_with_dash_path() {
         .stdout(contains("Paragraph with <br/> inline HTML."));
 }
 
+#[cfg(unix)]
+#[test]
+fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>> {
+    use std::{fs::File, process::Stdio, time::Duration};
+
+    use rustix::pty::{grantpt, openpt, ptsname, unlockpt, OpenptFlags};
+
+    // A pipe does not exercise the interactive-stdin rejection path.
+    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    let slave_path = ptsname(&master, Vec::new())?;
+    let slave = File::open(slave_path.to_str()?)?;
+
+    let mut command = Command::cargo_bin("doctty")?;
+    command
+        .arg("-")
+        .stdin(Stdio::from(slave))
+        .timeout(Duration::from_secs(5))
+        .assert()
+        .failure()
+        .stderr(contains("'-' requires piped stdin"));
+
+    Ok(())
+}
+
 #[test]
 fn headless_render_keeps_math_expressions_visible() {
     let file = match NamedTempFile::new() {
