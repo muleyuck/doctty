@@ -76,7 +76,12 @@ fn headless_render_supports_stdin_with_dash_path() {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>> {
-    use std::{fs::File, process::Stdio, thread, time::{Duration, Instant}};
+    use std::{
+        fs::File,
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
 
     use assert_cmd::assert::OutputAssertExt;
     use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
