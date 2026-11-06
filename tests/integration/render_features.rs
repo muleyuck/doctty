@@ -73,7 +73,7 @@ fn headless_render_supports_stdin_with_dash_path() {
         .stdout(contains("Paragraph with <br/> inline HTML."));
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>> {
     use std::{fs::File, process::Stdio, time::Duration};
@@ -87,10 +87,10 @@ fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>>
     let slave_path = ptsname(&master, Vec::new())?;
     let slave = File::open(slave_path.to_str()?)?;
 
-    let mut command = Command::cargo_bin("doctty")?;
-    command
-        .arg("-")
-        .stdin(Stdio::from(slave))
+    let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_doctty"));
+    process.arg("-").stdin(Stdio::from(slave));
+
+    Command::from_std(process)
         .timeout(Duration::from_secs(5))
         .assert()
         .failure()
