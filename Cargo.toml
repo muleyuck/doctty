@@ -54,5 +54,6 @@ signal-hook = "0.3.18"
 
 [dev-dependencies]
 assert_cmd = "2.2.0"
+rustix = { version = "1.1.4", features = ["pty"] }
 predicates = "3.1.4"
 serde_yaml = "0.9.34"
