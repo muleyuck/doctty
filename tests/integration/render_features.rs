@@ -78,7 +78,7 @@ fn headless_render_supports_stdin_with_dash_path() {
 fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>> {
     use std::{fs::File, process::Stdio, time::Duration};
 
-    use rustix::pty::{grantpt, openpt, ptsname, unlockpt, OpenptFlags};
+    use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 
     // A pipe does not exercise the interactive-stdin rejection path.
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
