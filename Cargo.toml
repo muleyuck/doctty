@@ -48,11 +48,12 @@ tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 
 [target.'cfg(unix)'.dependencies]
 # Already in the graph through crossterm; used to read terminal replies unbuffered.
-rustix = { version = "1.1.4", features = ["event", "pty", "std"] }
+rustix = { version = "1.1.4", features = ["event", "std"] }
 # Already in the graph through crossterm; lets the renderer clean up on SIGHUP/SIGTERM.
 signal-hook = "0.3.18"
 
 [dev-dependencies]
 assert_cmd = "2.2.0"
+rustix = { version = "1.1.4", features = ["pty"] }
 predicates = "3.1.4"
 serde_yaml = "0.9.34"
