@@ -466,7 +466,7 @@ fn restore_block_tag_close(tag: &str) -> Option<String> {
 }
 
 fn restore_anchor(tag: &str) -> Option<String> {
-    let attrs = tag.strip_prefix('a')?.trim();
+    let attrs = strip_tag_name(tag, "a")?.trim();
     let attrs = parse_attributes_strict(attrs)?;
     let href = attrs
         .iter()
@@ -491,7 +491,7 @@ fn restore_picture_tag(tag: &str) -> Option<String> {
 }
 
 fn restore_source_tag(tag: &str) -> Option<String> {
-    let body = tag.strip_prefix("source")?.trim();
+    let body = strip_tag_name(tag, "source")?.trim();
     let body = body.strip_suffix('/').unwrap_or(body).trim();
     let attrs = parse_attributes_strict(body)?;
 
@@ -513,7 +513,7 @@ fn restore_source_tag(tag: &str) -> Option<String> {
 }
 
 fn restore_img(tag: &str) -> Option<String> {
-    let body = tag.strip_prefix("img")?.trim();
+    let body = strip_tag_name(tag, "img")?.trim();
     let body = body.strip_suffix('/').unwrap_or(body).trim();
 
     let attrs = parse_attributes_strict(body)?;
@@ -538,6 +538,13 @@ fn restore_img(tag: &str) -> Option<String> {
     result.push_str(" />");
 
     Some(result)
+}
+
+/// The rest of `tag` after its name, when the name is exactly `name`, so
+/// that `<img-foo>` or `<abbr>` is not read as `<img>` or `<a>`.
+fn strip_tag_name<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    tag.strip_prefix(name)
+        .filter(|rest| rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '/'))
 }
 
 fn split_tag_name(tag: &str) -> Option<(&str, &str)> {

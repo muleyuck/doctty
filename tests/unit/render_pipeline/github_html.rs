@@ -384,3 +384,14 @@ fn render(source: &str) -> String {
     )
     .unwrap_or_else(|error| panic!("html should render: {error}"))
 }
+
+#[test]
+fn github_html_does_not_read_a_longer_tag_name_as_a_supported_one() {
+    let html = render(
+        "x <img-foo data-x=\"1\" src=\"a.png\" alt=\"A\"> <a-b data-x=\"1\" href=\"https://example.com\">y</a-b>\n",
+    );
+
+    assert!(!html.contains("<img src=\"a.png\""));
+    assert!(!html.contains("<a href=\"https://example.com\">"));
+    assert!(html.contains("&lt;img-foo"));
+}

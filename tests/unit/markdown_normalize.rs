@@ -362,6 +362,9 @@ fn supports_exactly_the_tags_the_rich_view_restores() {
         "<DIV>x</DIV>",
         "<p align=\"justify\">x</p>",
         "<img src='a.png' alt='A'>",
+        "<div>before<img-foo data-x=\"1\" src=\"a.png\" alt=\"A\">after</div>",
+        "<div><a-b href=\"https://example.com\">x</a-b></div>",
+        "<div><sourcex srcset=\"a.png\"></div>",
     ] {
         assert_eq!(
             paragraph_texts(&format!("{source}\n")),
