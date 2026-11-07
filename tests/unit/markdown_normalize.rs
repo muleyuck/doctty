@@ -356,11 +356,22 @@ fn shows_a_block_without_supported_tags_as_its_source() {
 }
 
 #[test]
-fn keeps_unsupported_tags_and_comments_as_source_next_to_supported_ones() {
-    assert_eq!(
-        paragraph_texts("<p>Press <kbd>Ctrl</kbd> <!-- note --> <script>x()</script></p>\n"),
-        vec!["Press <kbd>Ctrl</kbd> <!-- note --> <script>x()</script>"]
-    );
+fn shows_a_whole_html_block_as_source_when_any_part_is_unsupported() {
+    for source in [
+        "<p>Press <kbd>Ctrl</kbd></p>",
+        "<div align=\"center\">\n  <img src=\"a.png\" alt=\"A\">\n  <!-- note\n    indented -->\n</div>",
+        "<div><!-- a\n  b --><span\n    title=\"x\">y</span></div>",
+        "<div>\n<!DOCTYPE html>\n</div>",
+        "<div>\n<?php echo 1; ?>\n</div>",
+        "<div>\n<![CDATA[x]]>\n</div>",
+        "<div>\n<!-- x -->\n</div>  ",
+    ] {
+        assert_eq!(
+            paragraph_texts(&format!("{source}\n")),
+            vec![source.to_string()],
+            "source: {source}"
+        );
+    }
 }
 
 #[test]
@@ -375,19 +386,23 @@ fn keeps_unsupported_inline_tags_and_comments_as_source() {
 fn supports_exactly_the_tags_the_rich_view_restores() {
     // The rich view restores only lower-case tags with double-quoted
     // attribute values, so plain-text output treats the others as source.
-    for (source, expected) in [
-        ("<DIV>x</DIV>", "<DIV>x</DIV>"),
-        // `</p>` alone is restored there, like here.
-        ("<p align=\"justify\">x</p>", "<p align=\"justify\">x"),
-        ("<img src='a.png' alt='A'>", "<img src='a.png' alt='A'>"),
-        ("<a name=\"x\">x</a>", "<a name=\"x\">x"),
+    for source in [
+        "<DIV>x</DIV>",
+        "<p align=\"justify\">x</p>",
+        "<img src='a.png' alt='A'>",
     ] {
         assert_eq!(
             paragraph_texts(&format!("{source}\n")),
-            vec![expected.to_string()],
+            vec![source.to_string()],
             "source: {source}"
         );
     }
+    // Inline HTML in a paragraph is judged tag by tag; the lone `</a>` is
+    // supported there.
+    assert_eq!(
+        paragraph_texts("<a name=\"x\">x</a>\n"),
+        vec!["<a name=\"x\">x"]
+    );
 }
 
 #[test]
@@ -462,14 +477,6 @@ fn starts_a_new_line_for_block_tags_inside_a_paragraph() {
 }
 
 #[test]
-fn keeps_the_indentation_of_unsupported_source_inside_supported_html() {
-    assert_eq!(
-        paragraph_texts("<div><!-- a\n  b --><span\n    title=\"x\">y</span></div>\n"),
-        vec!["<!-- a\n  b --><span\n    title=\"x\">y</span>"]
-    );
-}
-
-#[test]
 fn keeps_blank_lines_made_by_consecutive_br_tags() {
     assert_eq!(paragraph_texts("<div>a<br><br>b</div>\n"), vec!["a\n\nb"]);
 }
@@ -515,4 +522,12 @@ fn does_not_stack_line_breaks_from_inline_block_tags() {
         &document.blocks[0].kind,
         BlockKind::Heading { text, .. } if text.plain() == "one two three"
     ));
+}
+
+#[test]
+fn ends_a_processing_instruction_block_on_its_closing_line() {
+    assert_eq!(
+        paragraph_texts("<?php echo 1; ?>\n**ok**\n"),
+        vec!["<?php echo 1; ?>", "ok"]
+    );
 }

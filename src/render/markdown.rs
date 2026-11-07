@@ -362,16 +362,19 @@ fn normalize_segments(parts: Vec<InlineSegment>) -> Vec<InlineSegment> {
     normalized
 }
 
+/// Whether an HTML block is shown as its Markdown source rather than
+/// rendered. Both views decide with this, so they always agree.
+pub(crate) fn is_html_source_block(literal: &str) -> bool {
+    html_to_text(literal).is_none()
+}
+
 fn normalize_html_block(literal: &str) -> Option<BlockKind> {
-    let converted = html_to_text(literal);
-    if !converted.has_supported_tag {
-        // Unsupported HTML is shown as its Markdown source, as the rich view
-        // does.
-        let source = literal.trim_end();
+    let Some(converted) = html_to_text(literal) else {
+        let source = literal.trim_end_matches('\n');
         return (!source.trim().is_empty()).then(|| BlockKind::Paragraph {
             text: StyledText::from_plain(source.to_string()),
         });
-    }
+    };
     if let ([image], 1, false) = (
         converted.images.as_slice(),
         converted.image_count,
@@ -573,16 +576,18 @@ struct HtmlBlockText {
     image_count: usize,
     /// Whether anything other than images was printed.
     has_text: bool,
-    /// Whether the block holds any tag that doctty supports.
-    has_supported_tag: bool,
 }
 
-/// Plain-text rendering of an HTML block. Tags that doctty supports (see
-/// `is_supported_raw_html_tag`) are rendered: `<div>`, `<p>`, `<h1>`–`<h6>`,
-/// `<details>`, `<summary>` and `<br>` start a new line, `<a href>` prints
-/// its URL like a Markdown link and `<img>` prints its alt text. Other tags
-/// and comments are kept as their source.
-fn html_to_text(html: &str) -> HtmlBlockText {
+/// Plain-text rendering of an HTML block, or `None` when the block must be
+/// shown as its source: it holds a tag that doctty does not support (see
+/// `is_supported_raw_html_tag`), a comment or another `<!`/`<?` construct,
+/// or no tag at all. Rendering only part of a block would leave a mix the
+/// reader cannot make sense of.
+///
+/// Supported tags: `<div>`, `<p>`, `<h1>`–`<h6>`, `<details>`, `<summary>`
+/// and `<br>` start a new line, `<a href>` prints its URL like a Markdown
+/// link and `<img>` prints its alt text.
+fn html_to_text(html: &str) -> Option<HtmlBlockText> {
     let mut text = String::with_capacity(html.len());
     let mut images = Vec::new();
     let mut image_count = 0;
@@ -610,11 +615,8 @@ fn html_to_text(html: &str) -> HtmlBlockText {
             rest = &rest[1..];
             continue;
         }
-        if rest.starts_with("<!--") {
-            let len = rest[4..].find("-->").map_or(rest.len(), |end| 4 + end + 3);
-            push_html_source(&mut text, &mut has_text, &rest[..len]);
-            rest = &rest[len..];
-            continue;
+        if rest.starts_with("<!") || rest.starts_with("<?") {
+            return None;
         }
         let tag = match parse_html_tag(rest, quote_ends.skip(offset)) {
             Ok(tag) => tag,
@@ -626,8 +628,7 @@ fn html_to_text(html: &str) -> HtmlBlockText {
         let source = &rest[..tag.len];
         rest = &rest[tag.len..];
         if !is_supported_raw_html_tag(source) {
-            push_html_source(&mut text, &mut has_text, source);
-            continue;
+            return None;
         }
         has_supported_tag = true;
         match (tag.name.as_str(), tag.closing) {
@@ -659,16 +660,16 @@ fn html_to_text(html: &str) -> HtmlBlockText {
     }
     push_html_text(&mut text, &mut has_text, rest);
 
-    // Line breaks and spaces are added only between content, so trimming
-    // the ends leaves the kept source untouched.
+    if !has_supported_tag {
+        return None;
+    }
     let text = text.trim_matches([' ', '\n']).to_string();
-    HtmlBlockText {
+    Some(HtmlBlockText {
         text,
         images,
         image_count,
         has_text,
-        has_supported_tag,
-    }
+    })
 }
 
 /// Entities never contain `<` or whitespace, so each chunk between them
@@ -679,12 +680,6 @@ fn push_html_text(text: &mut String, has_text: &mut bool, chunk: &str) {
         text.push_str(&htmlize::unescape(chunk));
         *has_text = true;
     }
-}
-
-/// Keeps an unsupported tag or a comment as written.
-fn push_html_source(text: &mut String, has_text: &mut bool, source: &str) {
-    text.push_str(source);
-    *has_text = true;
 }
 
 fn push_html_space(text: &mut String) {

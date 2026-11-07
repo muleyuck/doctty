@@ -176,6 +176,31 @@ pub(super) fn inject_alert_icons(html: &str) -> String {
     })
 }
 
+/// Class of the element that holds an HTML block shown as its source.
+pub(super) const HTML_SOURCE_CLASS: &str = "doctty-html-source";
+
+/// Writes an HTML block that doctty shows as its source. Characters are
+/// escaped as numeric references, while `restore_supported_raw_html` acts
+/// only on `&lt;` and `&amp;`, so no tag inside is restored and entities
+/// stay as written.
+pub(super) fn write_html_source_block(
+    output: &mut dyn std::fmt::Write,
+    literal: &str,
+) -> std::fmt::Result {
+    write!(output, r#"<div class="{HTML_SOURCE_CLASS}">"#)?;
+    for c in literal.trim_end_matches('\n').chars() {
+        match c {
+            '&' => output.write_str("&#38;")?,
+            '<' => output.write_str("&#60;")?,
+            '>' => output.write_str("&#62;")?,
+            '"' => output.write_str("&#34;")?,
+            '\0' => output.write_char('\u{fffd}')?,
+            c => output.write_char(c)?,
+        }
+    }
+    output.write_str("</div>")
+}
+
 pub(super) fn restore_supported_raw_html(html: &str) -> String {
     let mut output = String::with_capacity(html.len());
     let mut rest = html;

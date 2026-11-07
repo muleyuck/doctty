@@ -192,7 +192,7 @@ fn github_html_uses_embedded_github_font_stacks() {
 #[test]
 fn github_html_restores_supported_raw_html_but_keeps_scripts_escaped() {
     let html = build_github_html(
-        "<div align=\"center\">hi<br/><sub>fine</sub><a href=\"https://example.com\">link</a></div>\n<script>window.evil = true</script>\n",
+        "<div align=\"center\">hi<br/><sub>fine</sub><a href=\"https://example.com\">link</a></div>\n\n<script>window.evil = true</script>\n",
         std::path::Path::new("."),
         Theme::Dark,
         MermaidMode::Disabled,
@@ -203,7 +203,7 @@ fn github_html_restores_supported_raw_html_but_keeps_scripts_escaped() {
         r#"<div align="center">hi<br/><sub>fine</sub><a href="https://example.com">link</a></div>"#
     ));
     assert!(!html.contains("<script>window.evil = true</script>"));
-    assert!(html.contains("&lt;script&gt;window.evil = true&lt;/script&gt;"));
+    assert!(html.contains("&#60;script&#62;window.evil = true&#60;/script&#62;"));
 }
 
 #[test]
@@ -336,9 +336,64 @@ fn github_html_shows_comments_and_unsupported_tags_as_source() {
     )
     .unwrap_or_else(|error| panic!("html should render: {error}"));
 
-    assert!(html.contains("&lt;!-- note --&gt;"));
+    assert!(html.contains("&#60;!-- note --&#62;"));
     assert!(html.contains("&lt;kbd&gt;Ctrl&lt;/kbd&gt;"));
-    assert!(
-        html.contains("&lt;table&gt;&lt;tr&gt;&lt;td&gt;x&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;")
-    );
+    assert!(html.contains(
+        "&#60;table&#62;&#60;tr&#62;&#60;td&#62;x&#60;/td&#62;&#60;/tr&#62;&#60;/table&#62;"
+    ));
+}
+
+#[test]
+fn github_html_shows_a_mixed_html_block_whole_as_source_with_its_line_breaks() {
+    let source = "<div align=\"center\">\n  <img src=\"a.png\" alt=\"A\">\n  <!-- note\n    indented -->\n  &copy;\n</div>\n\n<p align=\"center\">ok</p>\n";
+
+    let html = build_github_html(
+        source,
+        std::path::Path::new("."),
+        Theme::Dark,
+        MermaidMode::Disabled,
+    )
+    .unwrap_or_else(|error| panic!("html should render: {error}"));
+
+    assert!(html.contains(
+        "<div class=\"doctty-html-source\">&#60;div align=&#34;center&#34;&#62;\n  &#60;img src=&#34;a.png&#34; alt=&#34;A&#34;&#62;\n  &#60;!-- note\n    indented --&#62;\n  &#38;copy;\n&#60;/div&#62;</div>"
+    ));
+    assert!(!html.contains("<img src=\"a.png\""));
+    assert!(html.contains(r#"<p align="center">ok</p>"#));
+    assert!(html.contains(".markdown-body .doctty-html-source {\n  white-space: pre-wrap;"));
+}
+
+#[test]
+fn github_html_shows_declarations_and_processing_instructions_as_source() {
+    let source = "<div>\n<!DOCTYPE html>\n</div>\n\n<div>\n<?php echo 1; ?>\n</div>\n";
+
+    let html = build_github_html(
+        source,
+        std::path::Path::new("."),
+        Theme::Dark,
+        MermaidMode::Disabled,
+    )
+    .unwrap_or_else(|error| panic!("html should render: {error}"));
+
+    assert!(html.contains(
+        "<div class=\"doctty-html-source\">&#60;div&#62;\n&#60;!DOCTYPE html&#62;\n&#60;/div&#62;</div>"
+    ));
+    assert!(html.contains(
+        "<div class=\"doctty-html-source\">&#60;div&#62;\n&#60;?php echo 1; ?&#62;\n&#60;/div&#62;</div>"
+    ));
+    assert!(!html.contains("<div>\n"));
+}
+
+#[test]
+fn github_html_ends_a_processing_instruction_block_on_its_closing_line() {
+    let html = build_github_html(
+        "<?php echo 1; ?>\n**ok**\n",
+        std::path::Path::new("."),
+        Theme::Dark,
+        MermaidMode::Disabled,
+    )
+    .unwrap_or_else(|error| panic!("html should render: {error}"));
+
+    assert!(html.contains("<div class=\"doctty-html-source\">&#60;?php echo 1; ?&#62;</div>"));
+    assert!(html.contains("<strong>ok</strong>"));
 }

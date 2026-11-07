@@ -145,7 +145,10 @@ directory is not committed.
 
 doctty uses [Comrak](https://github.com/kivikakk/comrak) for Markdown parsing and supports common [GitHub Flavored Markdown](https://github.github.com/gfm/) features such as tables, task lists, footnotes and callouts, as well as math and optional Mermaid diagrams. Rendering can differ from GitHub in edge cases.
 
-Raw HTML is rendered only for the tags doctty supports. Every other tag, and HTML comments, are shown as written in the Markdown source, in both the rich view and plain-text output.
+Raw HTML is rendered only for the tags doctty supports, in both the rich view and plain-text output:
+
+- An HTML block is rendered only when every tag in it is supported. An HTML block is raw HTML at the start of a line, as CommonMark defines it: most end at the next blank line, while one that starts with a comment or with `<script>`, `<pre>`, `<style>` or `<textarea>` ends on the line that closes it. If it holds any other tag or an HTML comment, the whole block is shown as written in the Markdown source, line breaks and indentation included.
+- Inside a paragraph, each HTML tag is judged on its own: supported tags are rendered, and other tags and comments are shown as written.
 
 | Tag | Plain-text output |
 |-----|-------------------|
