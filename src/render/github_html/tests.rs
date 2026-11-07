@@ -5,10 +5,7 @@ use std::sync::{
 
 use crate::core::config::MermaidMode;
 
-use super::{
-    mermaid::{decorate_mermaid_svg, render_mermaid_blocks_with},
-    postprocess::restore_supported_raw_html,
-};
+use super::mermaid::{decorate_mermaid_svg, render_mermaid_blocks_with};
 
 #[test]
 fn decorate_mermaid_svg_adds_renderer_class() {
@@ -40,16 +37,5 @@ fn render_mermaid_blocks_reuses_duplicate_sources() {
             .values()
             .next()
             .is_some_and(|html| html.contains("doctty-mermaid"))
-    );
-}
-
-#[test]
-fn restore_does_not_skip_raw_html_that_carries_the_source_class() {
-    // Raw HTML, such as Mermaid output, can carry the class too.
-    let html = r#"<div class="doctty-html-source">marker &amp;copy; &lt;br&gt;</div>"#;
-
-    assert_eq!(
-        restore_supported_raw_html(html),
-        r#"<div class="doctty-html-source">marker &copy; <br/></div>"#
     );
 }

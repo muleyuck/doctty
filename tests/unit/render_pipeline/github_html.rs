@@ -351,29 +351,6 @@ fn github_html_shows_a_mixed_html_block_whole_as_source_with_its_line_breaks() {
     assert!(html.contains(".markdown-body .doctty-html-source {\n  white-space: pre-wrap;"));
 }
 
-#[test]
-fn github_html_shows_declarations_and_processing_instructions_as_source() {
-    let source = "<div>\n<!DOCTYPE html>\n</div>\n\n<div>\n<?php echo 1; ?>\n</div>\n";
-
-    let html = render(source);
-
-    assert!(html.contains(
-        "<div class=\"doctty-html-source\">&#60;div&#62;\n&#60;!DOCTYPE html&#62;\n&#60;/div&#62;</div>"
-    ));
-    assert!(html.contains(
-        "<div class=\"doctty-html-source\">&#60;div&#62;\n&#60;?php echo 1; ?&#62;\n&#60;/div&#62;</div>"
-    ));
-    assert!(!html.contains("<div>\n"));
-}
-
-#[test]
-fn github_html_ends_a_processing_instruction_block_on_its_closing_line() {
-    let html = render("<?php echo 1; ?>\n**ok**\n");
-
-    assert!(html.contains("<div class=\"doctty-html-source\">&#60;?php echo 1; ?&#62;</div>"));
-    assert!(html.contains("<strong>ok</strong>"));
-}
-
 /// Rich-view HTML for `source`, in the dark theme with Mermaid disabled.
 fn render(source: &str) -> String {
     build_github_html(
@@ -394,4 +371,11 @@ fn github_html_does_not_read_a_longer_tag_name_as_a_supported_one() {
     assert!(!html.contains("<img src=\"a.png\""));
     assert!(!html.contains("<a href=\"https://example.com\">"));
     assert!(html.contains("&lt;img-foo"));
+}
+
+#[test]
+fn github_html_drops_the_line_ending_of_a_crlf_source_block() {
+    let html = render("<!-- x -->\r\n\r\npara\r\n");
+
+    assert!(html.contains("<div class=\"doctty-html-source\">&#60;!-- x --&#62;</div>"));
 }

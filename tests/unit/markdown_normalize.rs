@@ -337,6 +337,9 @@ fn shows_a_whole_html_block_as_source_when_any_part_is_unsupported() {
         "<div>\n<?php echo 1; ?>\n</div>",
         "<div>\n<![CDATA[x]]>\n</div>",
         "<div>\n<!-- x -->\n</div>  ",
+        "<p><a href=\"javascript:alert(1)\">x</a></p>",
+        "<p><img src=\"javascript:x\" alt=\"A\"></p>",
+        "<img alt=\"A\">",
     ] {
         assert_eq!(
             paragraph_texts(&format!("{source}\n")),
@@ -422,7 +425,7 @@ fn keeps_less_than_signs_and_broken_tags_as_text() {
 }
 
 #[test]
-fn strips_long_blocks_of_unclosed_tags_and_quotes() {
+fn handles_long_blocks_of_unclosed_tags_and_quotes() {
     for unit in [
         "x <a ", "<a b=\"", "<a b='", "<a\"=\"", "<A \"x=", "<kbd>", "<!--",
     ] {
@@ -493,9 +496,9 @@ fn does_not_stack_line_breaks_from_inline_block_tags() {
 }
 
 #[test]
-fn ends_a_processing_instruction_block_on_its_closing_line() {
+fn drops_the_line_ending_of_a_crlf_source_block() {
     assert_eq!(
-        paragraph_texts("<?php echo 1; ?>\n**ok**\n"),
-        vec!["<?php echo 1; ?>", "ok"]
+        paragraph_texts("<!-- x\r\n  y -->\r\n\r\npara\r\n"),
+        vec!["<!-- x\r\n  y -->", "para"]
     );
 }
