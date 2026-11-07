@@ -40,8 +40,6 @@ pub(super) fn theme_styles(theme: Theme) -> String {
     }
 }
 
-/// Keeps the line breaks and indentation of an HTML block shown as source,
-/// spaced like a paragraph.
 fn html_source_css() -> String {
     format!(
         ".markdown-body .{HTML_SOURCE_CLASS} {{\n  white-space: pre-wrap;\n  overflow-wrap: break-word;\n  margin-bottom: 16px;\n}}"

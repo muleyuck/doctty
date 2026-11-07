@@ -328,13 +328,7 @@ fn github_html_emits_github_style_math_markup() {
 fn github_html_shows_comments_and_unsupported_tags_as_source() {
     let source = "<!-- note -->\n\nPress <kbd>Ctrl</kbd>.\n\n<table><tr><td>x</td></tr></table>\n";
 
-    let html = build_github_html(
-        source,
-        std::path::Path::new("."),
-        Theme::Dark,
-        MermaidMode::Disabled,
-    )
-    .unwrap_or_else(|error| panic!("html should render: {error}"));
+    let html = render(source);
 
     assert!(html.contains("&#60;!-- note --&#62;"));
     assert!(html.contains("&lt;kbd&gt;Ctrl&lt;/kbd&gt;"));
@@ -347,13 +341,7 @@ fn github_html_shows_comments_and_unsupported_tags_as_source() {
 fn github_html_shows_a_mixed_html_block_whole_as_source_with_its_line_breaks() {
     let source = "<div align=\"center\">\n  <img src=\"a.png\" alt=\"A\">\n  <!-- note\n    indented -->\n  &copy;\n</div>\n\n<p align=\"center\">ok</p>\n";
 
-    let html = build_github_html(
-        source,
-        std::path::Path::new("."),
-        Theme::Dark,
-        MermaidMode::Disabled,
-    )
-    .unwrap_or_else(|error| panic!("html should render: {error}"));
+    let html = render(source);
 
     assert!(html.contains(
         "<div class=\"doctty-html-source\">&#60;div align=&#34;center&#34;&#62;\n  &#60;img src=&#34;a.png&#34; alt=&#34;A&#34;&#62;\n  &#60;!-- note\n    indented --&#62;\n  &#38;copy;\n&#60;/div&#62;</div>"
@@ -367,13 +355,7 @@ fn github_html_shows_a_mixed_html_block_whole_as_source_with_its_line_breaks() {
 fn github_html_shows_declarations_and_processing_instructions_as_source() {
     let source = "<div>\n<!DOCTYPE html>\n</div>\n\n<div>\n<?php echo 1; ?>\n</div>\n";
 
-    let html = build_github_html(
-        source,
-        std::path::Path::new("."),
-        Theme::Dark,
-        MermaidMode::Disabled,
-    )
-    .unwrap_or_else(|error| panic!("html should render: {error}"));
+    let html = render(source);
 
     assert!(html.contains(
         "<div class=\"doctty-html-source\">&#60;div&#62;\n&#60;!DOCTYPE html&#62;\n&#60;/div&#62;</div>"
@@ -386,14 +368,19 @@ fn github_html_shows_declarations_and_processing_instructions_as_source() {
 
 #[test]
 fn github_html_ends_a_processing_instruction_block_on_its_closing_line() {
-    let html = build_github_html(
-        "<?php echo 1; ?>\n**ok**\n",
+    let html = render("<?php echo 1; ?>\n**ok**\n");
+
+    assert!(html.contains("<div class=\"doctty-html-source\">&#60;?php echo 1; ?&#62;</div>"));
+    assert!(html.contains("<strong>ok</strong>"));
+}
+
+/// Rich-view HTML for `source`, in the dark theme with Mermaid disabled.
+fn render(source: &str) -> String {
+    build_github_html(
+        source,
         std::path::Path::new("."),
         Theme::Dark,
         MermaidMode::Disabled,
     )
-    .unwrap_or_else(|error| panic!("html should render: {error}"));
-
-    assert!(html.contains("<div class=\"doctty-html-source\">&#60;?php echo 1; ?&#62;</div>"));
-    assert!(html.contains("<strong>ok</strong>"));
+    .unwrap_or_else(|error| panic!("html should render: {error}"))
 }

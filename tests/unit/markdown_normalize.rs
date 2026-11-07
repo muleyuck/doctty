@@ -78,19 +78,48 @@ fn skips_layout_only_html_blocks() {
     );
 }
 
-fn paragraph_texts(source: &str) -> Vec<String> {
-    let document = match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document,
+fn block_kinds(source: &str) -> Vec<BlockKind> {
+    match parse_document("docs/example.md".into(), source) {
+        Ok(document) => document
+            .blocks
+            .into_iter()
+            .map(|block| block.kind)
+            .collect(),
         Err(error) => panic!("document should parse: {error}"),
-    };
-    document
-        .blocks
+    }
+}
+
+fn paragraph_texts(source: &str) -> Vec<String> {
+    block_kinds(source)
         .iter()
-        .map(|block| match &block.kind {
+        .map(|kind| match kind {
             BlockKind::Paragraph { text } => text.plain(),
             other => panic!("expected only paragraphs, got: {other:?}"),
         })
         .collect()
+}
+
+/// Text of the heading that starts `source`.
+fn heading_text(source: &str) -> String {
+    match block_kinds(source).first() {
+        Some(BlockKind::Heading { text, .. }) => text.plain(),
+        other => panic!("expected a heading first, got: {other:?}"),
+    }
+}
+
+/// Cell texts of the first table in `source`.
+fn table_rows(source: &str) -> Vec<Vec<String>> {
+    block_kinds(source)
+        .iter()
+        .find_map(|kind| match kind {
+            BlockKind::Table { rows } => Some(
+                rows.iter()
+                    .map(|row| row.iter().map(|cell| cell.plain()).collect())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a table in: {source}"))
 }
 
 #[test]
@@ -195,20 +224,8 @@ fn preserves_math_text_in_plain_document_normalization() {
 fn turns_br_into_a_space_inside_table_cells_and_headings() {
     let source = "# Title<br>sub\n\n| a | b |\n|---|---|\n| x <br> y | z |\n";
 
-    let document = match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document,
-        Err(error) => panic!("document should parse: {error}"),
-    };
-
-    assert!(matches!(
-        &document.blocks[0].kind,
-        BlockKind::Heading { text, .. } if text.plain() == "Title sub"
-    ));
-    assert!(matches!(
-        &document.blocks[1].kind,
-        BlockKind::Table { rows }
-            if rows[1].iter().map(|cell| cell.plain()).collect::<Vec<_>>() == vec!["x y", "z"]
-    ));
+    assert_eq!(heading_text(source), "Title sub");
+    assert_eq!(table_rows(source)[1], vec!["x y", "z"]);
 }
 
 #[test]
@@ -220,34 +237,8 @@ fn keeps_leading_spaces_after_a_soft_break() {
 fn drops_spaces_left_by_a_trailing_br_in_headings_and_cells() {
     let source = "# H <br>\n\n| x<br> | y |\n|---|---|\n";
 
-    let document = match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document,
-        Err(error) => panic!("document should parse: {error}"),
-    };
-
-    assert!(matches!(
-        &document.blocks[0].kind,
-        BlockKind::Heading { text, .. } if text.plain() == "H"
-    ));
-    assert!(matches!(
-        &document.blocks[1].kind,
-        BlockKind::Table { rows }
-            if rows[0].iter().map(|cell| cell.plain()).collect::<Vec<_>>() == vec!["x", "y"]
-    ));
-}
-
-fn table_rows(source: &str) -> Vec<Vec<String>> {
-    let document = match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document,
-        Err(error) => panic!("document should parse: {error}"),
-    };
-    match &document.blocks[0].kind {
-        BlockKind::Table { rows } => rows
-            .iter()
-            .map(|row| row.iter().map(|cell| cell.plain()).collect())
-            .collect(),
-        other => panic!("expected a table, got: {other:?}"),
-    }
+    assert_eq!(heading_text(source), "H");
+    assert_eq!(table_rows(source)[0], vec!["x", "y"]);
 }
 
 #[test]
@@ -266,33 +257,14 @@ fn keeps_empty_table_cells_so_columns_stay_aligned() {
 
 #[test]
 fn trims_heading_edges_across_styled_segments_but_not_code_spans() {
-    let headings = |source: &str| match parse_document("docs/example.md".into(), source) {
-        Ok(document) => match &document.blocks[0].kind {
-            BlockKind::Heading { text, .. } => text.plain(),
-            other => panic!("expected a heading, got: {other:?}"),
-        },
-        Err(error) => panic!("document should parse: {error}"),
-    };
-
-    assert_eq!(headings("# H<br>*<br>*\n"), "H");
-    assert_eq!(headings("# *<br>*<br>H\n"), "H");
-    assert_eq!(headings("# `  x  `\n"), " x ");
-    assert_eq!(headings("# `  x  `<br>\n"), " x ");
+    assert_eq!(heading_text("# H<br>*<br>*\n"), "H");
+    assert_eq!(heading_text("# *<br>*<br>H\n"), "H");
+    assert_eq!(heading_text("# `  x  `\n"), " x ");
+    assert_eq!(heading_text("# `  x  `<br>\n"), " x ");
     assert_eq!(
-        headings(&format!("# {}H\n", "*<br>*<br>".repeat(20_000))),
+        heading_text(&format!("# {}H\n", "*<br>*<br>".repeat(20_000))),
         "H"
     );
-}
-
-fn block_kinds(source: &str) -> Vec<BlockKind> {
-    match parse_document("docs/example.md".into(), source) {
-        Ok(document) => document
-            .blocks
-            .into_iter()
-            .map(|block| block.kind)
-            .collect(),
-        Err(error) => panic!("document should parse: {error}"),
-    }
 }
 
 #[test]
@@ -511,17 +483,10 @@ fn does_not_stack_line_breaks_from_inline_block_tags() {
         vec!["one\n\ntwo"]
     );
 
-    let document = match parse_document(
-        "docs/example.md".into(),
-        "# one<div><div>two</div></div>three\n",
-    ) {
-        Ok(document) => document,
-        Err(error) => panic!("document should parse: {error}"),
-    };
-    assert!(matches!(
-        &document.blocks[0].kind,
-        BlockKind::Heading { text, .. } if text.plain() == "one two three"
-    ));
+    assert_eq!(
+        heading_text("# one<div><div>two</div></div>three\n"),
+        "one two three"
+    );
 }
 
 #[test]

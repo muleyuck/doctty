@@ -29,10 +29,8 @@ use self::{
     styles::{directory_url, syntax_adapter, theme_styles},
 };
 
-pub(crate) use self::postprocess::is_supported_raw_html_tag;
+pub(crate) use self::postprocess::{RawHtmlTag, classify_raw_html_tag};
 
-// An HTML block with anything doctty does not render is shown whole as its
-// source, keeping its line breaks; see `is_html_source_block`.
 create_formatter!(GithubHtmlFormatter, {
     NodeValue::HtmlBlock(ref block) => |context, node, entering| {
         if !is_html_source_block(&block.literal) {

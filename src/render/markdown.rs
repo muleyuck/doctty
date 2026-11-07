@@ -11,7 +11,10 @@ use comrak::{
     parse_document as parse_comrak_document,
 };
 
-use super::{github_html::is_supported_raw_html_tag, markdown_pipeline::gfm_options};
+use super::{
+    github_html::{RawHtmlTag, classify_raw_html_tag},
+    markdown_pipeline::gfm_options,
+};
 use crate::core::document::{
     Block, BlockId, BlockKind, CalloutKind, Document, DocumentMeta, InlineSegment, InlineStyle,
     SourceSpan, StyledText,
@@ -375,27 +378,20 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
             text: StyledText::from_plain(source.to_string()),
         });
     };
-    if let ([image], 1, false) = (
-        converted.images.as_slice(),
-        converted.image_count,
-        converted.has_text,
-    ) {
-        return Some(image.clone());
+    if let Some(image) = converted.lone_image {
+        return Some(image);
     }
     let text = StyledText::from_plain(converted.text);
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
 }
 
-/// State carried between inline HTML nodes of one paragraph.
 #[derive(Default)]
 struct InlineHtmlState {
-    /// Index in the collected parts of the newline that the last `<br>` or
-    /// block tag added.
+    /// Index in the parts of the newline added by the last `<br>` or block
+    /// tag.
     br_index: Option<usize>,
-    /// Whether that newline came from a block tag, which does not stack with
-    /// another line break.
+    /// A block tag's newline does not stack with a Markdown line break.
     br_from_block_tag: bool,
-    /// `href` of the open `<a>`, printed after its text like a Markdown link.
     href: Option<String>,
 }
 
@@ -419,28 +415,27 @@ fn collect_inline_html(
     parts: &mut Vec<InlineSegment>,
     state: &mut InlineHtmlState,
 ) {
-    let supported = parse_html_tag(literal, QuoteEnds::of(literal))
+    let supported = html_tag_len(literal, QuoteEnds::of(literal))
         .ok()
-        .filter(|tag| is_supported_raw_html_tag(&literal[..tag.len]));
-    let Some(tag) = supported else {
+        .and_then(|len| {
+            let source = &literal[..len];
+            classify_raw_html_tag(source).map(|kind| (kind, source))
+        });
+    let Some((kind, source)) = supported else {
         parts.push(InlineSegment {
             text: literal.to_string(),
             style,
         });
         return;
     };
-    let source = &literal[..tag.len];
-    let text = match (tag.name.as_str(), tag.closing) {
-        (
-            "br" | "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary",
-            _,
-        ) => {
+    let text = match kind {
+        RawHtmlTag::LineBreak | RawHtmlTag::Block => {
             if let Some(last) = parts.last_mut()
                 && !last.style.code
             {
                 last.text.truncate(last.text.trim_end_matches(' ').len());
             }
-            let block_tag = tag.name != "br";
+            let block_tag = kind == RawHtmlTag::Block;
             let at_line_start = parts
                 .iter()
                 .rev()
@@ -453,26 +448,20 @@ fn collect_inline_html(
             state.br_from_block_tag = block_tag;
             "\n".to_string()
         }
-        ("img", false) => html_attr(source, "alt").unwrap_or_default(),
-        ("a", false) => {
+        RawHtmlTag::Image => html_attr(source, "alt").unwrap_or_default(),
+        RawHtmlTag::LinkStart => {
             state.href = html_attr(source, "href").filter(|href| !href.is_empty());
             return;
         }
-        ("a", true) => match state.href.take() {
+        RawHtmlTag::LinkEnd => match state.href.take() {
             Some(href) => format!(" <{href}>"),
             None => return,
         },
-        _ => return,
+        RawHtmlTag::Inline => return,
     };
     if !text.is_empty() {
         parts.push(InlineSegment { text, style });
     }
-}
-
-struct HtmlTag {
-    name: String,
-    closing: bool,
-    len: usize,
 }
 
 /// The first `len` bytes cannot start a tag anywhere, so callers keep them as
@@ -515,25 +504,21 @@ impl QuoteEnds {
     }
 }
 
-/// Parses the tag at the start of `html`. Comments and declarations are not
-/// tags.
+/// Byte length of the tag at the start of `html`. Comments and
+/// declarations are not tags.
 ///
 /// Unlike a browser, an unquoted `<` ends the attempt, and callers skip the
 /// whole failed span: rescanning it from each stray `<` made stripping
 /// quadratic.
-fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag> {
+fn html_tag_len(html: &str, quote_ends: QuoteEnds) -> Result<usize, NotATag> {
     let rest = html.strip_prefix('<').ok_or(NotATag { len: 1 })?;
-    let (closing, rest) = match rest.strip_prefix('/') {
-        Some(after) => (true, after),
-        None => (false, rest),
-    };
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
     if !rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
         return Err(NotATag { len: 1 });
     }
     let name_len = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .unwrap_or(rest.len());
-    let name = rest[..name_len].to_ascii_lowercase();
 
     let mut quote = None;
     let mut after_equals = false;
@@ -546,8 +531,7 @@ fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag>
         }
         match c {
             '>' => {
-                let len = html.len() - rest.len() + name_len + offset + 1;
-                return Ok(HtmlTag { name, closing, len });
+                return Ok(html.len() - rest.len() + name_len + offset + 1);
             }
             '<' => {
                 let len = html.len() - rest.len() + name_len + offset;
@@ -570,27 +554,17 @@ fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag>
 
 struct HtmlBlockText {
     text: String,
-    /// Images that have a `src`.
-    images: Vec<BlockKind>,
-    /// All supported `<img>` tags.
-    image_count: usize,
-    /// Whether anything other than images was printed.
-    has_text: bool,
+    /// The block's only content, when that is one `<img>` with a `src`.
+    lone_image: Option<BlockKind>,
 }
 
 /// Plain-text rendering of an HTML block, or `None` when the block must be
-/// shown as its source: it holds a tag that doctty does not support (see
-/// `is_supported_raw_html_tag`), a comment or another `<!`/`<?` construct,
-/// or no tag at all. Rendering only part of a block would leave a mix the
-/// reader cannot make sense of.
-///
-/// Supported tags: `<div>`, `<p>`, `<h1>`–`<h6>`, `<details>`, `<summary>`
-/// and `<br>` start a new line, `<a href>` prints its URL like a Markdown
-/// link and `<img>` prints its alt text.
+/// shown as its source: it holds a tag that doctty does not support, a
+/// comment or another `<!`/`<?` construct, or no tag at all. Rendering only
+/// part of a block would leave a mix the reader cannot make sense of.
 fn html_to_text(html: &str) -> Option<HtmlBlockText> {
     let mut text = String::with_capacity(html.len());
     let mut images = Vec::new();
-    let mut image_count = 0;
     let mut has_text = false;
     let mut has_supported_tag = false;
     let mut href: Option<String> = None;
@@ -618,44 +592,39 @@ fn html_to_text(html: &str) -> Option<HtmlBlockText> {
         if rest.starts_with("<!") || rest.starts_with("<?") {
             return None;
         }
-        let tag = match parse_html_tag(rest, quote_ends.skip(offset)) {
-            Ok(tag) => tag,
+        let len = match html_tag_len(rest, quote_ends.skip(offset)) {
+            Ok(len) => len,
             Err(NotATag { len }) => {
                 text_until = offset + len;
                 continue;
             }
         };
-        let source = &rest[..tag.len];
-        rest = &rest[tag.len..];
-        if !is_supported_raw_html_tag(source) {
-            return None;
-        }
+        let source = &rest[..len];
+        rest = &rest[len..];
+        let kind = classify_raw_html_tag(source)?;
         has_supported_tag = true;
-        match (tag.name.as_str(), tag.closing) {
-            ("img", false) => {
-                image_count += 1;
+        match kind {
+            RawHtmlTag::Image => {
                 let alt = html_attr(source, "alt").unwrap_or_default();
-                if let Some(src) = html_attr(source, "src") {
-                    images.push(BlockKind::Image {
-                        src,
-                        alt: alt.clone(),
-                        title: html_attr(source, "title"),
-                    });
-                }
+                images.push(html_attr(source, "src").map(|src| BlockKind::Image {
+                    src,
+                    alt: alt.clone(),
+                    title: html_attr(source, "title"),
+                }));
                 text.push_str(&alt);
             }
-            ("a", false) => href = html_attr(source, "href").filter(|href| !href.is_empty()),
-            ("a", true) => {
+            RawHtmlTag::LinkStart => {
+                href = html_attr(source, "href").filter(|href| !href.is_empty());
+            }
+            RawHtmlTag::LinkEnd => {
                 if let Some(href) = href.take() {
                     push_html_space(&mut text);
                     text.push_str(&format!("<{href}>"));
                 }
             }
-            ("br", _) => push_html_line_break(&mut text, true),
-            ("div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary", _) => {
-                push_html_line_break(&mut text, false);
-            }
-            _ => {}
+            RawHtmlTag::LineBreak => push_html_line_break(&mut text, true),
+            RawHtmlTag::Block => push_html_line_break(&mut text, false),
+            RawHtmlTag::Inline => {}
         }
     }
     push_html_text(&mut text, &mut has_text, rest);
@@ -663,13 +632,12 @@ fn html_to_text(html: &str) -> Option<HtmlBlockText> {
     if !has_supported_tag {
         return None;
     }
+    let lone_image = match images.as_mut_slice() {
+        [image @ Some(_)] if !has_text => image.take(),
+        _ => None,
+    };
     let text = text.trim_matches([' ', '\n']).to_string();
-    Some(HtmlBlockText {
-        text,
-        images,
-        image_count,
-        has_text,
-    })
+    Some(HtmlBlockText { text, lone_image })
 }
 
 /// Entities never contain `<` or whitespace, so each chunk between them

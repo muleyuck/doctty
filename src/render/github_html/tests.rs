@@ -44,9 +44,8 @@ fn render_mermaid_blocks_reuses_duplicate_sources() {
 }
 
 #[test]
-fn restore_treats_raw_html_with_the_source_class_like_any_other_html() {
-    // Raw HTML such as Mermaid output can carry the class, so restoration
-    // must not skip an element because of it.
+fn restore_does_not_skip_raw_html_that_carries_the_source_class() {
+    // Raw HTML, such as Mermaid output, can carry the class too.
     let html = r#"<div class="doctty-html-source">marker &amp;copy; &lt;br&gt;</div>"#;
 
     assert_eq!(

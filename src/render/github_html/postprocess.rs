@@ -246,7 +246,7 @@ pub(super) fn restore_supported_raw_html(html: &str) -> String {
                     return output;
                 };
                 let escaped_tag = &tag_segment[..end + "&gt;".len()];
-                if let Some(restored) = restore_supported_tag(escaped_tag) {
+                if let Some((_, restored)) = restore_supported_tag(escaped_tag) {
                     output.push_str(&restored);
                 } else {
                     output.push_str(escaped_tag);
@@ -348,28 +348,47 @@ fn find_code_pre_close(html: &str) -> Option<(usize, usize)> {
     best
 }
 
-/// Whether the rich view renders the raw tag `tag` (such as `<br>`) instead
-/// of showing it as text. Plain-text output asks the same question, so both
-/// views support exactly the same tags.
-pub(crate) fn is_supported_raw_html_tag(tag: &str) -> bool {
+/// What a supported raw HTML tag does. This is the one list of supported
+/// tags: the rich view restores exactly these, and plain-text output matches
+/// on the kind, so adding a tag makes both views handle it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RawHtmlTag {
+    /// `<br>`.
+    LineBreak,
+    /// Start or end of a block element, such as `<div>` or `</p>`.
+    Block,
+    /// `<a href>`.
+    LinkStart,
+    /// `</a>`.
+    LinkEnd,
+    /// `<img>`.
+    Image,
+    /// `<sub>`, `<sup>`, `<picture>` and `<source>`, which only wrap text or
+    /// images.
+    Inline,
+}
+
+const BLOCK_TAGS: &[&str] = &[
+    "div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "details", "summary",
+];
+
+/// The kind of the raw tag `tag` (such as `<br>`) when the rich view renders
+/// it, or `None` when both views show it as text.
+pub(crate) fn classify_raw_html_tag(tag: &str) -> Option<RawHtmlTag> {
     // The rich view finds a tag from its `<` to the first `>`, so a tag with
     // `>` inside its attributes is never restored there.
-    let Some(inner) = tag.strip_prefix('<').and_then(|tag| tag.strip_suffix('>')) else {
-        return false;
-    };
+    let inner = tag.strip_prefix('<')?.strip_suffix('>')?;
     if inner.contains('>') {
-        return false;
+        return None;
     }
     let mut escaped = String::with_capacity(tag.len() + 16);
     escaped.push_str("&lt;");
-    if comrak::html::escape(&mut escaped, inner).is_err() {
-        return false;
-    }
+    comrak::html::escape(&mut escaped, inner).ok()?;
     escaped.push_str("&gt;");
-    restore_supported_tag(&escaped).is_some()
+    restore_supported_tag(&escaped).map(|(kind, _)| kind)
 }
 
-fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
+fn restore_supported_tag(escaped_tag: &str) -> Option<(RawHtmlTag, String)> {
     let tag = escaped_tag
         .strip_prefix("&lt;")?
         .strip_suffix("&gt;")?
@@ -377,45 +396,39 @@ fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
     let decoded = tag.replace("&quot;", "\"").replace("&amp;", "&");
     let decoded = decoded.trim();
 
-    match decoded {
-        "br" | "br/" | "br /" => return Some("<br/>".to_string()),
-        "sub" => return Some("<sub>".to_string()),
-        "/sub" => return Some("</sub>".to_string()),
-        "sup" => return Some("<sup>".to_string()),
-        "/sup" => return Some("</sup>".to_string()),
-        "/a" => return Some("</a>".to_string()),
-        _ => {}
+    let simple = match decoded {
+        "br" | "br/" | "br /" => Some((RawHtmlTag::LineBreak, "<br/>")),
+        "sub" => Some((RawHtmlTag::Inline, "<sub>")),
+        "/sub" => Some((RawHtmlTag::Inline, "</sub>")),
+        "sup" => Some((RawHtmlTag::Inline, "<sup>")),
+        "/sup" => Some((RawHtmlTag::Inline, "</sup>")),
+        "/picture" => Some((RawHtmlTag::Inline, "</picture>")),
+        "/a" => Some((RawHtmlTag::LinkEnd, "</a>")),
+        _ => None,
+    };
+    if let Some((kind, html)) = simple {
+        return Some((kind, html.to_string()));
     }
 
-    if let Some(block) = restore_block_tag(decoded) {
-        return Some(block);
-    }
-    if let Some(block) = restore_block_tag_close(decoded) {
-        return Some(block);
-    }
-
-    if let Some(anchor) = restore_anchor(decoded) {
-        return Some(anchor);
-    }
-    if let Some(picture) = restore_picture_tag(decoded) {
-        return Some(picture);
-    }
-    if let Some(source) = restore_source_tag(decoded) {
-        return Some(source);
-    }
-    if let Some(img) = restore_img(decoded) {
-        return Some(img);
-    }
-
-    None
+    let restored = [
+        (
+            RawHtmlTag::Block,
+            restore_block_tag as fn(&str) -> Option<String>,
+        ),
+        (RawHtmlTag::Block, restore_block_tag_close),
+        (RawHtmlTag::LinkStart, restore_anchor),
+        (RawHtmlTag::Inline, restore_picture_tag),
+        (RawHtmlTag::Inline, restore_source_tag),
+        (RawHtmlTag::Image, restore_img),
+    ];
+    restored
+        .into_iter()
+        .find_map(|(kind, restore)| restore(decoded).map(|html| (kind, html)))
 }
 
 fn restore_block_tag(tag: &str) -> Option<String> {
     let (name, attrs) = split_tag_name(tag)?;
-    if !matches!(
-        name,
-        "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary"
-    ) {
+    if !BLOCK_TAGS.contains(&name) {
         return None;
     }
 
@@ -449,13 +462,7 @@ fn restore_block_tag(tag: &str) -> Option<String> {
 
 fn restore_block_tag_close(tag: &str) -> Option<String> {
     let name = tag.strip_prefix('/')?;
-    if matches!(
-        name,
-        "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary" | "picture"
-    ) {
-        return Some(format!("</{name}>"));
-    }
-    None
+    BLOCK_TAGS.contains(&name).then(|| format!("</{name}>"))
 }
 
 fn restore_anchor(tag: &str) -> Option<String> {
