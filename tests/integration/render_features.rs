@@ -70,7 +70,7 @@ fn headless_render_supports_stdin_with_dash_path() {
         .assert()
         .success()
         .stdout(contains("# Title"))
-        .stdout(contains("Paragraph with <br/> inline HTML."));
+        .stdout(contains("Paragraph with\ninline HTML."));
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

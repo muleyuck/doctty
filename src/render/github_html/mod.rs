@@ -1,12 +1,17 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use comrak::{Arena, format_html_with_plugins, options::Plugins, parse_document};
+use comrak::{
+    Arena, create_formatter, html::format_node_default, nodes::NodeValue, options::Plugins,
+    parse_document,
+};
 use tracing::info_span;
 
 use crate::{
-    cli::Theme, core::config::MermaidMode, io::mermaid_cli::MermaidCliRenderer,
-    render::markdown_pipeline::gfm_options,
+    cli::Theme,
+    core::config::MermaidMode,
+    io::mermaid_cli::MermaidCliRenderer,
+    render::{markdown::is_html_source_block, markdown_pipeline::gfm_options},
 };
 
 mod mermaid;
@@ -19,9 +24,25 @@ use self::{
     mermaid::replace_mermaid_code_blocks,
     postprocess::{
         decorate_code_blocks, inject_alert_icons, restore_supported_raw_html, retint_code_tokens,
+        write_html_source_block,
     },
     styles::{directory_url, syntax_adapter, theme_styles},
 };
+
+pub(crate) use self::postprocess::{RawHtmlTag, classify_raw_html_tag};
+
+create_formatter!(GithubHtmlFormatter, {
+    NodeValue::HtmlBlock(ref block) => |context, node, entering| {
+        if !is_html_source_block(&block.literal) {
+            return format_node_default(context, node, entering);
+        }
+        if entering {
+            context.cr()?;
+            write_html_source_block(context, &block.literal)?;
+            context.cr()?;
+        }
+    },
+});
 
 pub fn build_github_html(
     source: &str,
@@ -44,7 +65,7 @@ pub fn build_github_html(
     plugins.render.codefence_syntax_highlighter = Some(syntax_adapter(theme));
 
     let mut rendered = String::new();
-    format_html_with_plugins(root, &options, &mut rendered, &plugins)
+    GithubHtmlFormatter::format_document_with_plugins(root, &options, &mut rendered, &plugins)
         .context("formatting markdown to html failed")?;
 
     let body_html = restore_supported_raw_html(&decorate_code_blocks(&retint_code_tokens(

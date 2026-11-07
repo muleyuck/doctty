@@ -3,6 +3,7 @@ use std::{path::Path, sync::OnceLock};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use comrak::plugins::syntect::{SyntectAdapter, SyntectAdapterBuilder};
 
+use super::postprocess::HTML_SOURCE_CLASS;
 use crate::cli::Theme;
 
 static LIGHT_SYNTAX_ADAPTER: OnceLock<SyntectAdapter> = OnceLock::new();
@@ -10,6 +11,7 @@ static DARK_SYNTAX_ADAPTER: OnceLock<SyntectAdapter> = OnceLock::new();
 
 pub(super) fn theme_styles(theme: Theme) -> String {
     let font_faces = font_face_css();
+    let html_source = html_source_css();
     match theme {
         Theme::Light | Theme::System => [
             font_faces.as_str(),
@@ -17,6 +19,8 @@ pub(super) fn theme_styles(theme: Theme) -> String {
             LIGHT_CSS,
             "\n",
             COMMON_OVERRIDES,
+            "\n",
+            html_source.as_str(),
             "\n",
             LIGHT_THEME_OVERRIDES,
         ]
@@ -28,10 +32,18 @@ pub(super) fn theme_styles(theme: Theme) -> String {
             "\n",
             COMMON_OVERRIDES,
             "\n",
+            html_source.as_str(),
+            "\n",
             DARK_THEME_OVERRIDES,
         ]
         .concat(),
     }
+}
+
+fn html_source_css() -> String {
+    format!(
+        ".markdown-body .{HTML_SOURCE_CLASS} {{\n  white-space: pre-wrap;\n  overflow-wrap: break-word;\n  margin-bottom: 16px;\n}}"
+    )
 }
 
 pub(super) fn syntax_adapter(theme: Theme) -> &'static SyntectAdapter {

@@ -176,6 +176,31 @@ pub(super) fn inject_alert_icons(html: &str) -> String {
     })
 }
 
+/// Class of the element that holds an HTML block shown as its source.
+pub(super) const HTML_SOURCE_CLASS: &str = "doctty-html-source";
+
+/// Writes an HTML block that doctty shows as its source. Characters are
+/// escaped as numeric references, while `restore_supported_raw_html` acts
+/// only on `&lt;` and `&amp;`, so no tag inside is restored and entities
+/// stay as written.
+pub(super) fn write_html_source_block(
+    output: &mut dyn std::fmt::Write,
+    literal: &str,
+) -> std::fmt::Result {
+    write!(output, r#"<div class="{HTML_SOURCE_CLASS}">"#)?;
+    for c in literal.trim_end_matches(['\r', '\n']).chars() {
+        match c {
+            '&' => output.write_str("&#38;")?,
+            '<' => output.write_str("&#60;")?,
+            '>' => output.write_str("&#62;")?,
+            '"' => output.write_str("&#34;")?,
+            '\0' => output.write_char('\u{fffd}')?,
+            c => output.write_char(c)?,
+        }
+    }
+    output.write_str("</div>")
+}
+
 pub(super) fn restore_supported_raw_html(html: &str) -> String {
     let mut output = String::with_capacity(html.len());
     let mut rest = html;
@@ -221,7 +246,7 @@ pub(super) fn restore_supported_raw_html(html: &str) -> String {
                     return output;
                 };
                 let escaped_tag = &tag_segment[..end + "&gt;".len()];
-                if let Some(restored) = restore_supported_tag(escaped_tag) {
+                if let Some((_, restored)) = restore_supported_tag(escaped_tag) {
                     output.push_str(&restored);
                 } else {
                     output.push_str(escaped_tag);
@@ -323,7 +348,47 @@ fn find_code_pre_close(html: &str) -> Option<(usize, usize)> {
     best
 }
 
-fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
+/// What a supported raw HTML tag does. This is the one list of supported
+/// tags: the rich view restores exactly these, and plain-text output matches
+/// on the kind, so adding a tag makes both views handle it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RawHtmlTag {
+    /// `<br>`.
+    LineBreak,
+    /// Start or end of a block element, such as `<div>` or `</p>`.
+    Block,
+    /// `<a href>`.
+    LinkStart,
+    /// `</a>`.
+    LinkEnd,
+    /// `<img>`.
+    Image,
+    /// `<sub>`, `<sup>`, `<picture>` and `<source>`, which only wrap text or
+    /// images.
+    Inline,
+}
+
+const BLOCK_TAGS: &[&str] = &[
+    "div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "details", "summary",
+];
+
+/// The kind of the raw tag `tag` (such as `<br>`) when the rich view renders
+/// it, or `None` when both views show it as text.
+pub(crate) fn classify_raw_html_tag(tag: &str) -> Option<RawHtmlTag> {
+    // The rich view finds a tag from its `<` to the first `>`, so a tag with
+    // `>` inside its attributes is never restored there.
+    let inner = tag.strip_prefix('<')?.strip_suffix('>')?;
+    if inner.contains('>') {
+        return None;
+    }
+    let mut escaped = String::with_capacity(tag.len() + 16);
+    escaped.push_str("&lt;");
+    comrak::html::escape(&mut escaped, inner).ok()?;
+    escaped.push_str("&gt;");
+    restore_supported_tag(&escaped).map(|(kind, _)| kind)
+}
+
+fn restore_supported_tag(escaped_tag: &str) -> Option<(RawHtmlTag, String)> {
     let tag = escaped_tag
         .strip_prefix("&lt;")?
         .strip_suffix("&gt;")?
@@ -331,45 +396,39 @@ fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
     let decoded = tag.replace("&quot;", "\"").replace("&amp;", "&");
     let decoded = decoded.trim();
 
-    match decoded {
-        "br" | "br/" | "br /" => return Some("<br/>".to_string()),
-        "sub" => return Some("<sub>".to_string()),
-        "/sub" => return Some("</sub>".to_string()),
-        "sup" => return Some("<sup>".to_string()),
-        "/sup" => return Some("</sup>".to_string()),
-        "/a" => return Some("</a>".to_string()),
-        _ => {}
+    let simple = match decoded {
+        "br" | "br/" | "br /" => Some((RawHtmlTag::LineBreak, "<br/>")),
+        "sub" => Some((RawHtmlTag::Inline, "<sub>")),
+        "/sub" => Some((RawHtmlTag::Inline, "</sub>")),
+        "sup" => Some((RawHtmlTag::Inline, "<sup>")),
+        "/sup" => Some((RawHtmlTag::Inline, "</sup>")),
+        "/picture" => Some((RawHtmlTag::Inline, "</picture>")),
+        "/a" => Some((RawHtmlTag::LinkEnd, "</a>")),
+        _ => None,
+    };
+    if let Some((kind, html)) = simple {
+        return Some((kind, html.to_string()));
     }
 
-    if let Some(block) = restore_block_tag(decoded) {
-        return Some(block);
-    }
-    if let Some(block) = restore_block_tag_close(decoded) {
-        return Some(block);
-    }
-
-    if let Some(anchor) = restore_anchor(decoded) {
-        return Some(anchor);
-    }
-    if let Some(picture) = restore_picture_tag(decoded) {
-        return Some(picture);
-    }
-    if let Some(source) = restore_source_tag(decoded) {
-        return Some(source);
-    }
-    if let Some(img) = restore_img(decoded) {
-        return Some(img);
-    }
-
-    None
+    let restored = [
+        (
+            RawHtmlTag::Block,
+            restore_block_tag as fn(&str) -> Option<String>,
+        ),
+        (RawHtmlTag::Block, restore_block_tag_close),
+        (RawHtmlTag::LinkStart, restore_anchor),
+        (RawHtmlTag::Inline, restore_picture_tag),
+        (RawHtmlTag::Inline, restore_source_tag),
+        (RawHtmlTag::Image, restore_img),
+    ];
+    restored
+        .into_iter()
+        .find_map(|(kind, restore)| restore(decoded).map(|html| (kind, html)))
 }
 
 fn restore_block_tag(tag: &str) -> Option<String> {
     let (name, attrs) = split_tag_name(tag)?;
-    if !matches!(
-        name,
-        "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary"
-    ) {
+    if !BLOCK_TAGS.contains(&name) {
         return None;
     }
 
@@ -403,17 +462,11 @@ fn restore_block_tag(tag: &str) -> Option<String> {
 
 fn restore_block_tag_close(tag: &str) -> Option<String> {
     let name = tag.strip_prefix('/')?;
-    if matches!(
-        name,
-        "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary" | "picture"
-    ) {
-        return Some(format!("</{name}>"));
-    }
-    None
+    BLOCK_TAGS.contains(&name).then(|| format!("</{name}>"))
 }
 
 fn restore_anchor(tag: &str) -> Option<String> {
-    let attrs = tag.strip_prefix('a')?.trim();
+    let attrs = strip_tag_name(tag, "a")?.trim();
     let attrs = parse_attributes_strict(attrs)?;
     let href = attrs
         .iter()
@@ -438,7 +491,7 @@ fn restore_picture_tag(tag: &str) -> Option<String> {
 }
 
 fn restore_source_tag(tag: &str) -> Option<String> {
-    let body = tag.strip_prefix("source")?.trim();
+    let body = strip_tag_name(tag, "source")?.trim();
     let body = body.strip_suffix('/').unwrap_or(body).trim();
     let attrs = parse_attributes_strict(body)?;
 
@@ -460,7 +513,7 @@ fn restore_source_tag(tag: &str) -> Option<String> {
 }
 
 fn restore_img(tag: &str) -> Option<String> {
-    let body = tag.strip_prefix("img")?.trim();
+    let body = strip_tag_name(tag, "img")?.trim();
     let body = body.strip_suffix('/').unwrap_or(body).trim();
 
     let attrs = parse_attributes_strict(body)?;
@@ -485,6 +538,13 @@ fn restore_img(tag: &str) -> Option<String> {
     result.push_str(" />");
 
     Some(result)
+}
+
+/// The rest of `tag` after its name, when the name is exactly `name`, so
+/// that `<img-foo>` or `<abbr>` is not read as `<img>` or `<a>`.
+fn strip_tag_name<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    tag.strip_prefix(name)
+        .filter(|rest| rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '/'))
 }
 
 fn split_tag_name(tag: &str) -> Option<(&str, &str)> {
@@ -542,9 +602,13 @@ fn parse_attributes_and_flags(input: &str) -> Option<ParsedTagAttributes> {
     let mut attrs = Vec::new();
     let mut flags = Vec::new();
     let mut rest = input;
+    // Flags are consumed only before the first `=`, so its position never
+    // changes; searching for it on every flag made long tags quadratic.
+    let first_eq = input.find('=');
 
     while !rest.is_empty() {
-        let eq_pos = rest.find('=');
+        let offset = input.len() - rest.len();
+        let eq_pos = first_eq.and_then(|eq| eq.checked_sub(offset));
         let space_pos = rest.find(char::is_whitespace);
 
         match (eq_pos, space_pos) {
