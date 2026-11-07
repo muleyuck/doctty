@@ -188,7 +188,7 @@ pub(super) fn write_html_source_block(
     literal: &str,
 ) -> std::fmt::Result {
     write!(output, r#"<div class="{HTML_SOURCE_CLASS}">"#)?;
-    for c in literal.trim_end_matches('\n').chars() {
+    for c in literal.trim_end_matches(['\r', '\n']).chars() {
         match c {
             '&' => output.write_str("&#38;")?,
             '<' => output.write_str("&#60;")?,

@@ -373,7 +373,7 @@ pub(crate) fn is_html_source_block(literal: &str) -> bool {
 
 fn normalize_html_block(literal: &str) -> Option<BlockKind> {
     let Some(converted) = html_to_text(literal) else {
-        let source = literal.trim_end_matches('\n');
+        let source = literal.trim_end_matches(['\r', '\n']);
         return (!source.trim().is_empty()).then(|| BlockKind::Paragraph {
             text: StyledText::from_plain(source.to_string()),
         });
