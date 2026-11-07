@@ -145,20 +145,17 @@ directory is not committed.
 
 doctty uses [Comrak](https://github.com/kivikakk/comrak) for Markdown parsing and supports common [GitHub Flavored Markdown](https://github.github.com/gfm/) features such as tables, task lists, footnotes and callouts, as well as math and optional Mermaid diagrams. Rendering can differ from GitHub in edge cases.
 
-In plain-text output, raw HTML is converted to text. Only the tags common in READMEs have their own output. In HTML blocks (HTML that starts a line):
+Raw HTML is rendered only for the tags doctty supports. Every other tag, and HTML comments, are shown as written in the Markdown source, in both the rich view and plain-text output.
 
 | Tag | Plain-text output |
 |-----|-------------------|
-| `<img>` | Shown as an image when it is the only content of its block; otherwise its alt text |
+| `<div>`, `<p>`, `<h1>`–`<h6>`, `<details>`, `<summary>` | Their text on separate lines |
+| `<br>` | Line break (a space inside Markdown headings and table cells) |
 | `<a href>` | Link text followed by `<url>`, like a Markdown link |
-| `<br>` | Line break |
-| `<ul>`, `<ol>`, `<li>` | List items marked with `- ` or `1. ` |
-| `<pre>` | Code block with its whitespace kept, when it is the whole block |
-| `<hr>` | `---` |
-| `<details>`, `<summary>`, `<div>`, `<p>`, `<h1>`–`<h6>`, `<table>`, `<tr>` and other block elements | Their text on separate lines |
-| `<!-- -->`, `<script>`, `<style>` | Removed with their contents |
+| `<img>` | Shown as an image when it is the only content of its block; otherwise its alt text |
+| `<picture>`, `<source>`, `<sub>`, `<sup>` | Their text |
 
-Inside a Markdown paragraph, heading or table cell, only `<img>` (alt text), `<a href>` and `<br>` have their own output; `<br>` becomes a space in Markdown headings and table cells. Other tags are removed and their text is kept. HTML entities are decoded. Output for other HTML may differ from a browser.
+Tags are supported only in the forms the rich view accepts: lower-case names, double-quoted attribute values, and safe URLs. HTML entities in supported HTML are decoded.
 
 ## Contributing
 

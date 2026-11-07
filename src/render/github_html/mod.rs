@@ -23,6 +23,8 @@ use self::{
     styles::{directory_url, syntax_adapter, theme_styles},
 };
 
+pub(crate) use self::postprocess::is_supported_raw_html_tag;
+
 pub fn build_github_html(
     source: &str,
     base_dir: &Path,

@@ -11,7 +11,7 @@ use comrak::{
     parse_document as parse_comrak_document,
 };
 
-use super::markdown_pipeline::gfm_options;
+use super::{github_html::is_supported_raw_html_tag, markdown_pipeline::gfm_options};
 use crate::core::document::{
     Block, BlockId, BlockKind, CalloutKind, Document, DocumentMeta, InlineSegment, InlineStyle,
     SourceSpan, StyledText,
@@ -231,11 +231,7 @@ fn collect_text_segments<'a>(
 ) {
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
-            let follows_br = parts
-                .len()
-                .checked_sub(1)
-                .is_some_and(|last| html.br_index == Some(last));
-            let value = if follows_br {
+            let value = if html.follows_line_break(parts) {
                 text.trim_start_matches(' ')
             } else {
                 text
@@ -320,6 +316,9 @@ fn collect_text_segments<'a>(
             }
         }
         NodeValue::LineBreak | NodeValue::SoftBreak => {
+            if html.br_from_block_tag && html.follows_line_break(parts) {
+                return;
+            }
             parts.push(InlineSegment {
                 text: "\n".to_string(),
                 style,
@@ -364,23 +363,21 @@ fn normalize_segments(parts: Vec<InlineSegment>) -> Vec<InlineSegment> {
 }
 
 fn normalize_html_block(literal: &str) -> Option<BlockKind> {
-    if let Some(code) = html_pre_block(literal) {
-        return Some(BlockKind::CodeFence {
-            language: None,
-            code,
+    let converted = html_to_text(literal);
+    if !converted.has_supported_tag {
+        // Unsupported HTML is shown as its Markdown source, as the rich view
+        // does.
+        let source = literal.trim_end();
+        return (!source.trim().is_empty()).then(|| BlockKind::Paragraph {
+            text: StyledText::from_plain(source.to_string()),
         });
     }
-
-    let converted = html_to_text(literal);
     if let ([image], 1, false) = (
         converted.images.as_slice(),
         converted.image_count,
         converted.has_text,
     ) {
         return Some(image.clone());
-    }
-    if converted.text == "---" {
-        return Some(BlockKind::Rule);
     }
     let text = StyledText::from_plain(converted.text);
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
@@ -389,32 +386,68 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
 /// State carried between inline HTML nodes of one paragraph.
 #[derive(Default)]
 struct InlineHtmlState {
-    /// Index in the collected parts of the newline that the last `<br>` added.
+    /// Index in the collected parts of the newline that the last `<br>` or
+    /// block tag added.
     br_index: Option<usize>,
+    /// Whether that newline came from a block tag, which does not stack with
+    /// another line break.
+    br_from_block_tag: bool,
     /// `href` of the open `<a>`, printed after its text like a Markdown link.
     href: Option<String>,
 }
 
+impl InlineHtmlState {
+    /// Whether the last non-empty part is the newline from `<br>` or a block
+    /// tag. A later tag can trim a part to empty, so empty parts are skipped.
+    fn follows_line_break(&self, parts: &[InlineSegment]) -> bool {
+        parts
+            .iter()
+            .rposition(|part| !part.text.is_empty())
+            .is_some_and(|last| self.br_index == Some(last))
+    }
+}
+
 /// Comrak emits each inline tag as its own node, so only the tag itself is
 /// handled here; the text between tags arrives as ordinary text nodes.
+/// Unsupported tags and comments are kept as their source.
 fn collect_inline_html(
     literal: &str,
     style: InlineStyle,
     parts: &mut Vec<InlineSegment>,
     state: &mut InlineHtmlState,
 ) {
-    let Ok(tag) = parse_html_tag(literal, QuoteEnds::of(literal)) else {
+    let supported = parse_html_tag(literal, QuoteEnds::of(literal))
+        .ok()
+        .filter(|tag| is_supported_raw_html_tag(&literal[..tag.len]));
+    let Some(tag) = supported else {
+        parts.push(InlineSegment {
+            text: literal.to_string(),
+            style,
+        });
         return;
     };
     let source = &literal[..tag.len];
     let text = match (tag.name.as_str(), tag.closing) {
-        ("br", _) => {
+        (
+            "br" | "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary",
+            _,
+        ) => {
             if let Some(last) = parts.last_mut()
                 && !last.style.code
             {
                 last.text.truncate(last.text.trim_end_matches(' ').len());
             }
+            let block_tag = tag.name != "br";
+            let at_line_start = parts
+                .iter()
+                .rev()
+                .find(|part| !part.text.is_empty())
+                .is_none_or(|part| part.text.ends_with('\n'));
+            if block_tag && at_line_start {
+                return;
+            }
             state.br_index = Some(parts.len());
+            state.br_from_block_tag = block_tag;
             "\n".to_string()
         }
         ("img", false) => html_attr(source, "alt").unwrap_or_default(),
@@ -532,62 +565,30 @@ fn parse_html_tag(html: &str, quote_ends: QuoteEnds) -> Result<HtmlTag, NotATag>
     Err(NotATag { len: html.len() })
 }
 
-/// Finds the first `</name ...>` in `html`, returning where it starts and
-/// ends. It is found without parsing what lies before it, as the contents
-/// of `<script>`, `<style>` and `<pre>` are read up to it.
-fn find_closing_tag(html: &str, name: &str) -> Option<(usize, usize)> {
-    let mut search_from = 0;
-    while let Some(found) = html[search_from..].find("</") {
-        let start = search_from + found;
-        let name_start = start + "</".len();
-        let after_name = name_start + name.len();
-        let closes = html
-            .get(name_start..after_name)
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
-            && html[after_name..]
-                .chars()
-                .next()
-                .is_none_or(|c| c.is_ascii_whitespace() || matches!(c, '/' | '>'));
-        if closes {
-            let end = html[after_name..]
-                .find('>')
-                .map_or(html.len(), |gt| after_name + gt + 1);
-            return Some((start, end));
-        }
-        search_from = name_start;
-    }
-    None
-}
-
-/// Returns the input after the element that `<name>` opened, or `""` when it
-/// is never closed.
-fn skip_raw_text_element<'a>(html: &'a str, name: &str) -> &'a str {
-    find_closing_tag(html, name).map_or("", |(_, end)| &html[end..])
-}
-
 struct HtmlBlockText {
     text: String,
     /// Images that have a `src`.
     images: Vec<BlockKind>,
-    /// All `<img>` tags, with or without `src`.
+    /// All supported `<img>` tags.
     image_count: usize,
     /// Whether anything other than images was printed.
     has_text: bool,
+    /// Whether the block holds any tag that doctty supports.
+    has_supported_tag: bool,
 }
 
-/// Plain-text rendering of an HTML block. Only tags common in READMEs get
-/// special output: block-level elements and `<br>` start a new line, list
-/// items get a marker, `<a href>` prints its URL like a Markdown link,
-/// `<img>` prints its alt text and `<hr>` prints `---`. Other tags are
-/// removed and their text is kept.
+/// Plain-text rendering of an HTML block. Tags that doctty supports (see
+/// `is_supported_raw_html_tag`) are rendered: `<div>`, `<p>`, `<h1>`–`<h6>`,
+/// `<details>`, `<summary>` and `<br>` start a new line, `<a href>` prints
+/// its URL like a Markdown link and `<img>` prints its alt text. Other tags
+/// and comments are kept as their source.
 fn html_to_text(html: &str) -> HtmlBlockText {
     let mut text = String::with_capacity(html.len());
     let mut images = Vec::new();
     let mut image_count = 0;
     let mut has_text = false;
+    let mut has_supported_tag = false;
     let mut href: Option<String> = None;
-    // `None` for `<ul>`, the next item number for `<ol>`.
-    let mut lists: Vec<Option<i64>> = Vec::new();
     let mut rest = html;
     // Input before this offset is known not to hold a tag.
     let mut text_until = 0;
@@ -609,10 +610,10 @@ fn html_to_text(html: &str) -> HtmlBlockText {
             rest = &rest[1..];
             continue;
         }
-        if let Some(after_open) = rest.strip_prefix("<!--") {
-            rest = after_open
-                .find("-->")
-                .map_or("", |end| &after_open[end + "-->".len()..]);
+        if rest.starts_with("<!--") {
+            let len = rest[4..].find("-->").map_or(rest.len(), |end| 4 + end + 3);
+            push_html_source(&mut text, &mut has_text, &rest[..len]);
+            rest = &rest[len..];
             continue;
         }
         let tag = match parse_html_tag(rest, quote_ends.skip(offset)) {
@@ -624,8 +625,12 @@ fn html_to_text(html: &str) -> HtmlBlockText {
         };
         let source = &rest[..tag.len];
         rest = &rest[tag.len..];
+        if !is_supported_raw_html_tag(source) {
+            push_html_source(&mut text, &mut has_text, source);
+            continue;
+        }
+        has_supported_tag = true;
         match (tag.name.as_str(), tag.closing) {
-            ("script" | "style", false) => rest = skip_raw_text_element(rest, &tag.name),
             ("img", false) => {
                 image_count += 1;
                 let alt = html_attr(source, "alt").unwrap_or_default();
@@ -645,55 +650,24 @@ fn html_to_text(html: &str) -> HtmlBlockText {
                     text.push_str(&format!("<{href}>"));
                 }
             }
-            ("ul", false) => {
-                lists.push(None);
-                text.push('\n');
+            ("br", _) => push_html_line_break(&mut text, true),
+            ("div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "details" | "summary", _) => {
+                push_html_line_break(&mut text, false);
             }
-            ("ol", false) => {
-                let start =
-                    html_attr(source, "start").and_then(|start| start.trim().parse::<i64>().ok());
-                lists.push(Some(start.unwrap_or(1)));
-                text.push('\n');
-            }
-            ("ul" | "ol", true) => {
-                lists.pop();
-                text.push('\n');
-            }
-            ("li", false) => {
-                let marker = match lists.last_mut() {
-                    Some(Some(number)) => {
-                        let marker = format!("{number}. ");
-                        *number = number.saturating_add(1);
-                        marker
-                    }
-                    _ => "- ".to_string(),
-                };
-                text.push('\n');
-                text.push_str(&marker);
-                has_text = true;
-            }
-            ("hr", _) => {
-                text.push_str("\n---\n");
-                has_text = true;
-            }
-            ("td" | "th", _) => push_html_space(&mut text),
-            (name, _) if is_html_line_break(name) => text.push('\n'),
             _ => {}
         }
     }
     push_html_text(&mut text, &mut has_text, rest);
 
-    let text = text
-        .lines()
-        .map(str::trim_ascii)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Line breaks and spaces are added only between content, so trimming
+    // the ends leaves the kept source untouched.
+    let text = text.trim_matches([' ', '\n']).to_string();
     HtmlBlockText {
         text,
         images,
         image_count,
         has_text,
+        has_supported_tag,
     }
 }
 
@@ -707,108 +681,25 @@ fn push_html_text(text: &mut String, has_text: &mut bool, chunk: &str) {
     }
 }
 
-/// Returns the text of a block that is a single `<pre>` element, keeping its
-/// whitespace. Tags inside it are removed.
-fn html_pre_block(html: &str) -> Option<String> {
-    let html = html.trim_ascii();
-    let open = parse_html_tag(html, QuoteEnds::of(html)).ok()?;
-    if open.name != "pre" || open.closing {
-        return None;
-    }
-    let body = &html[open.len..];
-    let (close_at, close_end) = find_closing_tag(body, "pre")?;
-    if close_end != body.len() {
-        return None;
-    }
-    // HTML drops the line break right after `<pre>`.
-    let body = &body[..close_at];
-    let body = body
-        .strip_prefix("\r\n")
-        .or_else(|| body.strip_prefix('\n'))
-        .unwrap_or(body);
-
-    let mut code = String::with_capacity(body.len());
-    let mut rest = body;
-    let quote_ends = QuoteEnds::of(body);
-    while let Some(index) = rest.find('<') {
-        code.push_str(&htmlize::unescape(&rest[..index]));
-        rest = &rest[index..];
-        if let Some(after_open) = rest.strip_prefix("<!--") {
-            rest = after_open
-                .find("-->")
-                .map_or("", |end| &after_open[end + "-->".len()..]);
-            continue;
-        }
-        let offset = body.len() - rest.len();
-        match parse_html_tag(rest, quote_ends.skip(offset)) {
-            Ok(tag) => {
-                let source = &rest[..tag.len];
-                rest = &rest[tag.len..];
-                match (tag.name.as_str(), tag.closing) {
-                    ("br", _) => code.push('\n'),
-                    ("img", false) => code.push_str(&html_attr(source, "alt").unwrap_or_default()),
-                    ("script" | "style", false) => rest = skip_raw_text_element(rest, &tag.name),
-                    _ => {}
-                }
-            }
-            Err(NotATag { len }) => {
-                code.push_str(&htmlize::unescape(&rest[..len]));
-                rest = &rest[len..];
-            }
-        }
-    }
-    code.push_str(&htmlize::unescape(rest));
-    let code = code.trim_end_matches(['\r', '\n']).to_string();
-    (!code.trim_ascii().is_empty()).then_some(code)
+/// Keeps an unsupported tag or a comment as written.
+fn push_html_source(text: &mut String, has_text: &mut bool, source: &str) {
+    text.push_str(source);
+    *has_text = true;
 }
 
 fn push_html_space(text: &mut String) {
-    if !text.ends_with([' ', '\n']) {
+    if !text.is_empty() && !text.ends_with([' ', '\n']) {
         text.push(' ');
     }
 }
 
-fn is_html_line_break(name: &str) -> bool {
-    matches!(
-        name,
-        "address"
-            | "article"
-            | "aside"
-            | "blockquote"
-            | "br"
-            | "caption"
-            | "center"
-            | "dd"
-            | "details"
-            | "div"
-            | "dl"
-            | "dt"
-            | "figcaption"
-            | "figure"
-            | "footer"
-            | "h1"
-            | "h2"
-            | "h3"
-            | "h4"
-            | "h5"
-            | "h6"
-            | "header"
-            | "hr"
-            | "li"
-            | "main"
-            | "nav"
-            | "ol"
-            | "p"
-            | "pre"
-            | "section"
-            | "summary"
-            | "table"
-            | "tbody"
-            | "tfoot"
-            | "thead"
-            | "tr"
-            | "ul"
-    )
+/// Starts a new line. `<br>` always does; block tags do only when the text
+/// is not already at the start of a line, so nesting adds no blank lines.
+fn push_html_line_break(text: &mut String, always: bool) {
+    text.truncate(text.trim_end_matches(' ').len());
+    if always || !(text.is_empty() || text.ends_with('\n')) {
+        text.push('\n');
+    }
 }
 
 /// Reads attribute `name` from the source of one start tag, following the

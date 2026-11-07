@@ -323,6 +323,27 @@ fn find_code_pre_close(html: &str) -> Option<(usize, usize)> {
     best
 }
 
+/// Whether the rich view renders the raw tag `tag` (such as `<br>`) instead
+/// of showing it as text. Plain-text output asks the same question, so both
+/// views support exactly the same tags.
+pub(crate) fn is_supported_raw_html_tag(tag: &str) -> bool {
+    // The rich view finds a tag from its `<` to the first `>`, so a tag with
+    // `>` inside its attributes is never restored there.
+    let Some(inner) = tag.strip_prefix('<').and_then(|tag| tag.strip_suffix('>')) else {
+        return false;
+    };
+    if inner.contains('>') {
+        return false;
+    }
+    let mut escaped = String::with_capacity(tag.len() + 16);
+    escaped.push_str("&lt;");
+    if comrak::html::escape(&mut escaped, inner).is_err() {
+        return false;
+    }
+    escaped.push_str("&gt;");
+    restore_supported_tag(&escaped).is_some()
+}
+
 fn restore_supported_tag(escaped_tag: &str) -> Option<String> {
     let tag = escaped_tag
         .strip_prefix("&lt;")?
@@ -542,9 +563,13 @@ fn parse_attributes_and_flags(input: &str) -> Option<ParsedTagAttributes> {
     let mut attrs = Vec::new();
     let mut flags = Vec::new();
     let mut rest = input;
+    // Flags are consumed only before the first `=`, so its position never
+    // changes; searching for it on every flag made long tags quadratic.
+    let first_eq = input.find('=');
 
     while !rest.is_empty() {
-        let eq_pos = rest.find('=');
+        let offset = input.len() - rest.len();
+        let eq_pos = first_eq.and_then(|eq| eq.checked_sub(offset));
         let space_pos = rest.find(char::is_whitespace);
 
         match (eq_pos, space_pos) {

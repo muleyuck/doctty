@@ -323,3 +323,22 @@ fn github_html_emits_github_style_math_markup() {
     assert!(html.contains(r#"<span data-math-style="inline">e^{i\pi} + 1 = 0</span>"#));
     assert!(html.contains(r#"<span data-math-style="display">a^2 + b^2 = c^2</span>"#));
 }
+
+#[test]
+fn github_html_shows_comments_and_unsupported_tags_as_source() {
+    let source = "<!-- note -->\n\nPress <kbd>Ctrl</kbd>.\n\n<table><tr><td>x</td></tr></table>\n";
+
+    let html = build_github_html(
+        source,
+        std::path::Path::new("."),
+        Theme::Dark,
+        MermaidMode::Disabled,
+    )
+    .unwrap_or_else(|error| panic!("html should render: {error}"));
+
+    assert!(html.contains("&lt;!-- note --&gt;"));
+    assert!(html.contains("&lt;kbd&gt;Ctrl&lt;/kbd&gt;"));
+    assert!(
+        html.contains("&lt;table&gt;&lt;tr&gt;&lt;td&gt;x&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;")
+    );
+}
