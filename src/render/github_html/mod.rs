@@ -11,7 +11,7 @@ use crate::{
     cli::Theme,
     core::config::MermaidMode,
     io::mermaid_cli::MermaidCliRenderer,
-    render::{markdown::is_html_source_block, markdown_pipeline::gfm_options},
+    render::{markdown_pipeline::gfm_options, raw_html::is_html_source_block},
 };
 
 mod mermaid;
@@ -28,8 +28,6 @@ use self::{
     },
     styles::{directory_url, syntax_adapter, theme_styles},
 };
-
-pub(crate) use self::postprocess::{RawHtmlTag, classify_raw_html_tag};
 
 create_formatter!(GithubHtmlFormatter, {
     NodeValue::HtmlBlock(ref block) => |context, node, entering| {

@@ -5,7 +5,10 @@ use std::sync::{
 
 use crate::core::config::MermaidMode;
 
-use super::mermaid::{decorate_mermaid_svg, render_mermaid_blocks_with};
+use super::{
+    mermaid::{decorate_mermaid_svg, render_mermaid_blocks_with},
+    postprocess::{restore_supported_raw_html, write_html_source_block},
+};
 
 #[test]
 fn decorate_mermaid_svg_adds_renderer_class() {
@@ -38,4 +41,14 @@ fn render_mermaid_blocks_reuses_duplicate_sources() {
             .next()
             .is_some_and(|html| html.contains("doctty-mermaid"))
     );
+}
+
+#[test]
+fn restoring_a_written_source_block_leaves_it_unchanged() {
+    let literal = "<div align=\"center\">\n<br> <a href=\"https://x.y\">a</a> &amp; &lt;b&gt; &#60; &copy;\n</div>\n";
+    let mut written = String::new();
+    write_html_source_block(&mut written, literal)
+        .unwrap_or_else(|error| panic!("writing should succeed: {error}"));
+
+    assert_eq!(restore_supported_raw_html(&written), written);
 }
