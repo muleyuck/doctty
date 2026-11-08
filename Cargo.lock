@@ -869,6 +869,7 @@ dependencies = [
  "comrak",
  "crossterm",
  "dark-light",
+ "htmlize",
  "image",
  "predicates",
  "resvg",
@@ -1306,6 +1307,19 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "htmlize"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e815d50d9e411ba2690d730e6ec139c08260dddb756df315dbd16d01a587226"
+dependencies = [
+ "memchr",
+ "pastey",
+ "phf",
+ "phf_codegen",
+ "serde_json",
+]
 
 [[package]]
 name = "id-arena"
