@@ -103,32 +103,99 @@ pub enum RenderedGraphicContent {
 
 #[must_use]
 pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: MermaidMode) -> String {
+    let context = PlainTextContext {
+        document,
+        theme,
+        mermaid_mode,
+        image_decoder: ImageDecoder::new(),
+        mermaid_renderer: MermaidCliRenderer::from_env(),
+    };
     let mut lines = Vec::new();
-    let image_decoder = ImageDecoder::new();
-    let mermaid_renderer = MermaidCliRenderer::from_env();
 
     for block in &document.blocks {
-        match &block.kind {
+        context.push_block(&mut lines, &block.kind);
+        lines.push(String::new());
+    }
+
+    lines.join("\n")
+}
+
+struct PlainTextContext<'a> {
+    document: &'a Document,
+    theme: Theme,
+    mermaid_mode: MermaidMode,
+    image_decoder: ImageDecoder,
+    mermaid_renderer: MermaidCliRenderer,
+}
+
+impl PlainTextContext<'_> {
+    fn push_blocks(&self, lines: &mut Vec<String>, blocks: &[BlockKind], separated: bool) {
+        for (index, block) in blocks.iter().enumerate() {
+            if separated && index > 0 {
+                lines.push(String::new());
+            }
+            self.push_block(lines, block);
+        }
+    }
+
+    /// Renders `blocks` and prints the first line after `first` and the
+    /// others after `rest`, like a list marker and its indentation.
+    fn push_nested(
+        &self,
+        lines: &mut Vec<String>,
+        blocks: &[BlockKind],
+        separated: bool,
+        first: &str,
+        rest: &str,
+    ) {
+        let mut nested = Vec::new();
+        self.push_blocks(&mut nested, blocks, separated);
+        if nested.is_empty() {
+            lines.push(first.trim_end().to_string());
+        }
+        for (index, line) in nested.into_iter().enumerate() {
+            let prefix = if index == 0 { first } else { rest };
+            lines.push(if line.is_empty() {
+                prefix.trim_end().to_string()
+            } else {
+                format!("{prefix}{line}")
+            });
+        }
+    }
+
+    fn push_block(&self, lines: &mut Vec<String>, kind: &BlockKind) {
+        match kind {
             BlockKind::Heading { level, text } => {
                 lines.push(format!("{} {}", "#".repeat((*level).into()), text.plain()));
             }
             BlockKind::Paragraph { text } => {
                 lines.extend(text.plain().lines().map(ToOwned::to_owned));
             }
-            BlockKind::List { ordered, items } => {
+            BlockKind::List {
+                ordered,
+                tight,
+                items,
+            } => {
                 for (index, item) in items.iter().enumerate() {
-                    lines.push(if *ordered {
-                        format!("{}. {}", index + 1, item.plain())
+                    if !tight && index > 0 {
+                        lines.push(String::new());
+                    }
+                    let marker = if *ordered {
+                        format!("{}. ", index + 1)
                     } else {
-                        format!("- {}", item.plain())
-                    });
+                        "- ".to_string()
+                    };
+                    let indent = " ".repeat(marker.len());
+                    self.push_nested(lines, item, !tight, &marker, &indent);
                 }
             }
-            BlockKind::BlockQuote { text } => {
-                lines.extend(text.plain().lines().map(|line| format!("> {line}")));
+            BlockKind::BlockQuote { blocks } => {
+                self.push_nested(lines, blocks, true, "> ", "> ");
             }
             BlockKind::Callout { kind, body, .. } => {
-                lines.push(format!("[{}] {}", kind.label(), body.plain()));
+                let label = format!("[{}] ", kind.label());
+                let indent = " ".repeat(label.chars().count());
+                self.push_nested(lines, body, true, &label, &indent);
             }
             BlockKind::CodeFence { language, code } => {
                 lines.push(
@@ -152,7 +219,10 @@ pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: Mermai
             }
             BlockKind::Image { alt, src, .. } => {
                 let label = if alt.is_empty() { src } else { alt };
-                match image_decoder.load_from_document(&document.path, src) {
+                match self
+                    .image_decoder
+                    .load_from_document(&self.document.path, src)
+                {
                     Ok(image) => lines.push(format!(
                         "[Image: {label} {}x{} -> {}]",
                         image.width,
@@ -160,7 +230,8 @@ pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: Mermai
                         image.path.display()
                     )),
                     Err(_) => {
-                        let image_path = image_decoder::resolve_image_path(&document.path, src);
+                        let image_path =
+                            image_decoder::resolve_image_path(&self.document.path, src);
                         lines.push(format!(
                             "[Image missing: {label} -> {}]",
                             image_path.display()
@@ -168,32 +239,35 @@ pub fn render_plain_text(document: &Document, theme: Theme, mermaid_mode: Mermai
                     }
                 }
             }
-            BlockKind::Mermaid { source } => match mermaid_mode {
+            BlockKind::Mermaid { source } => match self.mermaid_mode {
                 MermaidMode::Disabled => lines.push("[Mermaid disabled]".to_string()),
-                MermaidMode::Enabled => match mermaid_renderer.render_png(source, theme) {
-                    Ok(png_bytes) => match image_decoder.dimensions_from_png_bytes(&png_bytes) {
-                        Ok((width, height)) => {
-                            lines.push(format!("[Mermaid rendered: {width}x{height}]"));
+                MermaidMode::Enabled => {
+                    match self.mermaid_renderer.render_png(source, self.theme) {
+                        Ok(png_bytes) => {
+                            match self.image_decoder.dimensions_from_png_bytes(&png_bytes) {
+                                Ok((width, height)) => {
+                                    lines.push(format!("[Mermaid rendered: {width}x{height}]"));
+                                }
+                                Err(_) => lines.push(
+                                    "[Mermaid unavailable: invalid renderer output]".to_string(),
+                                ),
+                            }
                         }
                         Err(_) => {
-                            lines.push("[Mermaid unavailable: invalid renderer output]".to_string())
+                            lines
+                                .push("[Mermaid unavailable: renderer not configured]".to_string());
                         }
-                    },
-                    Err(_) => {
-                        lines.push("[Mermaid unavailable: renderer not configured]".to_string());
                     }
-                },
+                }
             },
             BlockKind::Rule => lines.push("---".to_string()),
             BlockKind::Footnote { label, body } => {
-                lines.push(format!("[^{label}] {}", body.plain()));
+                let label = format!("[^{label}] ");
+                let indent = " ".repeat(label.chars().count());
+                self.push_nested(lines, body, true, &label, &indent);
             }
         }
-
-        lines.push(String::new());
     }
-
-    lines.join("\n")
 }
 
 #[must_use]
@@ -204,16 +278,127 @@ pub fn render_document(
     width_cells: u16,
     cell_aspect_ratio: f32,
 ) -> RenderedDocument {
-    let mut lines = Vec::new();
-    let mut graphics = Vec::new();
-    let image_decoder = ImageDecoder::new();
+    let context = DisplayContext {
+        document,
+        mermaid_mode,
+        cell_aspect_ratio,
+        image_decoder: ImageDecoder::new(),
+    };
+    let mut rendered = RenderedDocument {
+        lines: Vec::new(),
+        graphics: Vec::new(),
+    };
     let wrap_width = usize::from(width_cells.max(20));
 
     for block in &document.blocks {
-        match &block.kind {
+        context.push_block(&mut rendered, &block.kind, wrap_width, width_cells);
+        rendered.lines.push(blank_line());
+    }
+
+    rendered
+}
+
+struct DisplayContext<'a> {
+    document: &'a Document,
+    mermaid_mode: MermaidMode,
+    cell_aspect_ratio: f32,
+    image_decoder: ImageDecoder,
+}
+
+impl DisplayContext<'_> {
+    /// Renders `blocks` narrower by the prefix width, then puts `first`
+    /// before the first line and `rest` before the others. Paragraph lines
+    /// take `kind`, so they are styled as part of their container. Rows an
+    /// image is drawn over and code lines get no prefix: the terminal draws
+    /// a code frame from the line's own text, and an empty closing delimiter
+    /// is what draws its bottom border.
+    fn push_nested(
+        &self,
+        out: &mut RenderedDocument,
+        blocks: &[BlockKind],
+        separated: bool,
+        (first, rest): (&str, &str),
+        kind: &RenderedLineKind,
+        (wrap_width, width_cells): (usize, u16),
+    ) {
+        let prefix_width = first.chars().count().max(rest.chars().count());
+        let mut nested = RenderedDocument {
+            lines: Vec::new(),
+            graphics: Vec::new(),
+        };
+        for (index, block) in blocks.iter().enumerate() {
+            if separated && index > 0 {
+                nested.lines.push(blank_line());
+            }
+            self.push_block(
+                &mut nested,
+                block,
+                wrap_width.saturating_sub(prefix_width).max(1),
+                width_cells
+                    .saturating_sub(u16::try_from(prefix_width).unwrap_or(u16::MAX))
+                    .max(1),
+            );
+        }
+        if nested.lines.is_empty() {
+            nested.lines.push(blank_line());
+        }
+
+        // A code line takes no prefix, so a list marker before code gets a
+        // line of its own.
+        let marker = first.trim_end();
+        if !marker.is_empty() && matches!(nested.lines[0].kind, RenderedLineKind::Code { .. }) {
+            out.lines.push(rendered_line(
+                StyledText::from_plain(marker.to_string()),
+                kind.clone(),
+            ));
+        }
+
+        let offset = out.lines.len();
+        let is_graphic_row = |row: usize| {
+            nested.graphics.iter().any(|graphic| {
+                (graphic.line_index..graphic.line_index + usize::from(graphic.height_cells))
+                    .contains(&row)
+            })
+        };
+        for (index, line) in nested.lines.iter().enumerate() {
+            if is_graphic_row(index) || matches!(line.kind, RenderedLineKind::Code { .. }) {
+                out.lines.push(line.clone());
+                continue;
+            }
+            let prefix = if index == 0 { first } else { rest };
+            let prefix = if line.plain_text.is_empty() {
+                prefix.trim_end()
+            } else {
+                prefix
+            };
+            // A blank line inside a list stays blank; inside a quote or a
+            // callout it keeps the container's bar.
+            let line_kind = match line.kind {
+                RenderedLineKind::Paragraph => kind.clone(),
+                RenderedLineKind::Blank if *kind != RenderedLineKind::List => kind.clone(),
+                ref other => other.clone(),
+            };
+            out.lines.push(prefix_line(line, prefix, line_kind));
+        }
+        out.graphics
+            .extend(nested.graphics.into_iter().map(|graphic| RenderedGraphic {
+                line_index: graphic.line_index + offset,
+                ..graphic
+            }));
+    }
+
+    fn push_block(
+        &self,
+        out: &mut RenderedDocument,
+        kind: &BlockKind,
+        wrap_width: usize,
+        width_cells: u16,
+    ) {
+        let lines = &mut out.lines;
+        match kind {
             BlockKind::Heading { level, text } => {
                 push_wrapped_display_line(
-                    &mut lines,
+                    lines,
                     display_inline_text(text),
                     RenderedLineKind::Heading { level: *level },
                     wrap_width,
@@ -221,38 +406,46 @@ pub fn render_document(
             }
             BlockKind::Paragraph { text } => {
                 push_wrapped_display_line(
-                    &mut lines,
+                    lines,
                     display_inline_text(text),
                     RenderedLineKind::Paragraph,
                     wrap_width,
                 );
             }
-            BlockKind::List { ordered, items } => {
+            BlockKind::List {
+                ordered,
+                tight,
+                items,
+            } => {
                 for (index, item) in items.iter().enumerate() {
-                    let prefix = if *ordered {
+                    if !tight && index > 0 {
+                        out.lines.push(blank_line());
+                    }
+                    let marker = if *ordered {
                         format!("{}. ", index + 1)
                     } else {
                         "• ".to_string()
                     };
-                    let item_text = display_list_item(item);
-                    push_wrapped_prefixed_line(
-                        &mut lines,
-                        prefix,
-                        "  ".to_string(),
-                        item_text,
-                        RenderedLineKind::List,
-                        wrap_width,
+                    let indent = " ".repeat(marker.chars().count());
+                    let item = with_checkbox(item);
+                    self.push_nested(
+                        out,
+                        &item,
+                        !tight,
+                        (&marker, &indent),
+                        &RenderedLineKind::List,
+                        (wrap_width, width_cells),
                     );
                 }
             }
-            BlockKind::BlockQuote { text } => {
-                push_wrapped_prefixed_line(
-                    &mut lines,
-                    "│ ".to_string(),
-                    "│ ".to_string(),
-                    display_inline_text(text),
-                    RenderedLineKind::Quote,
-                    wrap_width,
+            BlockKind::BlockQuote { blocks } => {
+                self.push_nested(
+                    out,
+                    blocks,
+                    true,
+                    ("│ ", "│ "),
+                    &RenderedLineKind::Quote,
+                    (wrap_width, width_cells),
                 );
             }
             BlockKind::Callout { kind, title, body } => {
@@ -260,21 +453,32 @@ pub fn render_document(
                     .clone()
                     .unwrap_or_else(|| StyledText::from_plain(kind.label().to_string()));
                 push_wrapped_prefixed_line(
-                    &mut lines,
+                    lines,
                     String::new(),
                     "  ".to_string(),
                     heading,
                     RenderedLineKind::Callout { kind: *kind },
                     wrap_width,
                 );
-                push_wrapped_prefixed_line(
-                    &mut lines,
-                    String::new(),
-                    "  ".to_string(),
-                    display_inline_text(body),
-                    RenderedLineKind::Callout { kind: *kind },
-                    wrap_width,
-                );
+                // Each block starts at the bar and only its wrapped lines are
+                // indented, as a single-paragraph body always was.
+                let kind = RenderedLineKind::Callout { kind: *kind };
+                for (index, block) in body.iter().enumerate() {
+                    if index > 0 {
+                        out.lines.push(RenderedLine {
+                            kind: kind.clone(),
+                            ..blank_line()
+                        });
+                    }
+                    self.push_nested(
+                        out,
+                        std::slice::from_ref(block),
+                        false,
+                        ("", "  "),
+                        &kind,
+                        (wrap_width, width_cells),
+                    );
+                }
             }
             BlockKind::CodeFence { language, code } => {
                 let language = language.as_deref().map(normalize_language_token);
@@ -321,27 +525,30 @@ pub fn render_document(
             }
             BlockKind::Image { alt, src, .. } => {
                 let label = if alt.is_empty() { src } else { alt };
-                match image_decoder.load_from_document(&document.path, src) {
+                match self
+                    .image_decoder
+                    .load_from_document(&self.document.path, src)
+                {
                     Ok(image) => {
                         let display =
                             format!("Image: {} ({}x{})", label, image.width, image.height);
                         push_wrapped_display_line(
-                            &mut lines,
+                            &mut out.lines,
                             StyledText::from_plain(display),
                             RenderedLineKind::Meta,
                             wrap_width,
                         );
                         push_graphic(
-                            &mut lines,
-                            &mut graphics,
+                            &mut out.lines,
+                            &mut out.graphics,
                             width_cells,
-                            cell_aspect_ratio,
+                            self.cell_aspect_ratio,
                             &image,
                         );
                     }
                     Err(_) => {
                         push_wrapped_display_line(
-                            &mut lines,
+                            lines,
                             StyledText::from_plain(format!("Image unavailable: {label}")),
                             RenderedLineKind::Meta,
                             wrap_width,
@@ -349,10 +556,10 @@ pub fn render_document(
                     }
                 }
             }
-            BlockKind::Mermaid { source } => match mermaid_mode {
+            BlockKind::Mermaid { source } => match self.mermaid_mode {
                 MermaidMode::Disabled => {
                     push_wrapped_display_line(
-                        &mut lines,
+                        lines,
                         StyledText::from_plain("Mermaid disabled".to_string()),
                         RenderedLineKind::Meta,
                         wrap_width,
@@ -360,16 +567,16 @@ pub fn render_document(
                 }
                 MermaidMode::Enabled => {
                     push_wrapped_display_line(
-                        &mut lines,
+                        &mut out.lines,
                         StyledText::from_plain("Mermaid diagram".to_string()),
                         RenderedLineKind::Meta,
                         wrap_width,
                     );
                     push_graphic_placeholder(
-                        &mut lines,
-                        &mut graphics,
+                        &mut out.lines,
+                        &mut out.graphics,
                         width_cells,
-                        scaled_graphic_height(width_cells, cell_aspect_ratio, 960, 540),
+                        scaled_graphic_height(width_cells, self.cell_aspect_ratio, 960, 540),
                         960,
                         540,
                         RenderedGraphicContent::Mermaid {
@@ -387,26 +594,48 @@ pub fn render_document(
                 kind: RenderedLineKind::Rule,
             }),
             BlockKind::Footnote { label, body } => {
-                push_wrapped_prefixed_line(
-                    &mut lines,
-                    format!("[{label}] "),
-                    " ".repeat(label.chars().count() + 3),
-                    display_inline_text(body),
-                    RenderedLineKind::Meta,
-                    wrap_width,
+                let label = format!("[{label}] ");
+                let indent = " ".repeat(label.chars().count());
+                self.push_nested(
+                    out,
+                    body,
+                    true,
+                    (&label, &indent),
+                    &RenderedLineKind::Meta,
+                    (wrap_width, width_cells),
                 );
             }
         }
-
-        lines.push(RenderedLine {
-            plain_text: String::new(),
-            display_text: String::new(),
-            spans: Vec::new(),
-            kind: RenderedLineKind::Blank,
-        });
     }
+}
 
-    RenderedDocument { lines, graphics }
+fn blank_line() -> RenderedLine {
+    RenderedLine {
+        plain_text: String::new(),
+        display_text: String::new(),
+        spans: Vec::new(),
+        kind: RenderedLineKind::Blank,
+    }
+}
+
+fn prefix_line(line: &RenderedLine, prefix: &str, kind: RenderedLineKind) -> RenderedLine {
+    let mut spans = spans_from_plain(prefix.to_string());
+    spans.extend(line.spans.iter().cloned());
+    RenderedLine {
+        plain_text: format!("{prefix}{}", line.plain_text),
+        display_text: format!("{prefix}{}", line.display_text),
+        spans,
+        kind,
+    }
+}
+
+/// Shows a task item's `[x] ` or `[ ] ` text as a checkbox.
+fn with_checkbox(item: &[BlockKind]) -> Vec<BlockKind> {
+    let mut item = item.to_vec();
+    if let Some(BlockKind::Paragraph { text }) = item.first_mut() {
+        *text = checkbox_text(text);
+    }
+    item
 }
 
 fn push_wrapped_display_line(
@@ -525,14 +754,25 @@ fn table_row(row: &[StyledText], widths: &[usize]) -> String {
     line
 }
 
-fn display_list_item(item: &StyledText) -> StyledText {
-    if let Some(rest) = strip_leading_plain_prefix(item, "[x] ") {
-        return prepend_plain(display_inline_text(&rest), "☑ ");
+/// An item that starts with a block other than a paragraph, such as an
+/// image, has a paragraph holding only `[x]` or `[ ]`.
+fn checkbox_text(text: &StyledText) -> StyledText {
+    if let [segment] = text.segments.as_slice()
+        && segment.style == InlineStyle::default()
+    {
+        match segment.text.as_str() {
+            "[x]" => return StyledText::from_plain("☑"),
+            "[ ]" => return StyledText::from_plain("☐"),
+            _ => {}
+        }
     }
-    if let Some(rest) = strip_leading_plain_prefix(item, "[ ] ") {
-        return prepend_plain(display_inline_text(&rest), "☐ ");
+    if let Some(rest) = strip_leading_plain_prefix(text, "[x] ") {
+        return prepend_plain(rest, "☑ ");
     }
-    display_inline_text(item)
+    if let Some(rest) = strip_leading_plain_prefix(text, "[ ] ") {
+        return prepend_plain(rest, "☐ ");
+    }
+    text.clone()
 }
 
 fn display_inline_text(text: &StyledText) -> StyledText {

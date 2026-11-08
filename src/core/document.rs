@@ -90,15 +90,18 @@ pub enum BlockKind {
     },
     List {
         ordered: bool,
-        items: Vec<StyledText>,
+        /// Comrak's tight flag: a loose list separates its items and the
+        /// blocks inside an item with blank lines.
+        tight: bool,
+        items: Vec<Vec<BlockKind>>,
     },
     BlockQuote {
-        text: StyledText,
+        blocks: Vec<BlockKind>,
     },
     Callout {
         kind: CalloutKind,
         title: Option<StyledText>,
-        body: StyledText,
+        body: Vec<BlockKind>,
     },
     CodeFence {
         language: Option<String>,
@@ -118,7 +121,7 @@ pub enum BlockKind {
     Rule,
     Footnote {
         label: String,
-        body: StyledText,
+        body: Vec<BlockKind>,
     },
 }
 

@@ -71,12 +71,12 @@ fn normalize_block<'a>(node: &'a AstNode<'a>) -> Option<BlockKind> {
         NodeValue::Table(_) => Some(normalize_table(node)),
         NodeValue::FootnoteDefinition(definition) => Some(BlockKind::Footnote {
             label: definition.name.clone(),
-            body: collect_styled_text(node),
+            body: normalize_children(node),
         }),
         NodeValue::Alert(alert) => Some(BlockKind::Callout {
             kind: map_alert_kind(alert.alert_type),
             title: alert.title.clone().map(StyledText::from_plain),
-            body: collect_styled_text(node),
+            body: normalize_children(node),
         }),
         _ => None,
     }
@@ -91,30 +91,71 @@ fn normalize_paragraph<'a>(node: &'a AstNode<'a>) -> Option<BlockKind> {
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
 }
 
+fn normalize_children<'a>(node: &'a AstNode<'a>) -> Vec<BlockKind> {
+    node.children().filter_map(normalize_block).collect()
+}
+
 fn normalize_quote<'a>(node: &'a AstNode<'a>) -> BlockKind {
-    let text = collect_styled_text(node);
-    if let Some((kind, body)) = parse_callout(&text.plain()) {
+    let mut blocks = normalize_children(node);
+    if let Some(BlockKind::Paragraph { text }) = blocks.first()
+        && let Some((kind, body)) = parse_callout(&text.plain())
+    {
+        if body.is_empty() {
+            blocks.remove(0);
+        } else {
+            blocks[0] = BlockKind::Paragraph { text: body };
+        }
         return BlockKind::Callout {
             kind,
             title: None,
-            body,
+            body: blocks,
         };
     }
 
-    BlockKind::BlockQuote { text }
+    BlockKind::BlockQuote { blocks }
 }
 
 fn normalize_list<'a>(node: &'a AstNode<'a>, list: &NodeList) -> BlockKind {
     let items = node
         .children()
-        .map(collect_styled_text)
-        .filter(|text| !text.is_empty())
+        .map(normalize_list_item)
+        .filter(|blocks| !blocks.is_empty())
         .collect();
 
     BlockKind::List {
         ordered: list.list_type == comrak::nodes::ListType::Ordered,
+        tight: list.tight,
         items,
     }
+}
+
+/// A task item's checkbox is kept as `[x] ` text at the start of the item,
+/// where the views turn it into a checkbox.
+fn normalize_list_item<'a>(item: &'a AstNode<'a>) -> Vec<BlockKind> {
+    let mut blocks = normalize_children(item);
+    let NodeValue::TaskItem(task) = &item.data.borrow().value else {
+        return blocks;
+    };
+    let marker = task
+        .symbol
+        .map_or("[ ] ".to_string(), |value| format!("[{value}] "));
+    match blocks.first_mut() {
+        Some(BlockKind::Paragraph { text }) => {
+            let mut segments = vec![InlineSegment {
+                text: marker,
+                style: InlineStyle::default(),
+            }];
+            segments.append(&mut text.segments);
+            text.segments = normalize_segments(segments);
+        }
+        _ => blocks.insert(
+            0,
+            BlockKind::Paragraph {
+                text: StyledText::from_plain(marker.trim_end().to_string()),
+            },
+        ),
+    }
+    blocks
 }
 
 fn normalize_code_block(code: &NodeCodeBlock) -> BlockKind {
@@ -271,18 +312,6 @@ fn collect_text_segments<'a>(
             }
         }
         NodeValue::HtmlInline(literal) => collect_inline_html(literal, style, parts, html),
-        NodeValue::TaskItem(task) => {
-            let marker = task
-                .symbol
-                .map_or("[ ] ".to_string(), |value| format!("[{value}] "));
-            parts.push(InlineSegment {
-                text: marker,
-                style,
-            });
-            for child in node.children() {
-                collect_text_segments(child, style, parts, html);
-            }
-        }
         NodeValue::FootnoteReference(reference) => {
             parts.push(InlineSegment {
                 text: format!("[^{}]", reference.name),
