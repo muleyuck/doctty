@@ -3,7 +3,7 @@
 
 use super::{
     scan::{NotATag, QuoteEnds, html_tag_len},
-    tag::{RawHtmlTag, classify_raw_html_tag},
+    tag::{RawHtmlTag, TextStyle, classify_raw_html_tag},
 };
 use crate::core::document::{BlockKind, InlineSegment, InlineStyle};
 
@@ -22,9 +22,40 @@ enum BreakKind {
     Block,
 }
 
-/// Where a tag's plain text goes. Paragraphs keep styled segments and HTML
-/// blocks keep one string; `apply_tag` writes each tag's effect once for
-/// both.
+/// How many of each style tag are open. A closing tag without an opening
+/// one is ignored, as browsers do.
+#[derive(Clone, Copy, Debug, Default)]
+struct OpenStyles {
+    bold: usize,
+    italic: usize,
+    code: usize,
+}
+
+impl OpenStyles {
+    fn apply(&mut self, style: TextStyle, open: bool) {
+        let depth = match style {
+            TextStyle::Bold => &mut self.bold,
+            TextStyle::Italic => &mut self.italic,
+            TextStyle::Code => &mut self.code,
+        };
+        *depth = if open {
+            *depth + 1
+        } else {
+            depth.saturating_sub(1)
+        };
+    }
+
+    fn on(self, base: InlineStyle) -> InlineStyle {
+        InlineStyle {
+            bold: base.bold || self.bold > 0,
+            italic: base.italic || self.italic > 0,
+            code: base.code || self.code > 0,
+        }
+    }
+}
+
+/// Where a tag's plain text goes: the segments of a paragraph, or those of
+/// a whole HTML block. `apply_tag` writes each tag's effect once for both.
 trait PlainTextOut {
     fn push_str(&mut self, text: &str);
     fn push_space(&mut self);
@@ -32,6 +63,7 @@ trait PlainTextOut {
     fn at_line_start(&self) -> bool;
     fn push_newline(&mut self, kind: BreakKind);
     fn href(&mut self) -> &mut Option<String>;
+    fn open_styles(&mut self) -> &mut OpenStyles;
     fn image(&mut self, _source: &str, _alt: &str) {}
 }
 
@@ -53,6 +85,7 @@ fn apply_tag(out: &mut impl PlainTextOut, kind: RawHtmlTag, source: &str) {
                 out.push_str(&format!("<{href}>"));
             }
         }
+        RawHtmlTag::Style { style, open } => out.open_styles().apply(style, open),
         RawHtmlTag::Inline => {}
     }
 }
@@ -70,9 +103,17 @@ pub(crate) struct InlineHtmlState {
     /// tag.
     last_break: Option<(usize, BreakKind)>,
     href: Option<String>,
+    styles: OpenStyles,
 }
 
 impl InlineHtmlState {
+    /// `style` with the styles of the HTML tags open at this point, such as
+    /// `<b>`. Markdown nesting and HTML tags can overlap, as in
+    /// `<b>a *b</b> c*`, so each text node applies this itself.
+    pub(crate) fn style(&self, style: InlineStyle) -> InlineStyle {
+        self.styles.on(style)
+    }
+
     /// Whether the last non-empty part is the newline from `<br>` or a block
     /// tag. A later tag can trim a part to empty, so empty parts are skipped.
     pub(crate) fn follows_line_break(&self, parts: &[InlineSegment]) -> bool {
@@ -104,7 +145,7 @@ impl PlainTextOut for InlineOut<'_> {
         if !text.is_empty() {
             self.parts.push(InlineSegment {
                 text: text.to_string(),
-                style: self.style,
+                style: self.state.style(self.style),
             });
         }
     }
@@ -137,6 +178,10 @@ impl PlainTextOut for InlineOut<'_> {
     fn href(&mut self) -> &mut Option<String> {
         &mut self.state.href
     }
+
+    fn open_styles(&mut self) -> &mut OpenStyles {
+        &mut self.state.styles
+    }
 }
 
 /// Comrak emits each inline tag as its own node, so only the tag itself is
@@ -157,7 +202,7 @@ pub(crate) fn collect_inline_html(
     let Some((kind, source)) = supported else {
         parts.push(InlineSegment {
             text: literal.to_string(),
-            style,
+            style: state.style(style),
         });
         return;
     };
@@ -173,27 +218,35 @@ pub(crate) fn collect_inline_html(
 }
 
 pub(crate) struct HtmlBlockText {
-    pub(crate) text: String,
+    pub(crate) segments: Vec<InlineSegment>,
     /// The block's only content, when that is one `<img>` with a `src`.
     pub(crate) lone_image: Option<BlockKind>,
 }
 
 #[derive(Default)]
 struct BlockOut {
-    text: String,
+    /// Never holds an empty segment, so the last one ends the text.
+    segments: Vec<InlineSegment>,
     images: Vec<Option<BlockKind>>,
     /// Whether the block has text of its own, outside its tags.
     has_text: bool,
     href: Option<String>,
+    styles: OpenStyles,
 }
 
 impl BlockOut {
+    fn last_char(&self) -> Option<char> {
+        self.segments
+            .last()
+            .and_then(|last| last.text.chars().last())
+    }
+
     /// Entities never contain `<` or whitespace, so each chunk between them
     /// decodes on its own; decoding chunks one by one keeps a reference split
     /// by a tag, such as `&am<b>p;`, from being joined.
     fn push_source_text(&mut self, chunk: &str) {
         if !chunk.is_empty() {
-            self.text.push_str(&htmlize::unescape(chunk));
+            self.push_str(&htmlize::unescape(chunk));
             self.has_text = true;
         }
     }
@@ -203,36 +256,76 @@ impl BlockOut {
             [image @ Some(_)] if !self.has_text => image.take(),
             _ => None,
         };
-        let text = self.text.trim_matches([' ', '\n']).to_string();
-        HtmlBlockText { text, lone_image }
+        let mut segments = self.segments;
+        // Draining once keeps this linear when many segments are blank.
+        let blank = segments
+            .iter()
+            .take_while(|segment| segment.text.trim_start_matches([' ', '\n']).is_empty())
+            .count();
+        segments.drain(..blank);
+        if let Some(first) = segments.first_mut() {
+            first.text = first.text.trim_start_matches([' ', '\n']).to_string();
+        }
+        while let Some(last) = segments.last_mut() {
+            last.text
+                .truncate(last.text.trim_end_matches([' ', '\n']).len());
+            if !last.text.is_empty() {
+                break;
+            }
+            segments.pop();
+        }
+        HtmlBlockText {
+            segments,
+            lone_image,
+        }
     }
 }
 
 impl PlainTextOut for BlockOut {
     fn push_str(&mut self, text: &str) {
-        self.text.push_str(text);
+        if text.is_empty() {
+            return;
+        }
+        let style = self.styles.on(InlineStyle::default());
+        match self.segments.last_mut() {
+            Some(last) if last.style == style => last.text.push_str(text),
+            _ => self.segments.push(InlineSegment {
+                text: text.to_string(),
+                style,
+            }),
+        }
     }
 
     fn push_space(&mut self) {
-        if !self.text.is_empty() && !self.text.ends_with([' ', '\n']) {
-            self.text.push(' ');
+        if self.last_char().is_some_and(|c| c != ' ' && c != '\n') {
+            self.push_str(" ");
         }
     }
 
     fn trim_end_spaces(&mut self) {
-        self.text.truncate(self.text.trim_end_matches(' ').len());
+        while let Some(last) = self.segments.last_mut() {
+            last.text.truncate(last.text.trim_end_matches(' ').len());
+            if !last.text.is_empty() {
+                break;
+            }
+            self.segments.pop();
+        }
     }
 
     fn at_line_start(&self) -> bool {
-        self.text.is_empty() || self.text.ends_with('\n')
+        self.last_char().is_none_or(|c| c == '\n')
     }
 
     fn push_newline(&mut self, _kind: BreakKind) {
-        self.text.push('\n');
+        self.push_str("\n");
     }
 
     fn href(&mut self) -> &mut Option<String> {
         &mut self.href
+    }
+
+    fn open_styles(&mut self) -> &mut OpenStyles {
+        &mut self.styles
     }
 
     fn image(&mut self, source: &str, alt: &str) {
@@ -250,10 +343,7 @@ impl PlainTextOut for BlockOut {
 /// comment or another `<!`/`<?` construct, or no tag at all. Rendering only
 /// part of a block would leave a mix the reader cannot make sense of.
 pub(crate) fn html_to_text(html: &str) -> Option<HtmlBlockText> {
-    let mut out = BlockOut {
-        text: String::with_capacity(html.len()),
-        ..BlockOut::default()
-    };
+    let mut out = BlockOut::default();
     let mut has_supported_tag = false;
     let mut rest = html;
     // Input before this offset is known not to hold a tag.

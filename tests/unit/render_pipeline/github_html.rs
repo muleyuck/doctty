@@ -326,12 +326,13 @@ fn github_html_emits_github_style_math_markup() {
 
 #[test]
 fn github_html_shows_comments_and_unsupported_tags_as_source() {
-    let source = "<!-- note -->\n\nPress <kbd>Ctrl</kbd>.\n\n<table><tr><td>x</td></tr></table>\n";
+    let source =
+        "<!-- note -->\n\nPress <mark>Ctrl</mark>.\n\n<table><tr><td>x</td></tr></table>\n";
 
     let html = render(source);
 
     assert!(html.contains("&#60;!-- note --&#62;"));
-    assert!(html.contains("&lt;kbd&gt;Ctrl&lt;/kbd&gt;"));
+    assert!(html.contains("&lt;mark&gt;Ctrl&lt;/mark&gt;"));
     assert!(html.contains(
         "&#60;table&#62;&#60;tr&#62;&#60;td&#62;x&#60;/td&#62;&#60;/tr&#62;&#60;/table&#62;"
     ));
@@ -378,4 +379,17 @@ fn github_html_drops_the_line_ending_of_a_crlf_source_block() {
     let html = render("<!-- x -->\r\n\r\npara\r\n");
 
     assert!(html.contains("<div class=\"doctty-html-source\">&#60;!-- x --&#62;</div>"));
+}
+
+#[test]
+fn github_html_restores_common_readme_inline_tags() {
+    let html = render(
+        "<div align=\"center\">\n  <p><b>a</b><strong>b</strong><em>c</em><i>d</i><code>e</code><kbd>f</kbd></p>\n</div>\n\nPress <kbd>Ctrl</kbd> or <b class=\"x\">y</b>.\n",
+    );
+
+    assert!(html.contains(
+        r#"<p><b>a</b><strong>b</strong><em>c</em><i>d</i><code>e</code><kbd>f</kbd></p>"#
+    ));
+    assert!(html.contains("Press <kbd>Ctrl</kbd> or "));
+    assert!(html.contains("&lt;b class=&quot;x&quot;&gt;y</b>"));
 }
