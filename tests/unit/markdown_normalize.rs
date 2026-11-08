@@ -48,8 +48,12 @@ fn normalizes_task_list_and_footnote_reference_text() {
         BlockKind::List { ref items, .. }
             if items
                 == &vec![
-                    doctty::core::document::StyledText::from_plain("[x] done"),
-                    doctty::core::document::StyledText::from_plain("[ ] pending"),
+                    vec![BlockKind::Paragraph {
+                        text: doctty::core::document::StyledText::from_plain("[x] done"),
+                    }],
+                    vec![BlockKind::Paragraph {
+                        text: doctty::core::document::StyledText::from_plain("[ ] pending"),
+                    }],
                 ]
     ));
     assert!(matches!(

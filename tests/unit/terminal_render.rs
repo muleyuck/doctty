@@ -162,3 +162,129 @@ fn terminal_render_preserves_inline_emphasis_segments() {
             .any(|span| span.style == RenderedInlineStyle::CODE)
     );
 }
+
+fn display_lines(source: &str, mermaid_mode: MermaidMode) -> Vec<(String, RenderedLineKind)> {
+    let document = parse_document("docs/example.md".into(), source)
+        .unwrap_or_else(|error| panic!("document should parse: {error}"));
+    render_document(&document, Theme::Light, mermaid_mode, 40, 0.5)
+        .lines
+        .into_iter()
+        .map(|line| (line.display_text, line.kind))
+        .collect()
+}
+
+#[test]
+fn terminal_render_keeps_each_block_of_a_quote_behind_the_bar() {
+    let code = RenderedLineKind::Code {
+        language: None,
+        is_fence_delimiter: false,
+    };
+
+    let fence = |label: &str| {
+        (
+            label.to_string(),
+            RenderedLineKind::Code {
+                language: None,
+                is_fence_delimiter: true,
+            },
+        )
+    };
+
+    let lines = display_lines("> one\n>\n> ```\n> c\n> ```\n", MermaidMode::Disabled);
+
+    assert_eq!(lines[0], ("│ one".to_string(), RenderedLineKind::Quote));
+    assert_eq!(lines[1], ("│".to_string(), RenderedLineKind::Quote));
+    // The code frame is drawn from the line's own text, and an empty closing
+    // delimiter is what draws the bottom border, so code lines get no prefix.
+    assert_eq!(
+        lines[2..5],
+        [fence("code"), ("c".to_string(), code), fence("")]
+    );
+}
+
+#[test]
+fn terminal_render_indents_ordered_item_children_by_the_marker_width() {
+    let lines = display_lines("1. parent\n   > child\n", MermaidMode::Disabled);
+
+    assert_eq!(lines[0].0, "1. parent");
+    assert_eq!(lines[1].0, "   │ child");
+}
+
+#[test]
+fn terminal_render_keeps_the_checkbox_of_an_image_only_task_item() {
+    let lines = display_lines("- [x] ![alt](missing.png)\n", MermaidMode::Disabled);
+
+    assert_eq!(lines[0].0, "• ☑");
+    assert_eq!(lines[1].0, "  Image unavailable: alt");
+}
+
+#[test]
+fn terminal_render_indents_a_nested_list_under_its_item() {
+    let lines = display_lines("- [x] done\n- two\n  - nested\n", MermaidMode::Disabled);
+
+    assert_eq!(lines[0].0, "• ☑ done");
+    assert_eq!(lines[1].0, "• two");
+    assert_eq!(lines[2], ("  • nested".to_string(), RenderedLineKind::List));
+}
+
+#[test]
+fn terminal_render_starts_each_callout_paragraph_at_the_bar() {
+    let tip = RenderedLineKind::Callout {
+        kind: doctty::core::document::CalloutKind::Tip,
+    };
+
+    let lines = display_lines("> [!TIP]\n> one\n>\n> two\n", MermaidMode::Disabled);
+
+    assert_eq!(
+        lines[..4],
+        [
+            ("Tip".to_string(), tip.clone()),
+            ("one".to_string(), tip.clone()),
+            (String::new(), tip.clone()),
+            ("two".to_string(), tip),
+        ]
+    );
+}
+
+#[test]
+fn terminal_render_places_a_quoted_diagram_on_unprefixed_rows() {
+    let document = parse_document(
+        "docs/example.md".into(),
+        "> one\n>\n> ```mermaid\n> graph TD\n> ```\n",
+    )
+    .unwrap_or_else(|error| panic!("document should parse: {error}"));
+
+    let rendered = render_document(&document, Theme::Light, MermaidMode::Enabled, 40, 0.5);
+
+    let [graphic] = rendered.graphics.as_slice() else {
+        panic!("one diagram expected: {:?}", rendered.graphics);
+    };
+    assert_eq!(rendered.lines[2].display_text, "│ Mermaid diagram");
+    assert_eq!(graphic.line_index, 3);
+    assert_eq!(graphic.width_cells, 38);
+    let rows = graphic.line_index..graphic.line_index + usize::from(graphic.height_cells);
+    assert!(
+        rendered.lines[rows]
+            .iter()
+            .all(|line| line.kind == RenderedLineKind::Blank && line.display_text.is_empty())
+    );
+}
+
+#[test]
+fn terminal_render_keeps_the_marker_of_an_item_that_starts_with_code() {
+    let lines = display_lines("1. ```rust\n   let x = 1;\n   ```\n", MermaidMode::Disabled);
+
+    assert_eq!(lines[0], ("1.".to_string(), RenderedLineKind::List));
+    assert_eq!(lines[1].0, "rust");
+}
+
+#[test]
+fn terminal_render_keeps_a_task_marker_written_as_code() {
+    let document = parse_document("docs/example.md".into(), "- `[x]`\n")
+        .unwrap_or_else(|error| panic!("document should parse: {error}"));
+
+    let rendered = render_document(&document, Theme::Light, MermaidMode::Disabled, 40, 0.5);
+
+    assert_eq!(rendered.lines[0].display_text, "• [x]");
+    assert_eq!(rendered.lines[0].spans[1].style, RenderedInlineStyle::CODE);
+}
