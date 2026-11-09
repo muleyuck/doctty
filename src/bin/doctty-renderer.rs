@@ -203,6 +203,8 @@ mod renderer_viewer {
             KeyCode::Char('b') if control => *position - page,
             KeyCode::Char('d') if control => *position + half_page,
             KeyCode::Char('u') if control => *position - half_page,
+            // Raw mode delivers Ctrl-C as a key instead of SIGINT.
+            KeyCode::Char('c') if control => return InputAction::Quit,
             KeyCode::Char('q') | KeyCode::Esc => return InputAction::Quit,
             KeyCode::Char('j') | KeyCode::Down => *position + step,
             KeyCode::Char('k') | KeyCode::Up => *position - step,
@@ -3790,6 +3792,18 @@ mod renderer_viewer {
                     1000
                 ),
                 InputAction::Quit
+            );
+            assert_eq!(
+                apply_key(
+                    KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                    &mut position,
+                    &mut direction,
+                    &mut pending_g,
+                    2000.0,
+                    1000
+                ),
+                InputAction::Quit,
+                "Ctrl-C quits as in a cooked terminal"
             );
             let mut released = key(KeyCode::Down);
             released.kind = KeyEventKind::Release;
