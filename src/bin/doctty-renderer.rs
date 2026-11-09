@@ -59,10 +59,13 @@ mod renderer_viewer {
     // Experimental bounded tile store: four uploaded 2-viewport snapshots
     // and at most one additional in-flight image.
     const MAX_TILE_CACHE: usize = 4;
-    // Decoded bytes of every Kitty image doctty keeps in the terminal. Herdr
-    // panes evict images beyond 64 MiB, which blanks an image doctty thinks is
-    // cached; previews and tiles share this budget.
-    const PANE_IMAGE_BUDGET_BYTES: usize = 60 * 1024 * 1024;
+    // Decoded bytes of every Kitty image doctty keeps in the terminal;
+    // previews and tiles share this budget. Ghostty and kitty keep 320 MB of
+    // images per screen. Herdr panes evict images beyond 64 MiB, which blanks
+    // an image doctty thinks is cached.
+    const PANE_IMAGE_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+    const HERDR_PANE_IMAGE_BUDGET_BYTES: usize = 60 * 1024 * 1024;
+    const MAX_IMAGE_DIMENSION: u32 = 10_000;
     const LAST_TILE_IMAGE_ID: u32 = 93_006;
     // Alternating IDs let a resized frame arrive before the old placement is deleted.
     const FIRST_RESIZE_IMAGE_ID: u32 = 93_007;
@@ -398,15 +401,26 @@ mod renderer_viewer {
 
     // A tile is `pixel_width` wide and two viewports tall, so its RGBA size is
     // 8 * pixel_width^2 * height / width. Large panes trade resolution for a
-    // tile Herdr can still display.
-    fn snapshot_pixel_width(width: u32, height: u32, terminal_pixel_width: u32) -> u32 {
-        // Two cached tiles plus one in flight; this also keeps each tile under
-        // Herdr's ~23.5 MB per-image transfer limit.
-        let max_tile_bytes = tile_budget_bytes(width, height) / 3;
-        let limit = (max_tile_bytes as f64 * f64::from(width.max(1))
+    // tile the terminal can still keep.
+    fn snapshot_pixel_width(
+        width: u32,
+        height: u32,
+        terminal_pixel_width: u32,
+        pane_budget: usize,
+    ) -> u32 {
+        // Two cached tiles plus one in flight; with Herdr's budget this also
+        // keeps each tile under its ~23.5 MB per-image transfer limit.
+        let max_tile_bytes = tile_budget_bytes(width, height, pane_budget) / 3;
+        let byte_limit = (max_tile_bytes as f64 * f64::from(width.max(1))
             / (8.0 * f64::from(height.max(1))))
         .sqrt()
         .floor() as u32;
+        // Ghostty and kitty reject images over 10000 px on either side; one
+        // pixel of slack covers WebKit rounding the snapshot height.
+        let dimension_limit = (u64::from(MAX_IMAGE_DIMENSION - 1) * u64::from(width.max(1))
+            / (2 * u64::from(height.max(1))))
+        .min(u64::from(MAX_IMAGE_DIMENSION - 1)) as u32;
+        let limit = byte_limit.min(dimension_limit);
         if terminal_pixel_width == 0 {
             // 0 keeps WebKit's backing scale, at most 2x on macOS.
             return if limit >= width.saturating_mul(2) {
@@ -416,6 +430,15 @@ mod renderer_viewer {
             };
         }
         terminal_pixel_width.min(limit.max(1))
+    }
+
+    // Herdr sets HERDR_ENV in its panes.
+    fn pane_image_budget_bytes(herdr_env: Option<&OsStr>) -> usize {
+        if herdr_env.is_some() {
+            HERDR_PANE_IMAGE_BUDGET_BYTES
+        } else {
+            PANE_IMAGE_BUDGET_BYTES
+        }
     }
 
     struct SwiftProcess {
@@ -1602,16 +1625,14 @@ mod renderer_viewer {
 
     // What the pane image budget leaves for WebKit tiles once every preview
     // slot is filled. Extreme viewports keep at least a third for tiles.
-    fn tile_budget_bytes(viewport_width: u32, viewport_height: u32) -> usize {
+    fn tile_budget_bytes(viewport_width: u32, viewport_height: u32, pane_budget: usize) -> usize {
         let (preview_width, preview_height) =
             hybrid_image_preview::raster_size(viewport_width, viewport_height);
         let previews = hybrid_image_preview::MAX_PREVIEW_CACHE
             * preview_width as usize
             * preview_height as usize
             * 4;
-        PANE_IMAGE_BUDGET_BYTES
-            .saturating_sub(previews)
-            .max(PANE_IMAGE_BUDGET_BYTES / 3)
+        pane_budget.saturating_sub(previews).max(pane_budget / 3)
     }
 
     // Every tile in a geometry has the same size. At least two slots keep the
@@ -1841,7 +1862,11 @@ mod renderer_viewer {
         first_link: Option<&str>,
     ) -> Result<(ViewerExit, SwiftProcess)> {
         let mut document_height = initial.document_height;
-        let tile_budget = tile_budget_bytes(viewport_width, viewport_height);
+        let tile_budget = tile_budget_bytes(
+            viewport_width,
+            viewport_height,
+            pane_image_budget_bytes(std::env::var_os("HERDR_ENV").as_deref()),
+        );
         let latest_position = Arc::new(AtomicU64::new(initial_position.to_bits()));
         let read_root = swift.read_root.clone();
         let (requests, responses, webkit_worker) = spawn_worker(
@@ -2299,7 +2324,12 @@ mod renderer_viewer {
             let rows = total_rows.saturating_sub(1).max(1);
             let width = u32::from(columns.max(1)).saturating_mul(8);
             let height = u32::from(rows).saturating_mul(16);
-            let pixel_width = snapshot_pixel_width(width, height, terminal_pixel_width());
+            let pixel_width = snapshot_pixel_width(
+                width,
+                height,
+                terminal_pixel_width(),
+                pane_image_budget_bytes(std::env::var_os("HERDR_ENV").as_deref()),
+            );
             let mut helper = if let Some(mut existing) = swift.take() {
                 if last_geometry != Some((columns, rows, pixel_width)) {
                     let response = existing.request(&json!({
@@ -2509,7 +2539,12 @@ mod renderer_viewer {
             &output,
             width,
             height,
-            snapshot_pixel_width(width, height, terminal_pixel_width()),
+            snapshot_pixel_width(
+                width,
+                height,
+                terminal_pixel_width(),
+                pane_image_budget_bytes(std::env::var_os("HERDR_ENV").as_deref()),
+            ),
         )?;
         let ready = swift.response()?;
         if ready["kind"] != "ready" {
@@ -3786,6 +3821,8 @@ mod renderer_viewer {
             }
         }
 
+        const HERDR: usize = HERDR_PANE_IMAGE_BUDGET_BYTES;
+
         fn cached_with_size(image_width: u32, image_height: u32) -> ImageCache {
             ImageCache {
                 image_width,
@@ -3796,7 +3833,7 @@ mod renderer_viewer {
 
         #[test]
         fn tile_cache_capacity_keeps_decoded_tiles_within_budget() {
-            let budget = tile_budget_bytes(808, 912);
+            let budget = tile_budget_bytes(808, 912, HERDR);
             assert_eq!(tile_cache_capacity(&[], budget), MAX_TILE_CACHE);
             // Small tiles keep the full prefetch window.
             assert_eq!(
@@ -3813,7 +3850,7 @@ mod renderer_viewer {
         #[test]
         fn tile_cache_capacity_never_drops_below_displayed_plus_one() {
             // Below two, the displayed tile could never be replaced.
-            let budget = tile_budget_bytes(808, 912);
+            let budget = tile_budget_bytes(808, 912, HERDR);
             assert_eq!(
                 tile_cache_capacity(&[cached_with_size(4000, 8000)], budget),
                 2
@@ -3838,8 +3875,8 @@ mod renderer_viewer {
         fn tile_budget_leaves_room_for_cached_previews() {
             for (width, height) in [(808, 912), (1632, 912), (2560, 1440)] {
                 assert_eq!(
-                    tile_budget_bytes(width, height) + preview_reserve(width, height),
-                    PANE_IMAGE_BUDGET_BYTES
+                    tile_budget_bytes(width, height, HERDR) + preview_reserve(width, height),
+                    HERDR
                 );
             }
         }
@@ -3847,24 +3884,24 @@ mod renderer_viewer {
         #[test]
         fn snapshot_pixel_width_keeps_terminal_width_when_tiles_fit() {
             // 101x57 cells at 1414 px: 1414x3192 tiles (18 MB) already fit.
-            assert_eq!(snapshot_pixel_width(808, 912, 1414), 1414);
+            assert_eq!(snapshot_pixel_width(808, 912, 1414, HERDR), 1414);
             // Without reported pixels a pane whose 2x tile fits keeps the
             // backing scale; 808x912 points at 2x would be 23.6 MB.
-            assert_eq!(snapshot_pixel_width(640, 400, 0), 0);
-            assert!(snapshot_pixel_width(808, 912, 0) < 808 * 2);
+            assert_eq!(snapshot_pixel_width(640, 400, 0, HERDR), 0);
+            assert!(snapshot_pixel_width(808, 912, 0, HERDR) < 808 * 2);
         }
 
         #[test]
         fn snapshot_pixel_width_caps_tall_panes_and_unreported_pixels() {
             // 101x80 cells: 1414x4424 tiles would be 25 MB.
-            let pixel_width = snapshot_pixel_width(808, 1264, 1414);
+            let pixel_width = snapshot_pixel_width(808, 1264, 1414, HERDR);
             assert!(pixel_width < 1414);
-            assert!(tile_bytes(pixel_width, 808, 1264) <= tile_budget_bytes(808, 1264) / 3);
+            assert!(tile_bytes(pixel_width, 808, 1264) <= tile_budget_bytes(808, 1264, HERDR) / 3);
             // A wide pane must be capped even if the terminal reports no
             // pixels; WebKit would otherwise use up to a 2x backing scale.
-            let pixel_width = snapshot_pixel_width(1632, 912, 0);
+            let pixel_width = snapshot_pixel_width(1632, 912, 0, HERDR);
             assert!(pixel_width > 0 && pixel_width <= 1632 * 2);
-            assert!(tile_bytes(pixel_width, 1632, 912) <= tile_budget_bytes(1632, 912) / 3);
+            assert!(tile_bytes(pixel_width, 1632, 912) <= tile_budget_bytes(1632, 912, HERDR) / 3);
         }
 
         #[test]
@@ -3872,17 +3909,54 @@ mod renderer_viewer {
             // 204x57 cells at 2856 px: 36.5 MB tiles plus 3 MB previews.
             // 5K full screen: previews alone are 22 MB.
             for (width, height, pixels) in [(1632, 912, 2856), (2560, 1440, 5120)] {
-                let pixel_width = snapshot_pixel_width(width, height, pixels);
+                let pixel_width = snapshot_pixel_width(width, height, pixels, HERDR);
                 assert!(pixel_width > 0 && pixel_width < pixels);
-                let per_tile = tile_budget_bytes(width, height) / 3;
+                let per_tile = tile_budget_bytes(width, height, HERDR) / 3;
                 assert!(tile_bytes(pixel_width, width, height) <= per_tile);
                 assert!(tile_bytes(pixel_width + 8, width, height) > per_tile);
                 // Two cached tiles plus one in flight, plus all previews.
                 assert!(
                     3 * tile_bytes(pixel_width, width, height) + preview_reserve(width, height)
-                        <= PANE_IMAGE_BUDGET_BYTES
+                        <= HERDR
                 );
             }
+        }
+
+        #[test]
+        fn snapshot_pixel_width_keeps_terminal_width_outside_herdr() {
+            // 190x55 and 204x57 cells in Ghostty: Herdr's budget would cut
+            // these to about 70% of the terminal's pixel width.
+            for (width, height, pixels) in [(1520, 864, 2850), (1632, 912, 2856)] {
+                assert_eq!(
+                    snapshot_pixel_width(width, height, pixels, PANE_IMAGE_BUDGET_BYTES),
+                    pixels
+                );
+            }
+            // 5K full screen still keeps two cached tiles plus one in flight,
+            // plus all previews, within the terminal's image storage.
+            let pixel_width = snapshot_pixel_width(2560, 1440, 5120, PANE_IMAGE_BUDGET_BYTES);
+            assert!(pixel_width > 0 && pixel_width <= 5120);
+            assert!(
+                3 * tile_bytes(pixel_width, 2560, 1440) + preview_reserve(2560, 1440)
+                    <= PANE_IMAGE_BUDGET_BYTES
+            );
+        }
+
+        #[test]
+        fn snapshot_pixel_width_keeps_tiles_within_kitty_image_dimensions() {
+            // 100x161 cells at 1600 px: a 1600x10240 tile fits the bytes
+            // budget, but terminals reject images over 10000 px.
+            for pixels in [1600, 0] {
+                let pixel_width = snapshot_pixel_width(800, 2560, pixels, PANE_IMAGE_BUDGET_BYTES);
+                assert!(pixel_width > 0);
+                assert!(u64::from(pixel_width) * 2560 * 2 / 800 < u64::from(MAX_IMAGE_DIMENSION));
+            }
+        }
+
+        #[test]
+        fn pane_image_budget_uses_herdr_limit_only_in_herdr_panes() {
+            assert_eq!(pane_image_budget_bytes(Some(OsStr::new("1"))), HERDR);
+            assert_eq!(pane_image_budget_bytes(None), PANE_IMAGE_BUDGET_BYTES);
         }
 
         #[test]
