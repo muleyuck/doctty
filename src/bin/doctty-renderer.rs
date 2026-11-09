@@ -482,9 +482,35 @@ mod renderer_viewer {
     struct SwiftProcess {
         child: Child,
         input: std::process::ChildStdin,
-        output: BufReader<std::process::ChildStdout>,
+        replies: Receiver<io::Result<String>>,
+        // Set when a reply was not read. A late reply would otherwise be
+        // taken as the answer to the next request.
+        broken: bool,
         // The only directory WebKit may read; preview thumbnails obey it too.
         read_root: PathBuf,
+    }
+
+    // Normal replies take well under a second (a few seconds when the helper
+    // starts through the Swift interpreter). While waiting, terminal input is
+    // not read and raw mode turns Ctrl-C into a key, so a stalled helper
+    // could otherwise only be ended from outside the terminal.
+    const HELPER_REPLY_TIMEOUT: Duration = Duration::from_secs(20);
+
+    // Returns `None` once the helper has closed its output.
+    fn next_reply_line(
+        replies: &Receiver<io::Result<String>>,
+        timeout: Duration,
+    ) -> Result<Option<String>> {
+        match replies.recv_timeout(timeout) {
+            Ok(line) => Ok(Some(line?)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                bail!(
+                    "WebKit helper did not respond within {}s",
+                    timeout.as_secs()
+                )
+            }
+        }
     }
 
     impl SwiftProcess {
@@ -530,23 +556,44 @@ mod renderer_viewer {
             writeln!(input, "{}", json!({ "html": page.html }))?;
             input.flush()?;
             let output = BufReader::new(child.stdout.take().context("missing Swift stdout")?);
+            let (sender, replies) = mpsc::channel();
+            // Ends at EOF, which killing the helper on drop guarantees.
+            thread::spawn(move || {
+                for line in output.lines() {
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
             Ok(Self {
                 child,
                 input,
-                output,
+                replies,
+                broken: false,
                 read_root: page.read_root.clone(),
             })
         }
 
         fn request(&mut self, request: &Value) -> Result<Value> {
+            if self.broken {
+                bail!("WebKit helper stopped responding");
+            }
             writeln!(self.input, "{request}")?;
             self.input.flush()?;
             self.response()
         }
 
         fn response(&mut self) -> Result<Value> {
-            let mut line = String::new();
-            if self.output.read_line(&mut line)? == 0 {
+            if self.broken {
+                bail!("WebKit helper stopped responding");
+            }
+            let reply = next_reply_line(&self.replies, HELPER_REPLY_TIMEOUT);
+            if reply.is_err() {
+                // Fail every queued request at once instead of waiting again.
+                self.broken = true;
+                let _ = self.child.kill();
+            }
+            let Some(line) = reply? else {
                 if std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN").is_some() {
                     bail!(
                         "WebKit helper closed its output; see Swift stderr. \
@@ -558,7 +605,7 @@ mod renderer_viewer {
                     );
                 }
                 bail!("WebKit helper closed its output; see Swift stderr");
-            }
+            };
             let payload: Value =
                 serde_json::from_str(&line).context("invalid WebKit JSON response")?;
             if payload["kind"] == "error" {
@@ -2895,6 +2942,24 @@ mod renderer_viewer {
                 QueuedInput::Quit
             );
             assert_eq!(input_after_reload([]), QueuedInput::Dropped);
+        }
+
+        #[test]
+        fn helper_reply_times_out_instead_of_hanging() {
+            let (sender, lines) = mpsc::channel();
+            let error = next_reply_line(&lines, Duration::from_millis(20)).unwrap_err();
+            assert!(error.to_string().contains("did not respond"), "{error}");
+
+            sender.send(Ok("{}".to_owned())).unwrap();
+            assert_eq!(
+                next_reply_line(&lines, Duration::from_millis(20)).unwrap(),
+                Some("{}".to_owned())
+            );
+            drop(sender);
+            assert_eq!(
+                next_reply_line(&lines, Duration::from_millis(20)).unwrap(),
+                None
+            );
         }
 
         #[test]
