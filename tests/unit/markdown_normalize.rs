@@ -1,4 +1,4 @@
-use doctty::core::document::BlockKind;
+use doctty::core::document::{BlockKind, InlineSegment, InlineStyle};
 use doctty::render::markdown::parse_document;
 
 #[test]
@@ -334,7 +334,7 @@ fn shows_a_block_without_supported_tags_as_its_source() {
 #[test]
 fn shows_a_whole_html_block_as_source_when_any_part_is_unsupported() {
     for source in [
-        "<p>Press <kbd>Ctrl</kbd></p>",
+        "<p>Press <mark>Ctrl</mark></p>",
         "<div align=\"center\">\n  <img src=\"a.png\" alt=\"A\">\n  <!-- note\n    indented -->\n</div>",
         "<div><!-- a\n  b --><span\n    title=\"x\">y</span></div>",
         "<div>\n<!DOCTYPE html>\n</div>",
@@ -356,8 +356,8 @@ fn shows_a_whole_html_block_as_source_when_any_part_is_unsupported() {
 #[test]
 fn keeps_unsupported_inline_tags_and_comments_as_source() {
     assert_eq!(
-        paragraph_texts("Press <kbd>Ctrl</kbd>+<kbd>C</kbd><!-- note -->. H<sub>2</sub>O\n"),
-        vec!["Press <kbd>Ctrl</kbd>+<kbd>C</kbd><!-- note -->. H2O"]
+        paragraph_texts("Press <mark>Ctrl</mark>+<mark>C</mark><!-- note -->. H<sub>2</sub>O\n"),
+        vec!["Press <mark>Ctrl</mark>+<mark>C</mark><!-- note -->. H2O"]
     );
 }
 
@@ -372,6 +372,9 @@ fn supports_exactly_the_tags_the_rich_view_restores() {
         "<div>before<img-foo data-x=\"1\" src=\"a.png\" alt=\"A\">after</div>",
         "<div><a-b href=\"https://example.com\">x</a-b></div>",
         "<div><sourcex srcset=\"a.png\"></div>",
+        "<p><b class=\"x\">x</b></p>",
+        "<p><bdi>x</bdi></p>",
+        "<p><STRONG>x</STRONG></p>",
     ] {
         assert_eq!(
             paragraph_texts(&format!("{source}\n")),
@@ -431,13 +434,19 @@ fn keeps_less_than_signs_and_broken_tags_as_text() {
 #[test]
 fn handles_long_blocks_of_unclosed_tags_and_quotes() {
     for unit in [
-        "x <a ", "<a b=\"", "<a b='", "<a\"=\"", "<A \"x=", "<kbd>", "<!--",
+        "x <a ", "<a b=\"", "<a b='", "<a\"=\"", "<A \"x=", "<mark>", "<!--",
     ] {
         for tail in ["", "\"<x"] {
             let source = format!("<div>{}{tail}</div>\n", unit.repeat(20_000));
             assert_eq!(paragraph_texts(&source).len(), 1, "unit: {unit}");
         }
     }
+}
+
+#[test]
+fn handles_long_blocks_of_breaks_in_alternating_styles() {
+    let source = format!("<div>{}x</div>\n", "<br><b><br></b>".repeat(20_000));
+    assert_eq!(paragraph_texts(&source), vec!["x"]);
 }
 
 #[test]
@@ -504,5 +513,108 @@ fn drops_the_line_ending_of_a_crlf_source_block() {
     assert_eq!(
         paragraph_texts("<!-- x\r\n  y -->\r\n\r\npara\r\n"),
         vec!["<!-- x\r\n  y -->", "para"]
+    );
+}
+
+/// Styled segments of the only paragraph in `source`.
+fn paragraph_segments(source: &str) -> Vec<InlineSegment> {
+    match block_kinds(source).as_slice() {
+        [BlockKind::Paragraph { text }] => text.segments.clone(),
+        other => panic!("expected one paragraph, got: {other:?}"),
+    }
+}
+
+fn segment(text: &str, bold: bool, italic: bool, code: bool) -> InlineSegment {
+    InlineSegment {
+        text: text.to_string(),
+        style: InlineStyle { bold, italic, code },
+    }
+}
+
+#[test]
+fn styles_text_inside_inline_html_tags_in_a_paragraph() {
+    assert_eq!(
+        paragraph_segments(
+            "a <b>b</b> <strong>s</strong> <em>e</em> <i>i</i> <code>c</code> <kbd>k</kbd> z\n"
+        ),
+        vec![
+            segment("a ", false, false, false),
+            segment("b", true, false, false),
+            segment(" ", false, false, false),
+            segment("s", true, false, false),
+            segment(" ", false, false, false),
+            segment("e", false, true, false),
+            segment(" ", false, false, false),
+            segment("i", false, true, false),
+            segment(" ", false, false, false),
+            segment("c", false, false, true),
+            segment(" ", false, false, false),
+            segment("k", false, false, true),
+            segment(" z", false, false, false),
+        ]
+    );
+}
+
+#[test]
+fn nests_inline_html_styles_with_markdown_emphasis() {
+    assert_eq!(
+        paragraph_segments("<b>a <i>b</i> *c*</b> <em>**d**</em>\n"),
+        vec![
+            segment("a ", true, false, false),
+            segment("b", true, true, false),
+            segment(" ", true, false, false),
+            segment("c", true, true, false),
+            segment(" ", false, false, false),
+            segment("d", true, true, false),
+        ]
+    );
+}
+
+#[test]
+fn ends_an_inline_html_style_at_its_closing_tag_even_inside_emphasis() {
+    assert_eq!(
+        paragraph_segments("<b>a *b</b> c*\n"),
+        vec![
+            segment("a ", true, false, false),
+            segment("b", true, true, false),
+            segment(" c", false, true, false),
+        ]
+    );
+}
+
+#[test]
+fn ignores_a_closing_inline_html_tag_without_an_opening_one() {
+    assert_eq!(
+        paragraph_segments("a</b> <b>b</b><b>c</b>\n"),
+        vec![
+            segment("a ", false, false, false),
+            segment("bc", true, false, false),
+        ]
+    );
+}
+
+#[test]
+fn styles_inline_html_tags_inside_an_html_block() {
+    assert_eq!(
+        paragraph_segments(
+            "<div align=\"center\">\n  <p><b>Fast</b> Markdown <em>viewer</em>, press <kbd>q</kbd></p>\n</div>\n"
+        ),
+        vec![
+            segment("Fast", true, false, false),
+            segment(" Markdown ", false, false, false),
+            segment("viewer", false, true, false),
+            segment(", press ", false, false, false),
+            segment("q", false, false, true),
+        ]
+    );
+}
+
+#[test]
+fn renders_a_readme_hero_block_with_inline_tags() {
+    assert_eq!(
+        paragraph_texts(
+            "<div align=\"center\">\n  <img src=\"logo.png\" alt=\"logo\">\n  <p><b>Fast</b> Markdown viewer</p>\n</div>\n"
+        ),
+        vec!["logo\nFast Markdown viewer"]
     );
 }

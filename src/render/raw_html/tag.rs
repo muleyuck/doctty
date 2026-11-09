@@ -19,7 +19,27 @@ pub(crate) enum RawHtmlTag {
     /// `<sub>`, `<sup>`, `<picture>` and `<source>`, which only wrap text or
     /// images.
     Inline,
+    /// Start (`open`) or end of a tag that styles its text, such as `<b>`.
+    Style { style: TextStyle, open: bool },
 }
+
+/// The text style of a tag such as `<b>` or `<kbd>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextStyle {
+    Bold,
+    Italic,
+    Code,
+}
+
+/// Supported only without attributes, as READMEs write them.
+const STYLE_TAGS: &[(&str, TextStyle)] = &[
+    ("b", TextStyle::Bold),
+    ("strong", TextStyle::Bold),
+    ("em", TextStyle::Italic),
+    ("i", TextStyle::Italic),
+    ("code", TextStyle::Code),
+    ("kbd", TextStyle::Code),
+];
 
 const BLOCK_TAGS: &[&str] = &[
     "div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "details", "summary",
@@ -62,6 +82,9 @@ pub(crate) fn restore_supported_tag(escaped_tag: &str) -> Option<(RawHtmlTag, St
     if let Some((kind, html)) = simple {
         return Some((kind, html.to_string()));
     }
+    if let Some(restored) = restore_style_tag(decoded) {
+        return Some(restored);
+    }
 
     let restored = [
         (
@@ -77,6 +100,19 @@ pub(crate) fn restore_supported_tag(escaped_tag: &str) -> Option<(RawHtmlTag, St
     restored
         .into_iter()
         .find_map(|(kind, restore)| restore(decoded).map(|html| (kind, html)))
+}
+
+fn restore_style_tag(tag: &str) -> Option<(RawHtmlTag, String)> {
+    let (slash, name) = match tag.strip_prefix('/') {
+        Some(name) => ("/", name),
+        None => ("", tag),
+    };
+    let &(name, style) = STYLE_TAGS.iter().find(|(known, _)| *known == name)?;
+    let open = slash.is_empty();
+    Some((
+        RawHtmlTag::Style { style, open },
+        format!("<{slash}{name}>"),
+    ))
 }
 
 fn restore_block_tag(tag: &str) -> Option<String> {

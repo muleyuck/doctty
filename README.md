@@ -156,9 +156,12 @@ Raw HTML is rendered only for the tags doctty supports, in both the rich view an
 | `<br>` | Line break (a space inside Markdown headings and table cells) |
 | `<a href>` | Link text followed by `<url>`, like a Markdown link |
 | `<img>` | Shown as an image when it is the only content of its block; otherwise its alt text |
+| `<b>`, `<strong>` | Their text, like Markdown `**bold**` |
+| `<em>`, `<i>` | Their text, like Markdown `*italic*` |
+| `<code>`, `<kbd>` | Their text, like a Markdown `` `code` `` span |
 | `<picture>`, `<source>`, `<sub>`, `<sup>` | Their text |
 
-Tags are supported only in the forms the rich view accepts: lower-case names, double-quoted attribute values, and safe URLs. HTML entities in supported HTML are decoded.
+Tags are supported only in the forms the rich view accepts: lower-case names, double-quoted attribute values, and safe URLs. `<b>`, `<strong>`, `<em>`, `<i>`, `<code>` and `<kbd>` are supported only without attributes. HTML entities in supported HTML are decoded.
 
 ## Contributing
 

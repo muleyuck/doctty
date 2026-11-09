@@ -273,6 +273,9 @@ fn collect_text_segments<'a>(
     parts: &mut Vec<InlineSegment>,
     html: &mut InlineHtmlState,
 ) {
+    // Containers pass on only their Markdown style, so that an HTML style tag
+    // closed inside one, as in `<b>a *b</b> c*`, ends where it is closed.
+    let leaf_style = html.style(style);
     match &node.data.borrow().value {
         NodeValue::Text(text) => {
             let value = if html.follows_line_break(parts) {
@@ -283,7 +286,7 @@ fn collect_text_segments<'a>(
             if !value.is_empty() {
                 parts.push(InlineSegment {
                     text: value.to_string(),
-                    style,
+                    style: leaf_style,
                 });
             }
         }
@@ -294,7 +297,7 @@ fn collect_text_segments<'a>(
                     text: value,
                     style: InlineStyle {
                         code: true,
-                        ..style
+                        ..leaf_style
                     },
                 });
             }
@@ -308,14 +311,17 @@ fn collect_text_segments<'a>(
                 format!("$`{}`$", math.literal)
             };
             if !value.is_empty() {
-                parts.push(InlineSegment { text: value, style });
+                parts.push(InlineSegment {
+                    text: value,
+                    style: leaf_style,
+                });
             }
         }
         NodeValue::HtmlInline(literal) => collect_inline_html(literal, style, parts, html),
         NodeValue::FootnoteReference(reference) => {
             parts.push(InlineSegment {
                 text: format!("[^{}]", reference.name),
-                style,
+                style: leaf_style,
             });
         }
         NodeValue::Link(link) => {
@@ -325,7 +331,7 @@ fn collect_text_segments<'a>(
             if !link.url.is_empty() {
                 parts.push(InlineSegment {
                     text: format!(" <{}>", link.url),
-                    style,
+                    style: html.style(style),
                 });
             }
         }
@@ -353,7 +359,7 @@ fn collect_text_segments<'a>(
             }
             parts.push(InlineSegment {
                 text: "\n".to_string(),
-                style,
+                style: leaf_style,
             });
         }
         NodeValue::Image(_) => {
@@ -404,7 +410,9 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
     if let Some(image) = converted.lone_image {
         return Some(image);
     }
-    let text = StyledText::from_plain(converted.text);
+    let text = StyledText {
+        segments: converted.segments,
+    };
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
 }
 
