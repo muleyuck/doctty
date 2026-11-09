@@ -77,47 +77,43 @@ impl MermaidCliRenderer {
     }
 
     pub fn render_png(&self, source: &str, theme: Theme) -> Result<Vec<u8>> {
-        self.render_png_sized(source, None, None, theme)
+        self.render_png_sized(source, None, theme)
     }
 
     pub fn render_svg_sized(
         &self,
         source: &str,
-        width_px: Option<u32>,
         scale: Option<f32>,
         theme: Theme,
     ) -> Result<String> {
-        let svg_bytes = self.render_bytes_sized(source, "svg", width_px, scale, theme)?;
+        let svg_bytes = self.render_bytes_sized(source, "svg", scale, theme)?;
         String::from_utf8(svg_bytes).context("mermaid svg output was not valid utf-8")
     }
 
     pub fn render_png_sized(
         &self,
         source: &str,
-        width_px: Option<u32>,
         scale: Option<f32>,
         theme: Theme,
     ) -> Result<Vec<u8>> {
-        self.render_bytes_sized(source, "png", width_px, scale, theme)
+        self.render_bytes_sized(source, "png", scale, theme)
     }
 
     fn render_bytes_sized(
         &self,
         source: &str,
         extension: &str,
-        width_px: Option<u32>,
         scale: Option<f32>,
         theme: Theme,
     ) -> Result<Vec<u8>> {
         let _span = info_span!(
             "mermaid.render",
             extension,
-            width_px = width_px.unwrap_or_default(),
             scale = scale.unwrap_or_default(),
             theme = theme.as_str()
         )
         .entered();
-        let cache_path = self.cache_path(source, extension, width_px, scale, theme);
+        let cache_path = self.cache_path(source, extension, scale, theme);
         if let Ok(cached) = fs::read(&cache_path) {
             return Ok(cached);
         }
@@ -139,9 +135,7 @@ impl MermaidCliRenderer {
             .arg("-t")
             .arg(mermaid_theme_name(theme));
 
-        if let Some(width_px) = width_px.filter(|width_px| *width_px > 0) {
-            command.arg("-w").arg(width_px.to_string());
-        }
+        // No width option: mermaid-cli 12 removed `-w` and its `--size` does not exist in 11.
         if let Some(scale) = scale.filter(|scale| scale.is_finite() && *scale > 0.0) {
             command.arg("-s").arg(scale.to_string());
         }
@@ -180,7 +174,6 @@ impl MermaidCliRenderer {
         &self,
         source: &str,
         extension: &str,
-        width_px: Option<u32>,
         scale: Option<f32>,
         theme: Theme,
     ) -> PathBuf {
@@ -188,7 +181,6 @@ impl MermaidCliRenderer {
             .filter(|value| value.is_finite() && *value > 0.0)
             .map(|value| format!("{value:.3}"))
             .unwrap_or_else(|| "default".to_string());
-        let width_key = width_px.unwrap_or_default().to_string();
         let theme_key = mermaid_theme_name(theme);
         let base_args = self
             .base_args
@@ -200,7 +192,6 @@ impl MermaidCliRenderer {
             self.command.to_string_lossy().as_ref(),
             base_args.as_str(),
             extension,
-            width_key.as_str(),
             scale_key.as_str(),
             theme_key,
             source,

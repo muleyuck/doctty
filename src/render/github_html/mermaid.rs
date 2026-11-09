@@ -5,6 +5,10 @@ use comrak::nodes::{AstNode, NodeValue};
 
 use crate::{cli::Theme, core::config::MermaidMode, io::mermaid_cli::MermaidCliRenderer};
 
+use super::postprocess::write_escaped_text;
+
+const MERMAID_ERROR_MAX_LINES: usize = 3;
+
 pub(super) fn replace_mermaid_code_blocks<'a>(
     root: &'a AstNode<'a>,
     mermaid_mode: MermaidMode,
@@ -29,7 +33,7 @@ pub(super) fn replace_mermaid_code_blocks<'a>(
             acc
         });
     let rendered_mermaid = render_mermaid_blocks_with(&mermaid_sources, mermaid_mode, |source| {
-        mermaid_renderer.render_svg_sized(source, Some(690), Some(2.0), theme)
+        mermaid_renderer.render_svg_sized(source, Some(2.0), theme)
     })?;
 
     for node in root.descendants() {
@@ -134,12 +138,28 @@ where
                 "<div class=\"doctty-mermaid\">{}</div>",
                 decorate_mermaid_svg(&svg_markup)
             )),
-            Err(_) => Ok(
-                "<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid unavailable</div>"
-                    .to_string(),
-            ),
+            Err(error) => Ok(mermaid_error_html(&error)),
         },
     }
+}
+
+fn mermaid_error_html(error: &anyhow::Error) -> String {
+    let message = format!("{error:#}");
+    let excerpt = message
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .take(MERMAID_ERROR_MAX_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut html = String::from(
+        "<div class=\"doctty-mermaid doctty-mermaid-fallback\">Mermaid unavailable\
+         <div class=\"doctty-mermaid-error\">",
+    );
+    // Writing to a String cannot fail.
+    let _ = write_escaped_text(&mut html, &excerpt);
+    html.push_str("</div></div>");
+    html
 }
 
 pub(super) fn decorate_mermaid_svg(svg_markup: &str) -> String {

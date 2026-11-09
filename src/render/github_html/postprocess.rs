@@ -193,7 +193,14 @@ pub(super) fn write_html_source_block(
     literal: &str,
 ) -> std::fmt::Result {
     write!(output, r#"<div class="{HTML_SOURCE_CLASS}">"#)?;
-    for c in literal.trim_end_matches(['\r', '\n']).chars() {
+    write_escaped_text(output, literal.trim_end_matches(['\r', '\n']))?;
+    output.write_str("</div>")
+}
+
+/// Escapes with numeric references, which `restore_supported_raw_html` leaves alone, so no
+/// tag in `text` is turned back into markup.
+pub(super) fn write_escaped_text(output: &mut dyn std::fmt::Write, text: &str) -> std::fmt::Result {
+    for c in text.chars() {
         match c {
             '&' => output.write_str("&#38;")?,
             '<' => output.write_str("&#60;")?,
@@ -203,7 +210,7 @@ pub(super) fn write_html_source_block(
             c => output.write_char(c)?,
         }
     }
-    output.write_str("</div>")
+    Ok(())
 }
 
 pub(super) fn restore_supported_raw_html(html: &str) -> String {
