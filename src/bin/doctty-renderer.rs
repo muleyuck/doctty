@@ -451,8 +451,7 @@ mod renderer_viewer {
 
     impl SwiftProcess {
         fn start(
-            html: &Path,
-            source_dir: &Path,
+            page: &WebKitPage,
             output: &Path,
             width: u32,
             height: u32,
@@ -460,25 +459,7 @@ mod renderer_viewer {
         ) -> Result<Self> {
             let helper =
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("native/macos/webkit_viewport.swift");
-            // The generated HTML must be readable by WebKit, but relative
-            // Markdown images may live outside the source directory.
-            // Reuse the snapshot pipeline's asset-aware root calculation.
-            let html_source =
-                fs::read_to_string(html).context("unable to read WebKit HTML input")?;
-            let read_root = if html.starts_with(source_dir) {
-                doctty::io::webkit_snapshot::compiled_renderer_read_root(
-                    &html_source,
-                    source_dir,
-                    html,
-                )?
-            } else {
-                // Out-of-tree generated HTML has only staged media inside its
-                // private temp folder; never combine this with source_dir.
-                html.parent()
-                    .context("isolated HTML has no parent directory")?
-                    .to_path_buf()
-            };
-            if read_root == Path::new("/") {
+            if page.read_root == Path::new("/") {
                 bail!("refusing unrestricted WebKit filesystem read access");
             }
             // Compare the interpreter with a compiled executable without
@@ -495,8 +476,9 @@ mod renderer_viewer {
                 command
             };
             let mut child = command
-                .arg(html)
-                .arg(&read_root)
+                .arg(hybrid_image_preview::PAGE_URL_SCHEME)
+                .arg(&page.path)
+                .arg(&page.read_root)
                 .arg(output)
                 .arg(width.to_string())
                 .arg(height.to_string())
@@ -506,13 +488,15 @@ mod renderer_viewer {
                 .stderr(Stdio::inherit())
                 .spawn()
                 .context("unable to start Swift WebKit helper")?;
-            let input = child.stdin.take().context("missing Swift stdin")?;
+            let mut input = child.stdin.take().context("missing Swift stdin")?;
+            writeln!(input, "{}", json!({ "html": page.html }))?;
+            input.flush()?;
             let output = BufReader::new(child.stdout.take().context("missing Swift stdout")?);
             Ok(Self {
                 child,
                 input,
                 output,
-                read_root,
+                read_root: page.read_root.clone(),
             })
         }
 
@@ -885,41 +869,43 @@ mod renderer_viewer {
     const MAX_STAGED_ASSET_BYTES: u64 = 32 * 1024 * 1024;
     const MAX_STAGED_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 
-    struct HtmlLease {
-        _file: Option<tempfile::NamedTempFile>,
-        _isolated_assets: Option<tempfile::TempDir>,
+    // Images staged outside the document's directory; removed on drop.
+    struct StagedImages {
+        _isolated_assets: tempfile::TempDir,
         path: PathBuf,
     }
 
+    // What the WebKit helper loads. The page is served from memory at `path`,
+    // so nothing is written next to the document.
+    struct WebKitPage {
+        html: String,
+        path: PathBuf,
+        // The only directory WebKit may read; preview thumbnails obey it too.
+        read_root: PathBuf,
+        _isolated_assets: Option<StagedImages>,
+    }
+
     // Closing the terminal window or pane sends SIGHUP, whose default action
-    // exits without running destructors and would leave the lease next to the
-    // user's Markdown. A flag checked by the viewer loop is not enough: once
-    // the terminal is gone, crossterm 0.29 keeps re-reading the EOF tty inside
-    // event::poll and never returns to the loop.
+    // exits without running destructors and would leave the staged images. A
+    // flag checked by the viewer loop is not enough: once the terminal is
+    // gone, crossterm 0.29 keeps re-reading the EOF tty inside event::poll and
+    // never returns to the loop.
     static LEASED_PATHS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
-    impl HtmlLease {
-        fn new(
-            file: Option<tempfile::NamedTempFile>,
-            isolated_assets: Option<tempfile::TempDir>,
-        ) -> Self {
-            let path = file
-                .as_ref()
-                .map(|file| file.path().to_path_buf())
-                .or_else(|| isolated_assets.as_ref().map(|dir| dir.path().to_path_buf()))
-                .unwrap_or_default();
+    impl StagedImages {
+        fn new(isolated_assets: tempfile::TempDir) -> Self {
+            let path = isolated_assets.path().to_path_buf();
             if let Ok(mut paths) = LEASED_PATHS.lock() {
                 paths.push(path.clone());
             }
             Self {
-                _file: file,
                 _isolated_assets: isolated_assets,
                 path,
             }
         }
     }
 
-    impl Drop for HtmlLease {
+    impl Drop for StagedImages {
         fn drop(&mut self) {
             if let Ok(mut paths) = LEASED_PATHS.lock() {
                 paths.retain(|path| path != &self.path);
@@ -938,7 +924,7 @@ mod renderer_viewer {
             if let Some(signal) = signals.forever().next() {
                 if let Ok(paths) = LEASED_PATHS.lock() {
                     for path in paths.iter() {
-                        let _ = fs::remove_file(path).or_else(|_| fs::remove_dir_all(path));
+                        let _ = fs::remove_dir_all(path);
                     }
                 }
                 // Keep the previous immediate exit for these signals.
@@ -948,9 +934,9 @@ mod renderer_viewer {
         Ok(())
     }
 
-    fn asset_file_url(path: &Path) -> String {
+    fn page_url(path: &Path) -> String {
         use std::fmt::Write as _;
-        let mut result = String::from("file://");
+        let mut result = format!("{}://", hybrid_image_preview::PAGE_URL_SCHEME);
         for byte in path.to_string_lossy().bytes() {
             if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
                 result.push(char::from(byte));
@@ -1048,12 +1034,12 @@ mod renderer_viewer {
         fs::copy(&path, &destination)
             .with_context(|| format!("unable to stage WebKit image {}", path.display()))?;
         *total_bytes += metadata.len();
-        let uri = asset_file_url(&destination);
+        let uri = page_url(&destination);
         copies.push((reference.to_string(), uri.clone()));
         Ok(uri)
     }
 
-    fn stage_isolated_html(html: &str, source_dir: &Path) -> Result<(PathBuf, tempfile::TempDir)> {
+    fn stage_isolated_html(html: &str, source_dir: &Path) -> Result<(String, tempfile::TempDir)> {
         let stage = tempfile::tempdir().context("unable to create isolated WebKit workspace")?;
         let mut copies = Vec::new();
         let mut total_bytes = 0;
@@ -1110,23 +1096,115 @@ mod renderer_viewer {
             }
             rest = &rest[end..];
         }
-        let html_path = stage.path().join("document.html");
-        fs::write(&html_path, output).context("unable to write isolated WebKit HTML")?;
-        Ok((html_path, stage))
+        Ok((output, stage))
     }
 
-    fn html_input(
-        path: &Path,
-        theme: Theme,
-    ) -> Result<(PathBuf, Option<HtmlLease>, Option<String>)> {
+    // A page served from a custom scheme cannot load file:// URLs, so URL
+    // attributes of start tags (the base, explicit image or stylesheet URLs)
+    // move to that scheme. Text is left alone, and the scheme handler still
+    // applies the read root.
+    fn serve_file_urls_from_page_scheme(html: &str) -> String {
+        let mut output = String::with_capacity(html.len());
+        let mut rest = html;
+        while let Some(start) = rest.find('<') {
+            output.push_str(&rest[..start]);
+            rest = &rest[start..];
+            if !rest[1..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+                output.push('<');
+                rest = &rest[1..];
+                continue;
+            }
+            let end = start_tag_end(rest);
+            output.push_str(&serve_tag_file_urls(&rest[..end]));
+            rest = &rest[end..];
+        }
+        output.push_str(rest);
+        output
+    }
+
+    // Index just past the '>' that ends the tag, skipping quoted values.
+    fn start_tag_end(tag: &str) -> usize {
+        let mut quote = None;
+        for (index, c) in tag.char_indices() {
+            match (quote, c) {
+                (None, '"' | '\'') => quote = Some(c),
+                (Some(open), _) if c == open => quote = None,
+                (None, '>') => return index + 1,
+                _ => {}
+            }
+        }
+        tag.len()
+    }
+
+    fn serve_tag_file_urls(tag: &str) -> String {
+        let scheme = hybrid_image_preview::PAGE_URL_SCHEME;
+        let mut output = String::with_capacity(tag.len());
+        let mut rest = tag;
+        while let Some(equals) = rest.find('=') {
+            let name = rest[..equals]
+                .trim_end()
+                .rsplit(|c: char| c.is_ascii_whitespace())
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let after = &rest[equals + 1..];
+            let value_start = equals + 1 + (after.len() - after.trim_start().len());
+            let Some(quote) = rest[value_start..]
+                .chars()
+                .next()
+                .filter(|c| matches!(c, '"' | '\''))
+            else {
+                output.push_str(&rest[..=equals]);
+                rest = &rest[equals + 1..];
+                continue;
+            };
+            let value_begin = value_start + 1;
+            let value_end = rest[value_begin..]
+                .find(quote)
+                .map_or(rest.len(), |end| value_begin + end);
+            output.push_str(&rest[..value_begin]);
+            let value = &rest[value_begin..value_end];
+            let urls = match name.as_str() {
+                "href" | "src" | "poster" => vec![value],
+                "srcset" => doctty::io::webkit_snapshot::srcset_urls(value),
+                _ => Vec::new(),
+            };
+            let mut copied = 0;
+            for url in urls {
+                if let Some(path) = url.strip_prefix("file://") {
+                    let offset = url.as_ptr() as usize - value.as_ptr() as usize;
+                    output.push_str(&value[copied..offset]);
+                    output.push_str(scheme);
+                    output.push_str("://");
+                    output.push_str(path);
+                    copied = offset + url.len();
+                }
+            }
+            output.push_str(&value[copied..]);
+            rest = &rest[value_end..];
+        }
+        output.push_str(rest);
+        output
+    }
+
+    fn html_input(path: &Path, theme: Theme) -> Result<(WebKitPage, Option<String>)> {
+        let root = path.parent().context("source directory unavailable")?;
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
         {
-            return Ok((path.to_path_buf(), None, None));
+            let html = fs::read_to_string(path).context("unable to read WebKit HTML input")?;
+            let read_root =
+                doctty::io::webkit_snapshot::compiled_renderer_read_root(&html, root, path)?;
+            let page = WebKitPage {
+                html: serve_file_urls_from_page_scheme(&html),
+                path: path.to_path_buf(),
+                read_root,
+                _isolated_assets: None,
+            };
+            return Ok((page, None));
         }
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
-        let root = path.parent().context("source directory unavailable")?;
         let mermaid_mode =
             webkit_mermaid_mode(std::env::var_os("DOCTTY_WEBKIT_MERMAID").as_deref())?;
         let html = build_github_html(&source, root, theme, mermaid_mode)?;
@@ -1136,46 +1214,27 @@ mod renderer_viewer {
             .into_iter()
             .next();
 
-        match tempfile::Builder::new()
-            .prefix(".doctty-poc-")
-            .suffix(".html")
-            .tempfile_in(root)
+        let page = match doctty::io::webkit_snapshot::compiled_renderer_read_root(&html, root, path)
         {
-            Ok(mut file) => {
-                let read_root = doctty::io::webkit_snapshot::compiled_renderer_read_root(
-                    &html,
-                    root,
-                    file.path(),
-                );
-                if read_root.is_ok() {
-                    file.write_all(html.as_bytes())?;
-                    file.flush()?;
-                    return Ok((
-                        file.path().to_path_buf(),
-                        Some(HtmlLease::new(Some(file), None)),
-                        first_link,
-                    ));
+            Ok(read_root) => WebKitPage {
+                html: serve_file_urls_from_page_scheme(&html),
+                path: path.to_path_buf(),
+                read_root,
+                _isolated_assets: None,
+            },
+            // An image from an unrelated filesystem root would make the read
+            // root "/". Copy the images instead of granting it.
+            Err(_) => {
+                let (html, stage) = stage_isolated_html(&html, root)?;
+                WebKitPage {
+                    html: serve_file_urls_from_page_scheme(&html),
+                    path: path.to_path_buf(),
+                    read_root: stage.path().to_path_buf(),
+                    _isolated_assets: Some(StagedImages::new(stage)),
                 }
-                // Even a writable document may reference an image from an
-                // unrelated filesystem root. Never hand "/" to WebKit.
-                drop(file);
             }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
-                ) => {}
-            Err(error) => {
-                return Err(error).context("unable to create temporary HTML alongside Markdown");
-            }
-        }
-
-        let (html_path, stage) = stage_isolated_html(&html, root)?;
-        Ok((
-            html_path,
-            Some(HtmlLease::new(None, Some(stage))),
-            first_link,
-        ))
+        };
+        Ok((page, first_link))
     }
 
     // Open links only on explicit 'o' presses. This intentionally reuses the
@@ -2302,7 +2361,6 @@ mod renderer_viewer {
         hybrid_image: bool,
         watch: bool,
     ) -> Result<()> {
-        let source_dir = document.parent().context("source directory unavailable")?;
         // Observe the initial revision before reading HTML: a save racing
         // with startup is then picked up by the watcher.
         let mut watcher = if watch {
@@ -2310,7 +2368,7 @@ mod renderer_viewer {
         } else {
             None
         };
-        let (mut html, mut _temp_html, mut first_link) = html_input(document, theme)?;
+        let (mut page, mut first_link) = html_input(document, theme)?;
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.rgbz");
         let _session = TerminalSession::enter()?;
@@ -2342,8 +2400,7 @@ mod renderer_viewer {
                 }
                 existing
             } else {
-                let mut process =
-                    SwiftProcess::start(&html, source_dir, &output, width, height, pixel_width)?;
+                let mut process = SwiftProcess::start(&page, &output, width, height, pixel_width)?;
                 let ready = process.response()?;
                 if ready["kind"] != "ready" {
                     bail!("expected WebKit readiness response: {ready}");
@@ -2429,17 +2486,16 @@ mod renderer_viewer {
                     // racing with the reload is still detected by --watch.
                     let revision_to_ack = WatchRevision::read(document).ok();
                     match html_input(document, theme) {
-                        Ok((new_html, new_temp_html, new_first_link)) => {
+                        Ok((new_page, new_first_link)) => {
                             if let (Some(state), Some(revision)) =
                                 (watcher.as_mut(), revision_to_ack)
                             {
                                 state.acknowledge_loaded(revision);
                             }
                             drop(returned);
-                            // Old temporary HTML stays alive until the old
+                            // Old staged images stay alive until the old
                             // Swift process has exited.
-                            html = new_html;
-                            _temp_html = new_temp_html;
+                            page = new_page;
                             first_link = new_first_link;
                             swift = None;
                         }
@@ -2512,7 +2568,6 @@ mod renderer_viewer {
         let document = PathBuf::from(arg)
             .canonicalize()
             .context("source file not found")?;
-        let dir = document.parent().context("source directory not found")?;
         let theme = webkit_theme(std::env::var_os("DOCTTY_WEBKIT_THEME").as_deref())?;
         let watch = match arguments.next() {
             None => false,
@@ -2525,7 +2580,7 @@ mod renderer_viewer {
         if tiled {
             return run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
         }
-        let (html, _temp_html, first_link) = html_input(&document, theme)?;
+        let (page, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
         let output = work.path().join("viewport.rgbz");
         let (cols, total_rows) = terminal::size()?;
@@ -2534,8 +2589,7 @@ mod renderer_viewer {
         let height = u32::from(rows).saturating_mul(16);
         eprintln!("Starting persistent WKWebView (initial Swift compilation may take time)...");
         let mut swift = SwiftProcess::start(
-            &html,
-            dir,
+            &page,
             &output,
             width,
             height,
@@ -2803,23 +2857,52 @@ mod renderer_viewer {
             let root = tempfile::tempdir()?;
             let md = root.path().join("test-theme.md");
             fs::write(&md, "# Theme preview")?;
-            let (light_path, _light_temp, light_link) = html_input(&md, Theme::Light)?;
+            let (light, light_link) = html_input(&md, Theme::Light)?;
             assert_eq!(light_link, None);
-            let light_html = fs::read_to_string(light_path)?;
-            assert!(light_html.contains("data-color-mode=\"light\""));
-            let (dark_path, _dark_temp, dark_link) = html_input(&md, Theme::Dark)?;
+            assert!(light.html.contains("data-color-mode=\"light\""));
+            let (dark, dark_link) = html_input(&md, Theme::Dark)?;
             assert_eq!(dark_link, None);
-            let dark_html = fs::read_to_string(dark_path)?;
-            assert!(dark_html.contains("data-color-mode=\"dark\""));
+            assert!(dark.html.contains("data-color-mode=\"dark\""));
+            Ok(())
+        }
+
+        fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
+            let mut entries = fs::read_dir(dir)?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<io::Result<Vec<_>>>()?;
+            entries.sort();
+            Ok(entries)
+        }
+
+        #[test]
+        fn markdown_page_is_served_without_writing_beside_the_document() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let documents = root.path().canonicalize()?.join("docs");
+            fs::create_dir_all(documents.join("images"))?;
+            fs::write(documents.join("images/a.png"), b"test image")?;
+            let markdown = documents.join("README.md");
+            fs::write(&markdown, "# Docs\n\n![a](images/a.png)\n")?;
+            let before = entries(&documents)?;
+
+            let (page, _) = html_input(&markdown, Theme::Light)?;
+
+            assert_eq!(entries(&documents)?, before);
+            assert_eq!(page.path, markdown);
+            assert_eq!(page.read_root, documents);
+            assert!(page.html.contains(&format!(
+                "<base href=\"{}://",
+                hybrid_image_preview::PAGE_URL_SCHEME
+            )));
+            assert!(!page.html.contains("\"file://"));
             Ok(())
         }
 
         #[test]
-        fn readonly_document_folder_uses_out_of_tree_html_tempfile() -> Result<()> {
+        fn readonly_document_folder_is_read_in_place() -> Result<()> {
             use std::os::unix::fs::PermissionsExt;
 
             let root = tempfile::tempdir()?;
-            let documents = root.path().join("read-only docs");
+            let documents = root.path().canonicalize()?.join("read-only docs");
             fs::create_dir(&documents)?;
             let markdown = documents.join("README.md");
             fs::write(&markdown, "# Read-only docs\n")?;
@@ -2829,24 +2912,67 @@ mod renderer_viewer {
             let rendered = html_input(&markdown, Theme::Light);
             fs::set_permissions(&documents, original)?;
 
-            let (html, _temp, _) = rendered?;
-            assert!(html.exists());
-            assert!(!html.starts_with(&documents));
-
-            let content = fs::read_to_string(&html)?;
-            let read_root = html.parent().context("staged HTML has no parent")?;
-            assert_ne!(read_root, Path::new("/"));
-            assert!(html.starts_with(read_root));
-            assert!(!markdown.starts_with(read_root));
-            assert!(content.contains("Read-only docs"));
+            let (page, _) = rendered?;
+            assert_eq!(page.read_root, documents);
+            assert!(page.html.contains("Read-only docs"));
             Ok(())
         }
 
         #[test]
-        fn html_lease_is_registered_for_signal_cleanup_until_dropped() -> Result<()> {
-            let file = tempfile::NamedTempFile::new()?;
-            let path = file.path().to_path_buf();
-            let lease = HtmlLease::new(Some(file), None);
+        fn image_outside_the_document_tree_is_staged_instead_of_granting_root() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let documents = root.path().canonicalize()?.join("docs");
+            fs::create_dir(&documents)?;
+            // Shares only "/" with the temporary document directory.
+            let markdown = documents.join("README.md");
+            fs::write(&markdown, "![a](/usr/share/doc/missing.png)\n")?;
+            let before = entries(&documents)?;
+
+            let (page, _) = html_input(&markdown, Theme::Light)?;
+
+            assert_eq!(entries(&documents)?, before);
+            assert_ne!(page.read_root, Path::new("/"));
+            assert!(!documents.starts_with(&page.read_root));
+            Ok(())
+        }
+
+        #[test]
+        fn html_input_file_urls_are_served_from_the_page_scheme() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let dir = root.path().canonicalize()?;
+            let page_path = dir.join("page.html");
+            let file_base = format!("file://{}/", dir.display());
+            fs::write(
+                &page_path,
+                format!(
+                    "<base href=\"{file_base}\"><img src='{file_base}a.png'>\
+                     <img alt=\"x\" srcset=\"data:image/png;base64,iVBO 1x, {file_base}b.png 2x\">\
+                     <p>See file:///etc/hosts</p><pre>IMAGE='file:///tmp/icon.png'</pre>"
+                ),
+            )?;
+            let (page, _) = html_input(&page_path, Theme::Light)?;
+            let scheme = hybrid_image_preview::PAGE_URL_SCHEME;
+            assert!(page.html.contains(&format!("<base href=\"{scheme}://")));
+            assert!(page.html.contains(&format!("<img src='{scheme}://")));
+            assert!(page.html.contains(&format!(
+                "srcset=\"data:image/png;base64,iVBO 1x, {scheme}://{}/b.png 2x\"",
+                dir.display()
+            )));
+            // Text that only mentions a file URL is left as written.
+            assert!(page.html.contains("See file:///etc/hosts"));
+            assert!(
+                page.html
+                    .contains("<pre>IMAGE='file:///tmp/icon.png'</pre>")
+            );
+            assert_eq!(page.read_root, dir);
+            Ok(())
+        }
+
+        #[test]
+        fn staged_images_are_registered_for_signal_cleanup_until_dropped() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().to_path_buf();
+            let lease = StagedImages::new(dir);
             let registered = |path: &Path| {
                 LEASED_PATHS
                     .lock()
@@ -2871,9 +2997,8 @@ mod renderer_viewer {
                 <img src="../assets/picture%20with%20spaces.png">
                 <picture><source srcset="../assets/picture%20with%20spaces.png 1x"></picture>
                 <a href="../other.md">Link</a>"#;
-            let (html, stage) = stage_isolated_html(input, &docs)?;
-            let staged = fs::read_to_string(html)?;
-            let expected = asset_file_url(&stage.path().join("assets/image-0.png"));
+            let (staged, stage) = stage_isolated_html(input, &docs)?;
+            let expected = page_url(&stage.path().join("assets/image-0.png"));
             assert_eq!(staged.matches(&expected).count(), 2);
             assert!(staged.contains("href=\"../other.md\""));
             assert!(stage.path().join("assets/image-0.png").is_file());
@@ -2889,11 +3014,11 @@ mod renderer_viewer {
                 &md,
                 "# Links\n\n[first](https://example.com/first) [second](https://example.org/)\n",
             )?;
-            let (_, _initial_html, first_link) = html_input(&md, Theme::Light)?;
+            let (_initial_page, first_link) = html_input(&md, Theme::Light)?;
             assert_eq!(first_link.as_deref(), Some("https://example.com/first"));
 
             fs::write(&md, "# Updated\n\n[new](https://example.com/new)\n")?;
-            let (_, _updated_html, updated_link) = html_input(&md, Theme::Dark)?;
+            let (_updated_page, updated_link) = html_input(&md, Theme::Dark)?;
             assert_eq!(updated_link.as_deref(), Some("https://example.com/new"));
             Ok(())
         }

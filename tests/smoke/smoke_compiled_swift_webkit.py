@@ -19,19 +19,28 @@ from pathlib import Path
 def test(binary: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="doctty-swift-compiled-") as directory:
         root = Path(directory)
-        html = root / "fixture.html"
+        # The page is served from memory at this path; no file is written.
+        page_path = root / "fixture.html"
         image = root / "viewport.rgbz"
-        html.write_text(
+        html = (
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<style>body{margin:0;background:white}main{height:3500px}"
             "h1{padding:30px}</style></head><body><main>"
-            "<h1>Compiled Swift helper smoke test</h1></main></body></html>",
-            encoding="utf-8",
+            "<h1>Compiled Swift helper smoke test</h1></main></body></html>"
         )
         stderr_path = root / "helper-stderr.log"
         with stderr_path.open("wb") as stderr:
             process = subprocess.Popen(
-                [str(binary.resolve()), str(html), str(root), str(image), "640", "400", "0"],
+                [
+                    str(binary.resolve()),
+                    "doctty-file",
+                    str(page_path),
+                    str(root),
+                    str(image),
+                    "640",
+                    "400",
+                    "0",
+                ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
@@ -73,6 +82,9 @@ def test(binary: Path) -> None:
                 return response
 
             try:
+                assert process.stdin is not None
+                process.stdin.write((json.dumps({"html": html}) + "\n").encode("utf-8"))
+                process.stdin.flush()
                 ready = receive(timeout=25.0)
                 if ready.get("kind") != "ready":
                     raise AssertionError(f"expected ready, got {ready}")
