@@ -189,6 +189,17 @@ body {
 .doctty-mermaid-fallback {
   color: #57606a;
   font-weight: 600;
+  flex-direction: column;
+  align-items: center;
+}
+.doctty-mermaid-error {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .markdown-body code,
 .markdown-body tt,

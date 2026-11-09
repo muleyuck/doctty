@@ -594,17 +594,10 @@ impl TerminalViewer {
             return false;
         };
 
-        let target_width_px = (f32::from(rendered.graphics[graphic_index].width_cells)
-            * self.cell_metrics.width_px)
-            .round()
-            .max(1.0) as u32;
-
-        match self.mermaid_renderer.render_png_sized(
-            &source,
-            Some(target_width_px),
-            Some(2.0),
-            self.config.theme,
-        ) {
+        match self
+            .mermaid_renderer
+            .render_png_sized(&source, Some(2.0), self.config.theme)
+        {
             Ok(rendered_png) => {
                 let image_decoder = ImageDecoder::new();
                 let natural_size = image_decoder.dimensions_from_png_bytes(&rendered_png).ok();

@@ -56,7 +56,7 @@ cp "{}" "$out"
 }
 
 #[test]
-fn passes_requested_width_and_scale_to_mermaid_cli() {
+fn passes_only_options_supported_by_mermaid_cli_11_and_12() {
     let dir = match TempDir::new() {
         Ok(dir) => dir,
         Err(error) => panic!("temp dir should be created: {error}"),
@@ -103,12 +103,8 @@ cp "{}" "$out"
     }
 
     let renderer = MermaidCliRenderer::new(script);
-    let output = match renderer.render_png_sized(
-        "graph TD\n    A --> B\n",
-        Some(640),
-        Some(2.0),
-        Theme::Dark,
-    ) {
+    let output = match renderer.render_png_sized("graph TD\n    A --> B\n", Some(2.0), Theme::Dark)
+    {
         Ok(output) => output,
         Err(error) => panic!("render should succeed: {error}"),
     };
@@ -116,12 +112,15 @@ cp "{}" "$out"
     assert!(!output.is_empty());
     let args = std::fs::read_to_string(args_path)
         .unwrap_or_else(|error| panic!("args should be captured: {error}"));
-    assert!(args.contains("-w"));
-    assert!(args.contains("640"));
-    assert!(args.contains("-s"));
-    assert!(args.contains("2"));
-    assert!(args.contains("-t"));
-    assert!(args.contains("dark"));
+    let args = args.lines().collect::<Vec<_>>();
+    // Paths are generated per render; every other argument must be accepted by
+    // mermaid-cli 11 and 12 alike (12 removed `-w`).
+    assert_eq!(args.len(), 10, "unexpected arguments: {args:?}");
+    assert_eq!(args[0], "-i");
+    assert!(args[1].ends_with("diagram.mmd"));
+    assert_eq!(args[2], "-o");
+    assert!(args[3].ends_with("diagram.png"));
+    assert_eq!(&args[4..], ["-b", "transparent", "-t", "dark", "-s", "2"]);
 }
 
 #[test]
@@ -213,20 +212,10 @@ cp "{}" "$out"
     let renderer = MermaidCliRenderer::with_cache_dir(script, cache_dir.path().to_path_buf());
 
     renderer
-        .render_png_sized(
-            "graph TD\n    A --> B\n",
-            Some(640),
-            Some(2.0),
-            Theme::Light,
-        )
+        .render_png_sized("graph TD\n    A --> B\n", Some(2.0), Theme::Light)
         .unwrap_or_else(|error| panic!("first render should succeed: {error}"));
     renderer
-        .render_png_sized(
-            "graph TD\n    A --> B\n",
-            Some(640),
-            Some(2.0),
-            Theme::Light,
-        )
+        .render_png_sized("graph TD\n    A --> B\n", Some(2.0), Theme::Light)
         .unwrap_or_else(|error| panic!("second render should succeed: {error}"));
 
     let count = std::fs::read_to_string(counter_path)
@@ -287,15 +276,10 @@ cp "{}" "$out"
     let renderer = MermaidCliRenderer::with_cache_dir(script, cache_dir.path().to_path_buf());
 
     renderer
-        .render_png_sized(
-            "graph TD\n    A --> B\n",
-            Some(640),
-            Some(2.0),
-            Theme::Light,
-        )
+        .render_png_sized("graph TD\n    A --> B\n", Some(2.0), Theme::Light)
         .unwrap_or_else(|error| panic!("light render should succeed: {error}"));
     renderer
-        .render_png_sized("graph TD\n    A --> B\n", Some(640), Some(2.0), Theme::Dark)
+        .render_png_sized("graph TD\n    A --> B\n", Some(2.0), Theme::Dark)
         .unwrap_or_else(|error| panic!("dark render should succeed: {error}"));
 
     let count = std::fs::read_to_string(counter_path)
