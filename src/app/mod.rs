@@ -36,7 +36,7 @@ pub fn run(args: DocttyArgs) -> Result<()> {
     };
 
     if io::stdout().is_terminal() && io::stdin().is_terminal() {
-        if !crate::ui::terminal::probe_kitty_graphics_support()? {
+        if !crate::io::kitty_graphics::probe_kitty_graphics_support()? {
             bail!(
                 "interactive mode requires a terminal with Kitty graphics support, \
                  such as Ghostty or Kitty"

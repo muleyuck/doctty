@@ -3,10 +3,7 @@ use std::{fs, path::Path};
 use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
 
 #[cfg(target_os = "macos")]
-use doctty::{
-    io::webkit_snapshot::render_html_to_png,
-    ui::page_graphics::{build_graphic_page, total_rows, viewport_slice},
-};
+use doctty::io::webkit_snapshot::render_html_to_png;
 
 fn fixture_dirs() -> Vec<std::path::PathBuf> {
     let root = Path::new("tests/fixtures/gfm");
@@ -249,7 +246,7 @@ fn gfm_fixtures_generate_expected_html_fragments() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn gfm_fixtures_render_through_webkit_and_terminal_graphics_path() {
+fn gfm_fixtures_render_through_webkit() {
     for fixture_dir in fixture_dirs() {
         let input = fs::read_to_string(fixture_dir.join("input.md"))
             .unwrap_or_else(|error| panic!("failed to read fixture input: {error}"));
@@ -260,37 +257,18 @@ fn gfm_fixtures_render_through_webkit_and_terminal_graphics_path() {
         let snapshot = render_html_to_png(&html, &fixture_dir, 960).unwrap_or_else(|error| {
             panic!("fixture {} should snapshot: {error}", fixture_dir.display())
         });
-        let page = build_graphic_page(&snapshot.png_bytes, 120, 960).unwrap_or_else(|error| {
-            panic!(
-                "fixture {} should decode graphic page: {error}",
-                fixture_dir.display()
-            )
-        });
-        let slice = viewport_slice(&page, 0, 20, 21.0);
+        let (width, height) = image::load_from_memory(&snapshot.png_bytes)
+            .map(|image| (image.width(), image.height()))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "fixture {} snapshot should decode: {error}",
+                    fixture_dir.display()
+                )
+            });
 
         assert!(
-            page.image_width_px > 0,
-            "fixture {} width should be non-zero",
-            fixture_dir.display()
-        );
-        assert!(
-            page.image_height_px > 0,
-            "fixture {} height should be non-zero",
-            fixture_dir.display()
-        );
-        assert!(
-            total_rows(&page, 21.0) > 0,
-            "fixture {} should occupy at least one terminal row",
-            fixture_dir.display()
-        );
-        assert!(
-            slice.source_height_px > 0,
-            "fixture {} should produce a visible viewport slice",
-            fixture_dir.display()
-        );
-        assert!(
-            slice.rows > 0,
-            "fixture {} should place at least one terminal row",
+            width > 0 && height > 0,
+            "fixture {} snapshot should not be empty",
             fixture_dir.display()
         );
     }
