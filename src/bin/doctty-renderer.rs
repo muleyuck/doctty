@@ -239,6 +239,44 @@ mod renderer_viewer {
         InputAction::Continue
     }
 
+    #[derive(Debug, Eq, PartialEq)]
+    enum QueuedInput {
+        Dropped,
+        Quit,
+        Resized,
+    }
+
+    // Keys typed while a reload was running were aimed at the old page. Each
+    // queued `r` would otherwise start another full reload, so drop them all
+    // and act only on a quit or a resize.
+    fn input_after_reload(events: impl IntoIterator<Item = Event>) -> QueuedInput {
+        let mut outcome = QueuedInput::Dropped;
+        for event in events {
+            match event {
+                Event::Resize(..) => outcome = QueuedInput::Resized,
+                Event::Key(key) => {
+                    let (mut position, mut direction, mut pending_g) =
+                        (0.0, ScrollDirection::Forward, false);
+                    let action =
+                        apply_key(key, &mut position, &mut direction, &mut pending_g, 0.0, 0);
+                    if action == InputAction::Quit {
+                        return QueuedInput::Quit;
+                    }
+                }
+                _ => {}
+            }
+        }
+        outcome
+    }
+
+    fn drain_input_after_reload() -> Result<QueuedInput> {
+        let mut events = Vec::new();
+        while event::poll(Duration::ZERO)? {
+            events.push(event::read()?);
+        }
+        Ok(input_after_reload(events))
+    }
+
     // A cache miss temporarily freezes the visible image until prefetch completes.
     // Track these intervals to distinguish snapshot delays from placement jitter.
     #[derive(Default)]
@@ -2377,6 +2415,7 @@ mod renderer_viewer {
         let mut swift: Option<SwiftProcess> = None;
         let mut last_geometry: Option<(u16, u16, u32)> = None;
         let mut resize_count = 0_usize;
+        let mut reloaded = false;
         loop {
             let (columns, total_rows) = terminal::size()?;
             let rows = total_rows.saturating_sub(1).max(1);
@@ -2456,6 +2495,17 @@ mod renderer_viewer {
             // New placement is now complete. Old cached image bytes may be freed.
             clear_session_images_except(initial_id)?;
             let active = cached.context("initial snapshot did not create a cache")?;
+            if std::mem::take(&mut reloaded) {
+                match drain_input_after_reload()? {
+                    QueuedInput::Quit => return Ok(()),
+                    QueuedInput::Resized => {
+                        resize_count += 1;
+                        swift = Some(helper);
+                        continue;
+                    }
+                    QueuedInput::Dropped => {}
+                }
+            }
             let (exit, returned) = run_tiled(
                 helper,
                 output.clone(),
@@ -2479,6 +2529,7 @@ mod renderer_viewer {
                 ViewerExit::Reload(next_progress) => {
                     progress = next_progress;
                     resize_count += 1;
+                    reloaded = true;
                     // Rebuild the HTML from the updated Markdown before
                     // switching helpers. Keep the last valid render if the
                     // document is temporarily unreadable or incomplete.
@@ -2812,6 +2863,38 @@ mod renderer_viewer {
 
         fn key(code: KeyCode) -> KeyEvent {
             KeyEvent::new(code, KeyModifiers::NONE)
+        }
+
+        #[test]
+        fn input_queued_during_a_reload_is_dropped_unless_it_quits_or_resizes() {
+            let reloads = vec![Event::Key(key(KeyCode::Char('r'))); 9];
+            assert_eq!(input_after_reload(reloads), QueuedInput::Dropped);
+            assert_eq!(
+                input_after_reload([
+                    Event::Key(key(KeyCode::Char('r'))),
+                    Event::Key(key(KeyCode::Char('j'))),
+                ]),
+                QueuedInput::Dropped
+            );
+            for quit in [KeyCode::Char('q'), KeyCode::Esc] {
+                assert_eq!(
+                    input_after_reload([
+                        Event::Key(key(KeyCode::Char('r'))),
+                        Event::Key(key(quit)),
+                        Event::Key(key(KeyCode::Char('r'))),
+                    ]),
+                    QueuedInput::Quit
+                );
+            }
+            assert_eq!(
+                input_after_reload([Event::Resize(100, 40), Event::Key(key(KeyCode::Char('r'))),]),
+                QueuedInput::Resized
+            );
+            assert_eq!(
+                input_after_reload([Event::Resize(100, 40), Event::Key(key(KeyCode::Esc))]),
+                QueuedInput::Quit
+            );
+            assert_eq!(input_after_reload([]), QueuedInput::Dropped);
         }
 
         #[test]
