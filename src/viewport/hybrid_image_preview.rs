@@ -23,6 +23,8 @@ use resvg::{
     usvg::{self, Options},
 };
 
+/// URL scheme the renderer serves its page and local images from.
+pub(crate) const PAGE_URL_SCHEME: &str = "doctty-file";
 pub(crate) const FIRST_PREVIEW_ID: u32 = 94_001;
 pub(crate) const LAST_PREVIEW_ID: u32 = 94_004;
 pub(crate) const MAX_PREVIEW_CACHE: usize = 3;
@@ -520,8 +522,9 @@ impl Thumbnails {
 }
 
 fn local_file(src: &str) -> Option<PathBuf> {
-    let url = src.strip_prefix("file://")?;
-    let url = url.strip_prefix("localhost").unwrap_or(url);
+    // WebKit writes a relative URL on a base-less page as "scheme:/path".
+    let url = src.strip_prefix(PAGE_URL_SCHEME)?.strip_prefix(':')?;
+    let url = url.strip_prefix("//").unwrap_or(url);
     let bytes = url.split(['?', '#']).next()?.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -940,8 +943,10 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("red dot.png");
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255])).save(&path)?;
-        let src = format!("file://{}", path.display()).replace(' ', "%20");
+        let src = format!("{PAGE_URL_SCHEME}://{}", path.display()).replace(' ', "%20");
         assert_eq!(local_file(&src).as_deref(), Some(path.as_path()));
+        let base_less = format!("{PAGE_URL_SCHEME}:{}", path.display()).replace(' ', "%20");
+        assert_eq!(local_file(&base_less).as_deref(), Some(path.as_path()));
         assert_eq!(local_file("https://example.com/a.png"), None);
 
         let scene = Scene {

@@ -2,12 +2,71 @@
 // Protocol: newline-delimited JSON on stdin/stdout. No production app changes.
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 import WebKit
 import zlib
 
+// Serves the page from memory and files below the read root from disk, so
+// nothing is written next to the document. Pages loaded from a custom scheme
+// cannot read file:// URLs at all.
+final class PageSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let pagePath: String
+    private let html: Data
+    private let readRoot: String?
+
+    init(pagePath: String, html: Data, readRoot: String) {
+        self.pagePath = pagePath
+        self.html = html
+        self.readRoot = PageSchemeHandler.realPath(readRoot)
+    }
+
+    private static func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    // Symlinks are resolved first, so a link inside the root cannot expose a
+    // file outside it. Only regular files: a FIFO would block the main thread.
+    private func readableFile(_ path: String) -> Data? {
+        guard let root = readRoot, let real = PageSchemeHandler.realPath(path),
+              real.hasPrefix(root.hasSuffix("/") ? root : root + "/"),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: real),
+              attributes[.type] as? FileAttributeType == .typeRegular
+        else { return nil }
+        return FileManager.default.contents(atPath: real)
+    }
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url else { return }
+        let path = url.path
+        let body: Data?
+        let mimeType: String
+        if path == pagePath {
+            body = html
+            mimeType = "text/html"
+        } else {
+            body = readableFile(path)
+            mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream"
+        }
+        guard let body else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        task.didReceive(URLResponse(
+            url: url, mimeType: mimeType, expectedContentLength: body.count,
+            textEncodingName: path == pagePath ? "utf-8" : nil
+        ))
+        task.didReceive(body)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+}
+
 final class ViewportRunner: NSObject, WKNavigationDelegate {
-    private let htmlURL: URL
-    private let readRoot: URL
+    private let pageURL: URL
     private let outputURL: URL
     private var width: CGFloat
     private var height: CGFloat
@@ -22,18 +81,19 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private var lastSnapshotRequestedAt: Date?
 
     init(
-        htmlURL: URL, readRoot: URL, outputURL: URL,
+        pageURL: URL, handler: PageSchemeHandler, scheme: String, outputURL: URL,
         width: CGFloat, height: CGFloat, pixelWidth: CGFloat
     ) {
-        self.htmlURL = htmlURL
-        self.readRoot = readRoot
+        self.pageURL = pageURL
         self.outputURL = outputURL
         self.width = width
         self.height = height
         self.pixelWidth = pixelWidth
+        let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(handler, forURLScheme: scheme)
         self.webView = WKWebView(
             frame: CGRect(x: 0, y: 0, width: width, height: height * 2),
-            configuration: WKWebViewConfiguration()
+            configuration: configuration
         )
         super.init()
         webView.navigationDelegate = self
@@ -41,7 +101,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 
     func start() {
         _ = NSApplication.shared
-        webView.loadFileURL(htmlURL, allowingReadAccessTo: readRoot)
+        webView.load(URLRequest(url: pageURL))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -401,19 +461,40 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 }
 
 let args = CommandLine.arguments
-guard args.count == 7,
-      let width = Double(args[4]), let height = Double(args[5]),
-      let pixelWidth = Double(args[6]),
-      width > 0, height > 0, pixelWidth >= 0
+// The page HTML arrives as the first stdin line: {"html": "..."}.
+func readPageHTML() -> Data? {
+    guard let line = readLine(),
+          let page = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+          let html = page["html"] as? String
+    else { return nil }
+    return Data(html.utf8)
+}
+
+guard args.count == 8,
+      let width = Double(args[5]), let height = Double(args[6]),
+      let pixelWidth = Double(args[7]),
+      width > 0, height > 0, pixelWidth >= 0,
+      let handler = readPageHTML().map({
+          PageSchemeHandler(pagePath: args[2], html: $0, readRoot: args[3])
+      })
 else {
-    fputs("usage: webkit_viewport.swift HTML READ_ROOT OUTPUT WIDTH HEIGHT PIXEL_WIDTH\n", stderr)
+    fputs("usage: webkit_viewport.swift SCHEME PAGE_PATH READ_ROOT OUTPUT WIDTH HEIGHT PIXEL_WIDTH\n", stderr)
     exit(2)
 }
 
+let scheme = args[1]
+var pageComponents = URLComponents()
+pageComponents.scheme = scheme
+pageComponents.path = args[2]
+guard let pageURL = pageComponents.url else {
+    fputs("invalid page path: \(args[2])\n", stderr)
+    exit(2)
+}
 let runner = ViewportRunner(
-    htmlURL: URL(fileURLWithPath: args[1]),
-    readRoot: URL(fileURLWithPath: args[2], isDirectory: true),
-    outputURL: URL(fileURLWithPath: args[3]),
+    pageURL: pageURL,
+    handler: handler,
+    scheme: scheme,
+    outputURL: URL(fileURLWithPath: args[4]),
     width: CGFloat(width),
     height: CGFloat(height),
     pixelWidth: CGFloat(pixelWidth)

@@ -78,19 +78,52 @@ pub(super) fn snapshot_asset_root(html: &str, base_dir: &Path) -> PathBuf {
 
 fn local_asset_references(html: &str) -> Vec<String> {
     let mut references = Vec::new();
-    let mut rest = html;
-    while let Some(index) = rest.find(r#"src=""#) {
-        rest = &rest[index + 5..];
-        let Some(end) = rest.find('"') else {
-            break;
-        };
-        let candidate = &rest[..end];
-        if is_local_asset_reference(candidate) {
-            references.push(candidate.to_string());
+    for (marker, is_srcset) in [(r#"src=""#, false), (r#"srcset=""#, true)] {
+        let mut rest = html;
+        while let Some(index) = rest.find(marker) {
+            rest = &rest[index + marker.len()..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let value = &rest[..end];
+            let candidates: Vec<&str> = if is_srcset {
+                srcset_urls(value)
+            } else {
+                vec![value]
+            };
+            for candidate in candidates {
+                if is_local_asset_reference(candidate) {
+                    references.push(candidate.to_string());
+                }
+            }
+            rest = &rest[end + 1..];
         }
-        rest = &rest[end + 1..];
     }
     references
+}
+
+/// The URLs of a srcset value. A candidate is a URL, which may itself contain
+/// commas (data URLs), then optional descriptors up to the next comma.
+pub fn srcset_urls(value: &str) -> Vec<&str> {
+    let mut urls = Vec::new();
+    let mut rest = value;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if rest.is_empty() {
+            return urls;
+        }
+        let end = rest
+            .find(|c: char| c.is_ascii_whitespace())
+            .unwrap_or(rest.len());
+        let url = &rest[..end];
+        rest = &rest[end..];
+        if let Some(url) = url.strip_suffix(',') {
+            urls.push(url.trim_end_matches(','));
+        } else {
+            urls.push(url);
+            rest = rest.find(',').map_or("", |comma| &rest[comma + 1..]);
+        }
+    }
 }
 
 fn is_local_asset_reference(reference: &str) -> bool {

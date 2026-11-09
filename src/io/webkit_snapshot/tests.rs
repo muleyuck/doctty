@@ -35,6 +35,37 @@ fn compiled_renderer_read_root_includes_parent_directory_assets() {
 }
 
 #[test]
+fn compiled_renderer_read_root_includes_srcset_candidates() {
+    let html = r#"<picture><source srcset="../assets/banner.png 1x, ../../wide.png 2x"><img src="banner.png"></picture>"#;
+    let base_dir = Path::new("/Users/example/project/docs");
+    let markdown = base_dir.join("README.md");
+
+    let root = super::compiled_renderer_read_root(html, base_dir, &markdown)
+        .unwrap_or_else(|error| panic!("safe project asset root expected: {error}"));
+    assert_eq!(root, Path::new("/Users/example"));
+}
+
+#[test]
+fn srcset_urls_keep_commas_inside_data_urls() {
+    assert_eq!(
+        super::srcset_urls("data:image/png;base64,iVBO 1x, a%20b.png 2x,c.png"),
+        ["data:image/png;base64,iVBO", "a%20b.png", "c.png"]
+    );
+    assert_eq!(super::srcset_urls("a.png, b.png 2x"), ["a.png", "b.png"]);
+}
+
+#[test]
+fn compiled_renderer_read_root_ignores_data_urls_in_srcset() {
+    let html = r#"<img srcset="data:image/jpeg;base64,/9j/4AAQ 1x">"#;
+    let base_dir = Path::new("/Users/example/project/docs");
+    let markdown = base_dir.join("README.md");
+
+    let root = super::compiled_renderer_read_root(html, base_dir, &markdown)
+        .unwrap_or_else(|error| panic!("document root expected: {error}"));
+    assert_eq!(root, base_dir);
+}
+
+#[test]
 fn compiled_renderer_read_root_refuses_cross_filesystem_root_access() {
     let html = r#"<article><img src="images/screenshot.png"></article>"#;
     let base_dir = Path::new("/Users/example/project/docs");

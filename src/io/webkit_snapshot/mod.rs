@@ -29,6 +29,9 @@ use self::{
     script::SWIFT_SNAPSHOT_SCRIPT,
 };
 
+#[cfg(any(target_os = "macos", test))]
+pub use self::paths::srcset_urls;
+
 /// Read-only WebKit file access root for compiled renderer HTML, including
 /// referenced assets in parent directories and the generated HTML location.
 #[cfg(any(target_os = "macos", test))]
