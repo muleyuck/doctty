@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 
@@ -15,14 +15,5 @@ impl FileSystemDocumentSource {
 
     pub fn read_to_string(&self) -> Result<String> {
         Ok(fs::read_to_string(&self.path)?)
-    }
-
-    pub fn modified_at(&self) -> Result<SystemTime> {
-        Ok(fs::metadata(&self.path)?.modified()?)
-    }
-
-    #[must_use]
-    pub fn path(&self) -> &PathBuf {
-        &self.path
     }
 }

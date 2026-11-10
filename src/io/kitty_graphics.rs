@@ -1,25 +1,11 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+#[cfg(unix)]
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct KittyImagePlacement {
-    pub image_id: u32,
-    pub placement_id: u32,
-    pub columns: u16,
-    pub rows: u16,
-    pub source_x_px: u32,
-    pub source_y_px: u32,
-    pub source_width_px: u32,
-    pub source_height_px: u32,
-    pub cursor_x: u16,
-    pub cursor_y: u16,
-    pub z_index: i32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DeleteCommand {
-    AllVisiblePlacements,
-    Placement { image_id: u32, placement_id: u32 },
-}
+use anyhow::Result;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 const SUPPORT_QUERY_IMAGE_ID: u32 = 31;
 
@@ -55,42 +41,67 @@ fn find_device_attributes_reply(reply: &[u8]) -> Option<usize> {
     })
 }
 
-#[must_use]
-pub fn encode_transmit_png(image_id: u32, png_bytes: &[u8]) -> String {
-    let payload = STANDARD.encode(png_bytes);
-    format!(
-        "\u{1b}_Ga=t,t=d,f=100,i={},q=2;{}\u{1b}\\",
-        image_id, payload
-    )
+#[cfg(unix)]
+const SUPPORT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Asks the terminal on stdin/stdout whether it accepts Kitty graphics.
+/// Multiplexers such as Herdr answer for their panes, so the terminal name
+/// is not needed.
+pub fn probe_kitty_graphics_support() -> Result<bool> {
+    enable_raw_mode()?;
+    let supported = query_kitty_graphics_support();
+    disable_raw_mode()?;
+    supported
 }
 
-#[must_use]
-pub fn encode_place(placement: &KittyImagePlacement) -> String {
-    format!(
-        "\u{1b}_Ga=p,i={},p={},c={},r={},x={},y={},w={},h={},X={},Y={},z={},q=2,C=1\u{1b}\\",
-        placement.image_id,
-        placement.placement_id,
-        placement.columns,
-        placement.rows,
-        placement.source_x_px,
-        placement.source_y_px,
-        placement.source_width_px,
-        placement.source_height_px,
-        placement.cursor_x,
-        placement.cursor_y,
-        placement.z_index,
-    )
-}
+#[cfg(unix)]
+fn query_kitty_graphics_support() -> Result<bool> {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        io::Errno,
+    };
+    use std::os::fd::AsFd;
 
-#[must_use]
-pub fn encode_delete(command: DeleteCommand) -> String {
-    match command {
-        DeleteCommand::AllVisiblePlacements => "\u{1b}_Ga=d\u{1b}\\".to_string(),
-        DeleteCommand::Placement {
-            image_id,
-            placement_id,
-        } => {
-            format!("\u{1b}_Ga=d,d=i,i={image_id},p={placement_id}\u{1b}\\")
+    let mut stdout = io::stdout();
+    stdout.write_all(encode_support_query().as_bytes())?;
+    stdout.flush()?;
+
+    let stdin = io::stdin();
+    let stdin = stdin.as_fd();
+    let deadline = Instant::now() + SUPPORT_QUERY_TIMEOUT;
+    let mut reply = Vec::new();
+    let mut buffer = [0_u8; 256];
+    loop {
+        if let Some(supported) = parse_support_reply(&reply) {
+            return Ok(supported);
         }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        let timeout = Timespec::try_from(remaining)?;
+        let mut fds = [PollFd::new(&stdin, PollFlags::IN)];
+        match poll(&mut fds, Some(&timeout)) {
+            Ok(0) => return Ok(false),
+            Ok(_) => {}
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+        // Read the fd directly: std's buffered stdin could keep bytes that
+        // belong to the viewer's first key events.
+        let read = match rustix::io::read(stdin, &mut buffer) {
+            Ok(read) => read,
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if read == 0 {
+            return Ok(false);
+        }
+        reply.extend_from_slice(&buffer[..read]);
     }
+}
+
+#[cfg(not(unix))]
+fn query_kitty_graphics_support() -> Result<bool> {
+    Ok(false)
 }
