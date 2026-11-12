@@ -72,3 +72,39 @@ fn restoring_a_written_source_block_leaves_it_unchanged() {
 
     assert_eq!(restore_supported_raw_html(&written), written);
 }
+
+#[test]
+fn restoring_tags_keeps_code_and_pre_contents_escaped() {
+    let html = concat!(
+        "<p>&lt;sub&gt;x&lt;/sub&gt; <codex>&lt;b&gt;y&lt;/b&gt;",
+        "<code>&lt;b&gt;in&lt;/b&gt;</code> &lt;kbd&gt;k&lt;/kbd&gt;</p>",
+        "<pre lang=\"rs\"><code>&lt;b&gt;</code></pre>&lt;i&gt;b&lt;/i&gt;",
+        "<prefix>&lt;sup&gt;1&lt;/sup&gt;<pre>&lt;i&gt;</pre>",
+    );
+
+    assert_eq!(
+        restore_supported_raw_html(html),
+        concat!(
+            "<p><sub>x</sub> <codex><b>y</b>",
+            "<code>&lt;b&gt;in&lt;/b&gt;</code> <kbd>k</kbd></p>",
+            "<pre lang=\"rs\"><code>&lt;b&gt;</code></pre><i>b</i>",
+            "<prefix><sup>1</sup><pre>&lt;i&gt;</pre>",
+        )
+    );
+}
+
+#[test]
+fn restoring_tags_handles_unterminated_and_skipped_code() {
+    // A `<code` that ends the document, an unclosed `<code>`, and a `<code>`
+    // inside an escaped span that is kept as text.
+    for (html, expected) in [
+        ("&lt;b&gt;x<code", "<b>x<code"),
+        ("&lt;i&gt;a<code>&lt;b&gt;", "<i>a<code>&lt;b&gt;"),
+        (
+            "&lt;b <code>x</code> &gt;&lt;i&gt;y<code>&lt;b&gt;</code>",
+            "&lt;b <code>x</code> &gt;<i>y<code>&lt;b&gt;</code>",
+        ),
+    ] {
+        assert_eq!(restore_supported_raw_html(html), expected, "input: {html}");
+    }
+}

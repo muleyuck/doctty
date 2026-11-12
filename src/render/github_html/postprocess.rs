@@ -217,11 +217,13 @@ pub(super) fn restore_supported_raw_html(html: &str) -> String {
     let mut output = String::with_capacity(html.len());
     let mut rest = html;
     let mut inside_code_or_pre = false;
+    let mut next = NextMatches::default();
 
     loop {
+        let cursor = html.len() - rest.len();
         if inside_code_or_pre {
             // Look for the closing </code> or </pre> tag before doing anything else.
-            if let Some(close_pos) = find_code_pre_close(rest) {
+            if let Some(close_pos) = next.code_pre_close(html, cursor) {
                 let end = close_pos.0 + close_pos.1;
                 output.push_str(&rest[..end]);
                 rest = &rest[end..];
@@ -234,8 +236,8 @@ pub(super) fn restore_supported_raw_html(html: &str) -> String {
         }
 
         // Find the next interesting position: either an escaped tag or a <code>/<pre> open.
-        let escaped_pos = rest.find(ESCAPED_LT);
-        let code_open = find_code_pre_open(rest);
+        let escaped_pos = next.escaped_lt.at_or_after(html, cursor);
+        let code_open = next.code_pre_open(html, cursor);
 
         match (escaped_pos, code_open) {
             (None, None) => {
@@ -326,36 +328,91 @@ fn escaped_entity_len(text: &str) -> Option<usize> {
     Some(end + 1)
 }
 
-/// Find the start position and byte-length of the next `<code` or `<pre` opening tag.
-fn find_code_pre_open(html: &str) -> Option<(usize, usize)> {
-    let mut best: Option<(usize, usize)> = None;
-    for needle in ["<code", "<pre"] {
-        let Some(pos) = html.find(needle) else {
-            continue;
-        };
-        let after = pos + needle.len();
-        if after < html.len() && !matches!(html.as_bytes()[after], b'>' | b' ' | b'\t' | b'\n') {
-            continue;
-        }
-        if let Some(close) = html[pos..].find('>') {
-            let tag_len = close + 1;
-            if best.is_none_or(|(bp, _)| pos < bp) {
-                best = Some((pos, tag_len));
-            }
-        }
-    }
-    best
+/// The next occurrence of a needle at or after a position that only moves forward.
+/// Searching again only once the scan has passed the remembered match keeps
+/// `restore_supported_raw_html` linear in the length of the HTML.
+struct NextMatch {
+    needle: &'static str,
+    /// Absolute position. `None` until searched; `Some(None)` once the needle
+    /// does not occur after the last searched position.
+    found: Option<Option<usize>>,
 }
 
-/// Find the end position (start, byte-length) of the next `</code>` or `</pre>` closing tag.
-fn find_code_pre_close(html: &str) -> Option<(usize, usize)> {
-    let mut best: Option<(usize, usize)> = None;
-    for needle in ["</code>", "</pre>"] {
-        if let Some(pos) = html.find(needle)
-            && best.is_none_or(|(bp, _)| pos < bp)
-        {
-            best = Some((pos, needle.len()));
+impl NextMatch {
+    const fn new(needle: &'static str) -> Self {
+        Self {
+            needle,
+            found: None,
         }
     }
-    best
+
+    /// Returns the position relative to `from`, the start of the unscanned rest.
+    fn at_or_after(&mut self, html: &str, from: usize) -> Option<usize> {
+        if let Some(found) = self.found
+            && found.is_none_or(|pos| pos >= from)
+        {
+            return found.map(|pos| pos - from);
+        }
+        let found = html[from..].find(self.needle).map(|offset| from + offset);
+        self.found = Some(found);
+        found.map(|pos| pos - from)
+    }
+}
+
+struct NextMatches {
+    escaped_lt: NextMatch,
+    code_open: NextMatch,
+    pre_open: NextMatch,
+    code_close: NextMatch,
+    pre_close: NextMatch,
+}
+
+impl Default for NextMatches {
+    fn default() -> Self {
+        Self {
+            escaped_lt: NextMatch::new(ESCAPED_LT),
+            code_open: NextMatch::new("<code"),
+            pre_open: NextMatch::new("<pre"),
+            code_close: NextMatch::new("</code>"),
+            pre_close: NextMatch::new("</pre>"),
+        }
+    }
+}
+
+impl NextMatches {
+    /// Find the start position and byte-length of the next `<code` or `<pre` opening tag.
+    fn code_pre_open(&mut self, html: &str, from: usize) -> Option<(usize, usize)> {
+        let rest = &html[from..];
+        let mut best: Option<(usize, usize)> = None;
+        for matcher in [&mut self.code_open, &mut self.pre_open] {
+            let Some(pos) = matcher.at_or_after(html, from) else {
+                continue;
+            };
+            let after = pos + matcher.needle.len();
+            if after < rest.len() && !matches!(rest.as_bytes()[after], b'>' | b' ' | b'\t' | b'\n')
+            {
+                continue;
+            }
+            if let Some(close) = rest[pos..].find('>') {
+                let tag_len = close + 1;
+                if best.is_none_or(|(bp, _)| pos < bp) {
+                    best = Some((pos, tag_len));
+                }
+            }
+        }
+        best
+    }
+
+    /// Find the end position (start, byte-length) of the next `</code>` or `</pre>` closing tag.
+    fn code_pre_close(&mut self, html: &str, from: usize) -> Option<(usize, usize)> {
+        let mut best: Option<(usize, usize)> = None;
+        for matcher in [&mut self.code_close, &mut self.pre_close] {
+            if let Some(pos) = matcher.at_or_after(html, from)
+                && best.is_none_or(|(bp, _)| pos < bp)
+            {
+                best = Some((pos, matcher.needle.len()));
+            }
+        }
+        best
+    }
 }
