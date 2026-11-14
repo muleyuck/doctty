@@ -1,4 +1,11 @@
-use doctty::{cli::Theme, core::config::MermaidMode, render::github_html::build_github_html};
+use doctty::{
+    cli::Theme,
+    core::config::MermaidMode,
+    render::{
+        github_html::{build_github_html, build_github_page},
+        markdown::parse_document,
+    },
+};
 
 #[test]
 fn github_html_wraps_markdown_in_dark_github_shell() {
@@ -392,4 +399,67 @@ fn github_html_restores_common_readme_inline_tags() {
     ));
     assert!(html.contains("Press <kbd>Ctrl</kbd> or "));
     assert!(html.contains("&lt;b class=&quot;x&quot;&gt;y</b>"));
+}
+
+#[test]
+fn github_page_first_link_matches_the_document_link_metadata() {
+    let cases = [
+        ("no links", "# Title\n\nplain text\n"),
+        ("inline", "[a](https://a.example) [b](https://b.example)\n"),
+        (
+            "autolink",
+            "see https://auto.example and [b](https://b.example)\n",
+        ),
+        (
+            "heading",
+            "# [h](https://h.example)\n\n[p](https://p.example)\n",
+        ),
+        (
+            "table",
+            "| [t](https://t.example) |\n|---|\n\n[p](https://p.example)\n",
+        ),
+        ("nested", "> - **[deep](https://deep.example)**\n"),
+        ("image in link", "[![alt](img.png)](https://img.example)\n"),
+        ("image only", "![alt](https://image.example/a.png)\n"),
+        (
+            "code only",
+            "`[c](https://c.example)`\n\n```\n[d](https://d.example)\n```\n",
+        ),
+        ("reference", "[r][ref]\n\n[ref]: https://ref.example\n"),
+        ("footnote", "x[^1]\n\n[^1]: [f](https://f.example)\n"),
+        (
+            "mermaid first",
+            "```mermaid\ngraph TD\n```\n\n[m](https://m.example)\n",
+        ),
+        (
+            "raw html",
+            "<a href=\"https://raw.example\">raw</a>\n\n[p](https://p.example)\n",
+        ),
+    ];
+
+    for (name, source) in cases {
+        let expected = parse_document("case.md".into(), source)
+            .unwrap_or_else(|error| panic!("{name}: document should parse: {error}"))
+            .meta
+            .links
+            .into_iter()
+            .next();
+        let page = build_github_page(
+            source,
+            std::path::Path::new("."),
+            Theme::Dark,
+            MermaidMode::Disabled,
+        )
+        .unwrap_or_else(|error| panic!("{name}: html should render: {error}"));
+        let html = build_github_html(
+            source,
+            std::path::Path::new("."),
+            Theme::Dark,
+            MermaidMode::Disabled,
+        )
+        .unwrap_or_else(|error| panic!("{name}: html should render: {error}"));
+
+        assert_eq!(page.first_link, expected, "{name}");
+        assert_eq!(page.html, html, "{name}");
+    }
 }
