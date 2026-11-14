@@ -46,7 +46,7 @@ mod renderer_viewer {
         cli::Theme,
         core::config::MermaidMode,
         io::browser,
-        render::{github_html::build_github_html, markdown::parse_document},
+        render::github_html::{GithubPage, build_github_page},
     };
     use serde_json::{Value, json};
 
@@ -1294,12 +1294,8 @@ mod renderer_viewer {
         let source = fs::read_to_string(path).context("failed to read Markdown source")?;
         let mermaid_mode =
             webkit_mermaid_mode(std::env::var_os("DOCTTY_WEBKIT_MERMAID").as_deref())?;
-        let html = build_github_html(&source, root, theme, mermaid_mode)?;
-        let first_link = parse_document(path.to_path_buf(), &source)?
-            .meta
-            .links
-            .into_iter()
-            .next();
+        let GithubPage { html, first_link } =
+            build_github_page(&source, root, theme, mermaid_mode)?;
 
         let page = match doctty::io::webkit_snapshot::compiled_renderer_read_root(&html, root, path)
         {

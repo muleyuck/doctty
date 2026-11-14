@@ -11,7 +11,9 @@ use crate::{
     cli::Theme,
     core::config::MermaidMode,
     io::mermaid_cli::MermaidCliRenderer,
-    render::{markdown_pipeline::gfm_options, raw_html::is_html_source_block},
+    render::{
+        markdown::first_link, markdown_pipeline::gfm_options, raw_html::is_html_source_block,
+    },
 };
 
 mod mermaid;
@@ -42,12 +44,28 @@ create_formatter!(GithubHtmlFormatter, {
     },
 });
 
+/// A rendered GitHub-style page and the first link of its source, taken from
+/// the same parse.
+pub struct GithubPage {
+    pub html: String,
+    pub first_link: Option<String>,
+}
+
 pub fn build_github_html(
     source: &str,
     base_dir: &Path,
     theme: Theme,
     mermaid_mode: MermaidMode,
 ) -> Result<String> {
+    Ok(build_github_page(source, base_dir, theme, mermaid_mode)?.html)
+}
+
+pub fn build_github_page(
+    source: &str,
+    base_dir: &Path,
+    theme: Theme,
+    mermaid_mode: MermaidMode,
+) -> Result<GithubPage> {
     let _span = info_span!("github_html.build").entered();
     let mut options = gfm_options();
     options.render.escape = true;
@@ -57,6 +75,9 @@ pub fn build_github_html(
 
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
+    // Before the Mermaid rewrite, so the AST is exactly what `gfm_options`
+    // parses; the render-only options set above do not change parsing.
+    let first_link = first_link(root);
     replace_mermaid_code_blocks(root, mermaid_mode, theme, &MermaidCliRenderer::from_env())?;
 
     let mut plugins = Plugins::default();
@@ -72,7 +93,7 @@ pub fn build_github_html(
     )));
     let styles = theme_styles(theme);
 
-    Ok(format!(
+    let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en" data-color-mode="{color_mode}" data-dark-theme="dark" data-light-theme="light">
 <head>
@@ -92,5 +113,6 @@ pub fn build_github_html(
         color_mode = theme.as_str(),
         base_href = directory_url(base_dir),
         styles = styles,
-    ))
+    );
+    Ok(GithubPage { html, first_link })
 }

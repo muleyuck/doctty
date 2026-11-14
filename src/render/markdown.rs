@@ -416,6 +416,15 @@ fn normalize_html_block(literal: &str) -> Option<BlockKind> {
     (!text.is_empty()).then_some(BlockKind::Paragraph { text })
 }
 
+/// The first entry `collect_links` would produce, without walking the rest.
+pub(crate) fn first_link<'a>(root: &'a AstNode<'a>) -> Option<String> {
+    root.descendants()
+        .find_map(|node| match &node.data.borrow().value {
+            NodeValue::Link(link) => Some(link.url.clone()),
+            _ => None,
+        })
+}
+
 fn collect_links<'a>(node: &'a AstNode<'a>, links: &mut Vec<String>) {
     if let NodeValue::Link(link) = &node.data.borrow().value
         && !links.contains(&link.url)
