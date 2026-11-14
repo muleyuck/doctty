@@ -30,10 +30,6 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         let _span = info_span!("startup.read_source").entered();
         source.read_to_string()?
     };
-    let document = {
-        let _span = info_span!("startup.parse_document").entered();
-        parse_document(config.path.clone(), &content)?
-    };
 
     if io::stdout().is_terminal() && io::stdin().is_terminal() {
         if !crate::io::kitty_graphics::probe_kitty_graphics_support()? {
@@ -50,6 +46,10 @@ pub fn run(args: DocttyArgs) -> Result<()> {
         );
     }
 
+    let document = {
+        let _span = info_span!("startup.parse_document").entered();
+        parse_document(config.path.clone(), &content)?
+    };
     let rendered = {
         let _span = info_span!("startup.render_plain_text").entered();
         render_plain_text(&document, config.theme, config.mermaid_mode)

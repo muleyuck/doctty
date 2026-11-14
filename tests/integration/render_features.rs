@@ -124,6 +124,61 @@ fn headless_render_rejects_tty_stdin() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+// A file path with a terminal on stdin and stdout takes the interactive
+// branch. Nothing answers the Kitty graphics query on this pty, so reaching
+// that branch shows up as the Kitty support error instead of plain text.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn file_path_on_a_terminal_takes_the_interactive_branch() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::{
+        fs::{File, OpenOptions},
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use assert_cmd::assert::OutputAssertExt;
+    use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+
+    let file = NamedTempFile::new()?;
+    std::fs::write(file.path(), "# Interactive\n")?;
+
+    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    let slave_path = ptsname(&master, Vec::new())?;
+    let slave_path = slave_path.to_str()?;
+    let stdin = File::open(slave_path)?;
+    let stdout = OpenOptions::new().write(true).open(slave_path)?;
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_doctty"))
+        .arg(file.path())
+        .stdin(Stdio::from(stdin))
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            child.kill()?;
+            let _ = child.wait();
+            panic!("doctty hung while probing Kitty graphics support");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    child
+        .wait_with_output()?
+        .assert()
+        .failure()
+        .stderr(contains(
+            "interactive mode requires a terminal with Kitty graphics support",
+        ));
+    drop(master);
+    Ok(())
+}
+
 #[test]
 fn headless_render_keeps_math_expressions_visible() {
     let file = match NamedTempFile::new() {
