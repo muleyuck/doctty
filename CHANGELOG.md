@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0](https://github.com/muleyuck/doctty/compare/v0.3.0...v0.4.0) (2026-11-14)
+
+
+### Features
+
+* render b, strong, em, i, code and kbd in raw HTML ([#81](https://github.com/muleyuck/doctty/issues/81)) ([285eeeb](https://github.com/muleyuck/doctty/commit/285eeeb93f500d325f5d520083c0aecba73b6712)), closes [#72](https://github.com/muleyuck/doctty/issues/72)
+* render only supported raw HTML and show the rest as Markdown source ([#68](https://github.com/muleyuck/doctty/issues/68)) ([aca4dbc](https://github.com/muleyuck/doctty/commit/aca4dbc36b24a8ad5d49b1d84bc985e5542edcdf))
+
+
+### Bug Fixes
+
+* drop keys queued during a rich-view reload ([#86](https://github.com/muleyuck/doctty/issues/86)) ([c6d4871](https://github.com/muleyuck/doctty/commit/c6d4871b691f02496fac1b8feb5e447dc4e64ddf))
+* keep blocks nested in quotes, lists, callouts and footnotes ([#75](https://github.com/muleyuck/doctty/issues/75)) ([2a5f774](https://github.com/muleyuck/doctty/commit/2a5f774076d46c2641f2cf0dd514cb1a52efb6bc)), closes [#69](https://github.com/muleyuck/doctty/issues/69)
+* keep full tile resolution outside Herdr panes ([#82](https://github.com/muleyuck/doctty/issues/82)) ([ff47431](https://github.com/muleyuck/doctty/commit/ff474317938a17ed1b36de3485c6870f8c9bc5c6))
+* quit the rich view on Ctrl-C ([#88](https://github.com/muleyuck/doctty/issues/88)) ([9076c1a](https://github.com/muleyuck/doctty/commit/9076c1a4cae57f119d98fa33710832dba4273b89))
+* render Mermaid with mermaid-cli 12 and show why a render failed ([#92](https://github.com/muleyuck/doctty/issues/92)) ([1059fba](https://github.com/muleyuck/doctty/commit/1059fbabfcbe92e22c10b2f4ffae5c9a4d691a80))
+* stop waiting for a WebKit helper that does not reply ([#91](https://github.com/muleyuck/doctty/issues/91)) ([b02cbbf](https://github.com/muleyuck/doctty/commit/b02cbbf5c46d3922129f1810306c1dbe02d5a1be))
+* stop writing temporary HTML next to the previewed Markdown ([#84](https://github.com/muleyuck/doctty/issues/84)) ([69cc169](https://github.com/muleyuck/doctty/commit/69cc16946ad16d889b4f3929e1fe29d7eb20f56a)), closes [#80](https://github.com/muleyuck/doctty/issues/80)
+
+
+### Performance Improvements
+
+* avoid redundant Markdown parsing before launching the rich renderer ([#106](https://github.com/muleyuck/doctty/issues/106)) ([013b300](https://github.com/muleyuck/doctty/commit/013b30088177be15d4628575a6a46f29eca429b9))
+* restore raw HTML tags in linear time ([#103](https://github.com/muleyuck/doctty/issues/103)) ([7e68177](https://github.com/muleyuck/doctty/commit/7e68177f5eae27893df27fb343512d9296e233ed))
+
 ## [0.3.0](https://github.com/muleyuck/doctty/compare/v0.2.0...v0.3.0) (2026-11-01)
 
 
