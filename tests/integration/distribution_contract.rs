@@ -43,7 +43,7 @@ fn ci_checks_code_without_write_permissions() {
             .get(Value::String("test-command".to_string()))
             .and_then(Value::as_str),
         Some(
-            "cargo build --release --locked && cargo test --locked --all-features --bin doctty-renderer"
+            "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings && cargo build --release --locked && cargo test --locked --all-features --bin doctty-renderer"
         )
     );
     assert_eq!(
