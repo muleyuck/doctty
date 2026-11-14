@@ -42,9 +42,7 @@ fn ci_checks_code_without_write_permissions() {
         macos_inputs
             .get(Value::String("test-command".to_string()))
             .and_then(Value::as_str),
-        Some(
-            "cargo build --release --locked && cargo test --locked --all-features --bin doctty-renderer"
-        )
+        Some("make ci-macos")
     );
     assert_eq!(
         macos_inputs
