@@ -330,7 +330,7 @@ fn escaped_entity_len(text: &str) -> Option<usize> {
 
 /// The next occurrence of a needle at or after a position that only moves forward.
 /// Searching again only once the scan has passed the remembered match keeps
-/// `restore_supported_raw_html` linear in the length of the HTML.
+/// `restore_supported_raw_html` linear in the length of Comrak's HTML.
 struct NextMatch {
     needle: &'static str,
     /// Absolute position. `None` until searched; `Some(None)` once the needle
@@ -359,10 +359,50 @@ impl NextMatch {
     }
 }
 
+/// The next `<code` or `<pre` opening tag, remembering its length so a long
+/// tag ahead of the scan is not measured again on every step.
+struct NextOpenTag {
+    matcher: NextMatch,
+    /// Absolute position of the measured match and its tag length, if it is a tag.
+    measured: Option<(usize, Option<usize>)>,
+}
+
+impl NextOpenTag {
+    const fn new(needle: &'static str) -> Self {
+        Self {
+            matcher: NextMatch::new(needle),
+            measured: None,
+        }
+    }
+
+    /// Returns the position relative to `from` and the byte length of the next
+    /// match, or `None` when that match is not followed by a tag end.
+    fn at_or_after(&mut self, html: &str, from: usize) -> Option<(usize, usize)> {
+        let pos = from + self.matcher.at_or_after(html, from)?;
+        let tag_len = match self.measured {
+            Some((at, tag_len)) if at == pos => tag_len,
+            _ => {
+                let tag_len = self.tag_len(html, pos);
+                self.measured = Some((pos, tag_len));
+                tag_len
+            }
+        };
+        tag_len.map(|tag_len| (pos - from, tag_len))
+    }
+
+    fn tag_len(&self, html: &str, pos: usize) -> Option<usize> {
+        let after = pos + self.matcher.needle.len();
+        if after < html.len() && !matches!(html.as_bytes()[after], b'>' | b' ' | b'\t' | b'\n') {
+            return None;
+        }
+        html[pos..].find('>').map(|close| close + 1)
+    }
+}
+
 struct NextMatches {
     escaped_lt: NextMatch,
-    code_open: NextMatch,
-    pre_open: NextMatch,
+    code_open: NextOpenTag,
+    pre_open: NextOpenTag,
     code_close: NextMatch,
     pre_close: NextMatch,
 }
@@ -371,8 +411,8 @@ impl Default for NextMatches {
     fn default() -> Self {
         Self {
             escaped_lt: NextMatch::new(ESCAPED_LT),
-            code_open: NextMatch::new("<code"),
-            pre_open: NextMatch::new("<pre"),
+            code_open: NextOpenTag::new("<code"),
+            pre_open: NextOpenTag::new("<pre"),
             code_close: NextMatch::new("</code>"),
             pre_close: NextMatch::new("</pre>"),
         }
@@ -382,22 +422,12 @@ impl Default for NextMatches {
 impl NextMatches {
     /// Find the start position and byte-length of the next `<code` or `<pre` opening tag.
     fn code_pre_open(&mut self, html: &str, from: usize) -> Option<(usize, usize)> {
-        let rest = &html[from..];
         let mut best: Option<(usize, usize)> = None;
-        for matcher in [&mut self.code_open, &mut self.pre_open] {
-            let Some(pos) = matcher.at_or_after(html, from) else {
-                continue;
-            };
-            let after = pos + matcher.needle.len();
-            if after < rest.len() && !matches!(rest.as_bytes()[after], b'>' | b' ' | b'\t' | b'\n')
+        for tag in [&mut self.code_open, &mut self.pre_open] {
+            if let Some((pos, tag_len)) = tag.at_or_after(html, from)
+                && best.is_none_or(|(bp, _)| pos < bp)
             {
-                continue;
-            }
-            if let Some(close) = rest[pos..].find('>') {
-                let tag_len = close + 1;
-                if best.is_none_or(|(bp, _)| pos < bp) {
-                    best = Some((pos, tag_len));
-                }
+                best = Some((pos, tag_len));
             }
         }
         best
