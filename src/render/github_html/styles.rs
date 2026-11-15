@@ -9,35 +9,33 @@ use crate::cli::Theme;
 static LIGHT_SYNTAX_ADAPTER: OnceLock<SyntectAdapter> = OnceLock::new();
 static DARK_SYNTAX_ADAPTER: OnceLock<SyntectAdapter> = OnceLock::new();
 
-pub(super) fn theme_styles(theme: Theme) -> String {
-    let font_faces = font_face_css();
-    let html_source = html_source_css();
+static LIGHT_STYLES: OnceLock<String> = OnceLock::new();
+static DARK_STYLES: OnceLock<String> = OnceLock::new();
+
+pub(super) fn theme_styles(theme: Theme) -> &'static str {
     match theme {
-        Theme::Light | Theme::System => [
-            font_faces.as_str(),
-            "\n",
-            LIGHT_CSS,
-            "\n",
-            COMMON_OVERRIDES,
-            "\n",
-            html_source.as_str(),
-            "\n",
-            LIGHT_THEME_OVERRIDES,
-        ]
-        .concat(),
-        Theme::Dark => [
-            font_faces.as_str(),
-            "\n",
-            DARK_CSS,
-            "\n",
-            COMMON_OVERRIDES,
-            "\n",
-            html_source.as_str(),
-            "\n",
-            DARK_THEME_OVERRIDES,
-        ]
-        .concat(),
+        Theme::Light | Theme::System => {
+            LIGHT_STYLES.get_or_init(|| build_theme_styles(LIGHT_CSS, LIGHT_THEME_OVERRIDES))
+        }
+        Theme::Dark => {
+            DARK_STYLES.get_or_init(|| build_theme_styles(DARK_CSS, DARK_THEME_OVERRIDES))
+        }
     }
+}
+
+fn build_theme_styles(theme_css: &str, theme_overrides: &str) -> String {
+    [
+        font_face_css().as_str(),
+        "\n",
+        theme_css,
+        "\n",
+        COMMON_OVERRIDES,
+        "\n",
+        html_source_css().as_str(),
+        "\n",
+        theme_overrides,
+    ]
+    .concat()
 }
 
 fn html_source_css() -> String {
