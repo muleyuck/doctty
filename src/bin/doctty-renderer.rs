@@ -26,7 +26,7 @@ mod renderer_viewer {
         process::{Child, Command, Stdio},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicU8, AtomicU64, Ordering},
             mpsc::{self, Receiver, Sender, TryRecvError},
         },
         thread,
@@ -270,6 +270,72 @@ mod renderer_viewer {
             }
         }
         outcome
+    }
+
+    static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
+    static FRAME_SEQ: AtomicU64 = AtomicU64::new(0);
+    // Which `input_ready` event the next tiled loop owes: the startup one, or
+    // the one for a reload whose drain ended in a resize restart.
+    const INPUT_READY_NONE: u8 = 0;
+    const INPUT_READY_STARTUP: u8 = 1;
+    const INPUT_READY_RELOAD: u8 = 2;
+    static PENDING_INPUT_READY: AtomicU8 = AtomicU8::new(INPUT_READY_STARTUP);
+
+    fn input_ready_label(state: u8) -> Option<&'static str> {
+        match state {
+            INPUT_READY_STARTUP => Some("startup"),
+            INPUT_READY_RELOAD => Some("reload"),
+            _ => None,
+        }
+    }
+
+    fn key_trace_fields(key: &KeyEvent, seq: u64, from_y: f64, target_y: f64) -> Value {
+        let name = match key.code {
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                format!("ctrl-{c}")
+            }
+            KeyCode::Char(c) => c.to_string(),
+            other => format!("{other:?}"),
+        };
+        json!({
+            "key": name,
+            "kind": match key.kind {
+                KeyEventKind::Press => "press",
+                KeyEventKind::Repeat => "repeat",
+                KeyEventKind::Release => "release",
+            },
+            "seq": seq,
+            "from_y": from_y,
+            "target_y": target_y,
+            "moved": from_y != target_y,
+        })
+    }
+
+    fn trace_key(key: &KeyEvent, from_y: f64, target_y: f64) {
+        if bench_trace::enabled() {
+            let seq = KEY_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+            bench_trace::event("key", key_trace_fields(key, seq, from_y, target_y));
+        }
+    }
+
+    // Call right after the flush that completed a full-quality placement.
+    fn trace_frame_hq(reason: &str, y: f64) {
+        if bench_trace::enabled() {
+            let seq = FRAME_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+            bench_trace::event("frame_hq", json!({ "reason": reason, "seq": seq, "y": y }));
+        }
+    }
+
+    fn trace_input_ready(after: &str) {
+        if bench_trace::enabled() {
+            bench_trace::event("input_ready", json!({ "after": after }));
+        }
+    }
+
+    fn trace_reload_start(trigger: &str) {
+        if bench_trace::enabled() {
+            bench_trace::event("reload_start", json!({ "trigger": trigger }));
+        }
     }
 
     fn drain_input_after_reload() -> Result<QueuedInput> {
@@ -1577,6 +1643,7 @@ mod renderer_viewer {
         document_height_hint: f64,
         initial_image_id: Option<u32>,
         cache: &mut Option<ImageCache>,
+        frame_reason: &str,
     ) -> Result<f64> {
         let started = Instant::now();
         let cache_hit = cache
@@ -1678,6 +1745,7 @@ mod renderer_viewer {
         )?;
         out.flush()?;
         drop(out);
+        trace_frame_hq(frame_reason, position);
         if let Some((snapshot, bytes, upload_ms)) = &traced_upload {
             snapshot.emit();
             trace_kitty_upload(*bytes, *upload_ms);
@@ -2216,6 +2284,10 @@ mod renderer_viewer {
         let mut last_wait_status_at: Option<Instant> = None;
 
         let mut exit = ViewerExit::Quit;
+        let mut pending_input_ready =
+            input_ready_label(PENDING_INPUT_READY.swap(INPUT_READY_NONE, Ordering::Relaxed));
+        // Set by a movement; cleared by the next placement or `frame_unchanged`.
+        let mut awaiting_frame = false;
         let mut watcher = watcher;
         // Always close and join both image workers, even if the event loop
         // exits early with an I/O/rendering error. Otherwise they could still
@@ -2226,6 +2298,7 @@ mod renderer_viewer {
                     .as_mut()
                     .is_some_and(|state| state.should_reload(Instant::now()))
                 {
+                    trace_reload_start("watch");
                     exit = ViewerExit::Reload(reading_fraction(
                         position,
                         document_height,
@@ -2345,11 +2418,15 @@ mod renderer_viewer {
                                 .or_else(|| last_displayed.map(|fingerprint| fingerprint.0)),
                             showing_preview && placed_preview_id.is_none(),
                         )?;
+                        trace_frame_hq("scroll", position);
                         placed_preview_id = None;
                         showing_preview = false;
                         last_preview_position = None;
                         last_preview_frame = None;
                         last_displayed = Some(fingerprint);
+                        awaiting_frame = false;
+                    } else if std::mem::take(&mut awaiting_frame) && bench_trace::enabled() {
+                        bench_trace::event("frame_unchanged", json!({ "y": position }));
                     }
                     last_wait_status_at = None;
                 } else if mode == Some(HybridDisplayMode::Preview) {
@@ -2528,6 +2605,9 @@ mod renderer_viewer {
                     }
                 }
 
+                if let Some(after) = pending_input_ready.take() {
+                    trace_input_ready(after);
+                }
                 if !event::poll(Duration::from_millis(12))? {
                     continue;
                 }
@@ -2551,20 +2631,23 @@ mod renderer_viewer {
                         _ => continue,
                     };
                     let previous_position = position;
-                    match apply_key(
+                    let action = apply_key(
                         key,
                         &mut position,
                         &mut direction,
                         &mut pending_g,
                         document_height,
                         viewport_height,
-                    ) {
+                    );
+                    trace_key(&key, previous_position, position);
+                    match action {
                         InputAction::Quit => break 'viewer,
                         InputAction::Select => requests.send(WorkerCommand::Select)?,
                         InputAction::OpenLink => {
                             open_document_link(first_link, columns, rows)?;
                         }
                         InputAction::Reload => {
+                            trace_reload_start("key");
                             exit = ViewerExit::Reload(reading_fraction(
                                 position,
                                 document_height,
@@ -2577,6 +2660,7 @@ mod renderer_viewer {
                     if position != previous_position {
                         last_movement_at = Instant::now();
                         motion.record(last_movement_at, position);
+                        awaiting_frame = true;
                     }
                     // Publish every accepted movement, including reversals, before
                     // returning to the drawing loop.
@@ -2586,6 +2670,15 @@ mod renderer_viewer {
             Ok(exit)
         })();
 
+        // Left before the first poll (an early reload or resize): keep owing it.
+        if let Some(label) = pending_input_ready {
+            let state = if label == "reload" {
+                INPUT_READY_RELOAD
+            } else {
+                INPUT_READY_STARTUP
+            };
+            PENDING_INPUT_READY.store(state, Ordering::Relaxed);
+        }
         drop(requests);
         drop(preview_requests);
         // Join *both* even if either the event loop or a worker failed.
@@ -2732,6 +2825,7 @@ mod renderer_viewer {
                 document_height,
                 Some(initial_id),
                 &mut cached,
+                if reloaded { "reload" } else { "startup" },
             )?;
             // New placement is now complete. Old cached image bytes may be freed.
             clear_session_images_except(initial_id)?;
@@ -2742,9 +2836,13 @@ mod renderer_viewer {
                     QueuedInput::Resized => {
                         resize_count += 1;
                         swift = Some(helper);
+                        PENDING_INPUT_READY.store(INPUT_READY_RELOAD, Ordering::Relaxed);
                         continue;
                     }
-                    QueuedInput::Dropped => {}
+                    QueuedInput::Dropped => {
+                        PENDING_INPUT_READY.store(INPUT_READY_NONE, Ordering::Relaxed);
+                        trace_input_ready("reload");
+                    }
                 }
             }
             let (exit, returned) = run_tiled(
@@ -2923,6 +3021,7 @@ mod renderer_viewer {
             ready["height"].as_f64().unwrap_or(0.0),
             None,
             &mut cache,
+            "startup",
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
         let mut document_height = initial_height;
@@ -4330,6 +4429,52 @@ mod renderer_viewer {
                 1000,
             );
             assert_eq!(position, 0.0);
+        }
+
+        #[test]
+        fn key_trace_reports_movement_for_a_plain_scroll_key() {
+            let fields = key_trace_fields(&key(KeyCode::Char('j')), 3, 0.0, 16.0);
+            assert_eq!(
+                fields,
+                json!({"key": "j", "kind": "press", "seq": 3, "from_y": 0.0, "target_y": 16.0, "moved": true})
+            );
+        }
+
+        #[test]
+        fn key_trace_reports_no_movement_when_the_target_is_clamped() {
+            let fields = key_trace_fields(&key(KeyCode::Char('j')), 4, 900.0, 900.0);
+            assert_eq!(fields["moved"], json!(false));
+            assert_eq!(fields["key"], json!("j"));
+        }
+
+        #[test]
+        fn key_trace_names_plain_control_and_page_keys() {
+            let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+            assert_eq!(
+                key_trace_fields(&ctrl_d, 1, 0.0, 0.0)["key"],
+                json!("ctrl-d")
+            );
+            assert_eq!(
+                key_trace_fields(&key(KeyCode::PageDown), 2, 0.0, 0.0)["key"],
+                json!("PageDown")
+            );
+            assert_eq!(
+                key_trace_fields(&key(KeyCode::Char('g')), 3, 500.0, 0.0)["key"],
+                json!("g")
+            );
+        }
+
+        #[test]
+        fn key_trace_records_press_repeat_and_release_kinds() {
+            for (kind, name) in [
+                (KeyEventKind::Press, "press"),
+                (KeyEventKind::Repeat, "repeat"),
+                (KeyEventKind::Release, "release"),
+            ] {
+                let mut event = key(KeyCode::Char('j'));
+                event.kind = kind;
+                assert_eq!(key_trace_fields(&event, 1, 0.0, 0.0)["kind"], json!(name));
+            }
         }
 
         fn cached_at(source_y: f64) -> ImageCache {
