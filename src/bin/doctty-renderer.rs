@@ -47,6 +47,7 @@ mod renderer_viewer {
         core::config::MermaidMode,
         io::browser,
         render::github_html::{GithubPage, build_github_page},
+        support::bench_trace,
     };
     use serde_json::{Value, json};
 
@@ -554,6 +555,9 @@ mod renderer_viewer {
                 .stderr(Stdio::inherit())
                 .spawn()
                 .context("unable to start Swift WebKit helper")?;
+            if bench_trace::enabled() {
+                bench_trace::event("helper_spawned", json!({ "pid": child.id() }));
+            }
             let mut input = child.stdin.take().context("missing Swift stdin")?;
             writeln!(input, "{}", json!({ "html": page.html }))?;
             input.flush()?;
@@ -690,6 +694,7 @@ mod renderer_viewer {
                         let mut capture_ms = 0.0;
                         let mut encode_ms = 0.0;
                         let mut write_ms = 0.0;
+                        let mut read_trace: Option<SnapshotTrace> = None;
                         let result = (|| -> Result<Option<ImageCache>> {
                             let response =
                                 swift.request(&json!({"type": "snapshot", "y": origin}))?;
@@ -717,8 +722,12 @@ mod renderer_viewer {
                             if obsolete() {
                                 return Ok(None);
                             }
+                            let read_started = Instant::now();
                             let image =
                                 fs::read(&image_path).context("missing prefetched image")?;
+                            let read_ms = elapsed_ms(read_started);
+                            read_trace = bench_trace::enabled()
+                                .then(|| SnapshotTrace::new(&response, image.len(), read_ms));
                             let mut cache = snapshot_cache(
                                 &response,
                                 image_id,
@@ -742,10 +751,15 @@ mod renderer_viewer {
                                 cache.image_height,
                             )?;
                             stdout.flush()?;
+                            drop(stdout);
                             let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
+                            trace_kitty_upload(image.len(), upload_ms);
                             cache.last_upload_ms = upload_ms;
                             Ok(Some(cache))
                         })();
+                        if let Some(trace) = &read_trace {
+                            trace.emit();
+                        }
                         match result {
                             Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
                             Ok(None) => WorkerEvent::Skipped {
@@ -1280,6 +1294,18 @@ mod renderer_viewer {
     }
 
     fn html_input(path: &Path, theme: Theme) -> Result<(WebKitPage, Option<String>)> {
+        let started = Instant::now();
+        let built = build_html_input(path, theme)?;
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "html_built",
+                json!({ "bytes": built.0.html.len(), "ms": elapsed_ms(started) }),
+            );
+        }
+        Ok(built)
+    }
+
+    fn build_html_input(path: &Path, theme: Theme) -> Result<(WebKitPage, Option<String>)> {
         let root = path.parent().context("source directory unavailable")?;
         if path
             .extension()
@@ -1346,6 +1372,65 @@ mod renderer_viewer {
         write!(out, "{clean}")?;
         out.flush()?;
         Ok(())
+    }
+
+    fn elapsed_ms(started: Instant) -> f64 {
+        started.elapsed().as_secs_f64() * 1000.0
+    }
+
+    // Stage timings of one snapshot reply plus the renderer's own file read.
+    struct SnapshotTrace {
+        capture_ms: f64,
+        encode_ms: f64,
+        write_ms: f64,
+        bytes: usize,
+        read_ms: f64,
+    }
+
+    impl SnapshotTrace {
+        fn new(response: &Value, bytes: usize, read_ms: f64) -> Self {
+            Self {
+                capture_ms: response["captureMs"].as_f64().unwrap_or(0.0),
+                encode_ms: response["encodeMs"].as_f64().unwrap_or(0.0),
+                write_ms: response["writeMs"].as_f64().unwrap_or(0.0),
+                bytes,
+                read_ms,
+            }
+        }
+
+        fn emit(&self) {
+            if bench_trace::enabled() {
+                bench_trace::event(
+                    "snapshot",
+                    json!({
+                        "capture_ms": self.capture_ms, "encode_ms": self.encode_ms,
+                        "write_ms": self.write_ms, "bytes": self.bytes,
+                        "read_ms": self.read_ms
+                    }),
+                );
+            }
+        }
+    }
+
+    fn trace_kitty_upload(bytes: usize, ms: f64) {
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "kitty_upload",
+                json!({ "bytes": bytes, "ms": ms, "kind": "tile" }),
+            );
+        }
+    }
+
+    fn trace_helper_ready(ready: &Value) {
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "helper_ready",
+                json!({
+                    "doc_height": ready["height"], "nav_ms": ready["navMs"],
+                    "assets_ms": ready["assetsMs"]
+                }),
+            );
+        }
     }
 
     fn snapshot_dimensions(response: &Value) -> Result<(u32, u32)> {
@@ -1489,6 +1574,8 @@ mod renderer_viewer {
         let cache_hit = cache
             .as_ref()
             .is_some_and(|entry| entry.covers(position, viewport_height));
+        // Emitted after the final flush so tracing adds no work before placement.
+        let mut traced_upload: Option<(SnapshotTrace, usize, f64)> = None;
 
         if !cache_hit {
             let document_height = cache
@@ -1501,7 +1588,11 @@ mod renderer_viewer {
             if result["kind"] != "snapshot" {
                 bail!("unexpected WebKit response: {result}");
             }
+            let read_started = Instant::now();
             let image = fs::read(image_path).context("missing viewport image")?;
+            let read_ms = elapsed_ms(read_started);
+            let snapshot_trace =
+                bench_trace::enabled().then(|| SnapshotTrace::new(&result, image.len(), read_ms));
             let new_id = initial_image_id.unwrap_or_else(|| {
                 if cache
                     .as_ref()
@@ -1526,7 +1617,9 @@ mod renderer_viewer {
             let source_offset = new_cache.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Keep the previous image visible while uploading the next image.
+            let upload_started = Instant::now();
             upload_rgb(&mut out, new_id, &image, image_width, image_height)?;
+            let upload_ms = elapsed_ms(upload_started);
             place_image(
                 &mut out,
                 new_id,
@@ -1540,6 +1633,7 @@ mod renderer_viewer {
                 delete_image(&mut out, previous.image_id)?;
             }
             *cache = Some(new_cache);
+            traced_upload = snapshot_trace.map(|snapshot| (snapshot, image.len(), upload_ms));
         } else if let Some(entry) = cache.as_ref() {
             let source_offset = entry.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
@@ -1575,6 +1669,14 @@ mod renderer_viewer {
                 .collect::<String>()
         )?;
         out.flush()?;
+        drop(out);
+        if let Some((snapshot, bytes, upload_ms)) = &traced_upload {
+            snapshot.emit();
+            trace_kitty_upload(*bytes, *upload_ms);
+        }
+        if bench_trace::enabled() {
+            bench_trace::event("cache", json!({ "hit": cache_hit }));
+        }
         Ok(current.document_height)
     }
 
@@ -2101,6 +2203,7 @@ mod renderer_viewer {
         let mut last_movement_at = Instant::now();
         let mut motion = MotionWindow::default();
         let mut last_displayed: Option<(u32, u64)> = None;
+        let mut last_cache_probe = initial_position.to_bits();
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
 
@@ -2160,6 +2263,8 @@ mod renderer_viewer {
                                 let mut out = io::stdout().lock();
                                 delete_image(&mut out, next.image_id)?;
                                 out.flush()?;
+                                drop(out);
+                                bench_trace::event("prefetch_stale_skip", Value::Null);
                             } else {
                                 cached.push(next);
                             }
@@ -2172,6 +2277,7 @@ mod renderer_viewer {
                         }) => {
                             pending = None;
                             skipped_uploads += 1;
+                            bench_trace::event("upload_skipped", Value::Null);
                             tile_timings.observe_snapshot(snapshot_ms);
                             tile_timings.observe_stages(capture_ms, encode_ms, write_ms);
                         }
@@ -2190,6 +2296,11 @@ mod renderer_viewer {
 
                 let now = Instant::now();
                 let selected = select_tile(&cached, position, viewport_height);
+                // Emitted after the placement below so trace I/O never precedes it.
+                let cache_probe = (position.to_bits() != last_cache_probe).then(|| {
+                    last_cache_probe = position.to_bits();
+                    selected.is_some()
+                });
                 wait.observe(selected.is_some(), now);
                 let idle_for = now.saturating_duration_since(last_movement_at);
                 let mode = outline.as_ref().map(|_| {
@@ -2305,6 +2416,11 @@ mod renderer_viewer {
                         )?;
                     }
                     last_wait_status_at = Some(now);
+                }
+                if let Some(hit) = cache_probe
+                    && bench_trace::enabled()
+                {
+                    bench_trace::event("cache", json!({ "hit": hit }));
                 }
 
                 if let Some(ref sender) = preview_requests
@@ -2541,8 +2657,20 @@ mod renderer_viewer {
                 if ready["kind"] != "ready" {
                     bail!("expected WebKit readiness response: {ready}");
                 }
+                trace_helper_ready(&ready);
                 process
             };
+            if bench_trace::enabled() && last_geometry != Some((columns, rows, pixel_width)) {
+                let window = terminal::window_size().ok();
+                bench_trace::event(
+                    "geometry",
+                    json!({
+                        "cols": columns, "rows": total_rows,
+                        "px_w": window.as_ref().map_or(0, |size| size.width),
+                        "px_h": window.as_ref().map_or(0, |size| size.height)
+                    }),
+                );
+            }
             last_geometry = Some((columns, rows, pixel_width));
             // DOM metrics and preview coordinates must be regenerated after
             // WebKit's CSS reflow, even though the WKWebView process is reused.
@@ -2551,6 +2679,14 @@ mod renderer_viewer {
             } else {
                 None
             };
+            if let Some(reply) = &outline_reply
+                && bench_trace::enabled()
+            {
+                bench_trace::event(
+                    "outline_ready",
+                    json!({ "entries": reply["items"].as_array().map(Vec::len) }),
+                );
+            }
             let outline = match outline_reply {
                 Some(ref value) if !hybrid_image => Some(parse_outline(value)?),
                 Some(_) => Some(Vec::new()),
@@ -2695,6 +2831,10 @@ mod renderer_viewer {
     }
 
     pub fn run() -> Result<()> {
+        bench_trace::init("renderer");
+        if bench_trace::enabled() {
+            bench_trace::event("renderer_start", json!({ "pid": std::process::id() }));
+        }
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("interactive mode requires stdin and stdout to be a terminal");
         }
@@ -2725,7 +2865,16 @@ mod renderer_viewer {
             bail!("unexpected extra WebKit experiment option: {flag:?}");
         }
         if tiled {
-            return run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
+            let result = run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
+            if bench_trace::enabled() {
+                let reason = if result.is_ok() {
+                    format!("{:?}", ViewerExit::Quit)
+                } else {
+                    "Error".to_owned()
+                };
+                bench_trace::event("exit", json!({ "reason": reason }));
+            }
+            return result;
         }
         let (page, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
