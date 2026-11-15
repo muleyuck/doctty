@@ -204,6 +204,9 @@ def test(binary: Path) -> None:
         metrics = request({"type": "metrics"}, "metrics")
 
         assert ready["height"] > 3000, ready
+        for key in ("navMs", "assetsMs"):
+            assert isinstance(ready[key], (int, float)), ready
+            assert ready[key] >= 0, ready
         assert any(
             "Compiled Swift helper smoke test" in item.get("text", "")
             for item in outline["items"]
