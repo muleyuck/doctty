@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Result, bail};
+use serde_json::json;
 use tracing::info_span;
 
 mod renderer_companion;
@@ -13,7 +14,7 @@ use crate::{
     core::config::AppConfig,
     io::fs::FileSystemDocumentSource,
     render::{markdown::parse_document, text::render_plain_text},
-    support::tracing::init_tracing,
+    support::{bench_trace, tracing::init_tracing},
 };
 
 pub fn run(args: DocttyArgs) -> Result<()> {
@@ -21,6 +22,14 @@ pub fn run(args: DocttyArgs) -> Result<()> {
 
     let _startup_span = info_span!("app.run").entered();
     let config = AppConfig::try_from(args)?;
+    bench_trace::event(
+        "cli_args_parsed",
+        json!({
+            "watch": config.watch,
+            "theme": config.theme.as_str(),
+            "mermaid": renderer_companion::mermaid_str(config.mermaid_mode),
+        }),
+    );
     if config.path == Path::new("-") {
         return run_from_stdin(config);
     }
