@@ -10,32 +10,32 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo
-        args: [fmt, --all, --, --check]
+        entry: make
+        args: [fmt-check]
         language: system
         pass_filenames: false
         always_run: true
 
       - id: cargo-check
         name: cargo check
-        entry: cargo
-        args: [check, --workspace, --all-targets, --all-features]
+        entry: make
+        args: [check]
         language: system
         pass_filenames: false
         always_run: true
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo
-        args: [clippy, --workspace, --all-targets, --all-features, --, -D, warnings]
+        entry: make
+        args: [lint]
         language: system
         pass_filenames: false
         always_run: true
 
       - id: cargo-test
         name: cargo test
-        entry: cargo
-        args: [test, --workspace, --all-targets, --all-features]
+        entry: make
+        args: [test]
         language: system
         pass_filenames: false
         always_run: true

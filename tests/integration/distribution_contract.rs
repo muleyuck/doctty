@@ -99,32 +99,41 @@ fn prek_config_uses_repo_quality_gates() {
         .get(Value::String("repos".to_string()))
         .and_then(Value::as_sequence)
         .unwrap_or_else(|| panic!("prek should have a repos list"));
-    let hook_ids = repos
+    let hooks = repos
         .iter()
         .filter_map(|repo| repo.get("hooks").and_then(Value::as_sequence))
         .flatten()
-        .filter_map(|hook| hook.get("id").and_then(Value::as_str))
         .collect::<Vec<_>>();
+    let hook = |id: &str| {
+        hooks
+            .iter()
+            .find(|hook| hook.get("id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("prek should define {id}"))
+    };
 
-    for id in [
-        "check-yaml",
-        "check-toml",
-        "check-merge-conflict",
-        "cargo-fmt",
-        "cargo-check",
-        "cargo-clippy",
-        "cargo-test",
-    ] {
-        assert!(hook_ids.contains(&id), "prek should define {id}");
+    for id in ["check-yaml", "check-toml", "check-merge-conflict"] {
+        hook(id);
     }
 
-    for args in [
-        "args: [fmt, --all, --, --check]",
-        "args: [check, --workspace, --all-targets, --all-features]",
-        "args: [clippy, --workspace, --all-targets, --all-features, --, -D, warnings]",
-        "args: [test, --workspace, --all-targets, --all-features]",
+    for (id, target) in [
+        ("cargo-fmt", "fmt-check"),
+        ("cargo-check", "check"),
+        ("cargo-clippy", "lint"),
+        ("cargo-test", "test"),
     ] {
-        assert!(config.contains(args), "prek should run {args}");
+        let hook = hook(id);
+        assert_eq!(
+            hook.get("entry").and_then(Value::as_str),
+            Some("make"),
+            "prek {id} should run make"
+        );
+        assert_eq!(
+            hook.get("args")
+                .and_then(Value::as_sequence)
+                .map(Vec::as_slice),
+            Some([Value::String(target.to_string())].as_slice()),
+            "prek {id} should run `make {target}`"
+        );
     }
 
     assert!(
