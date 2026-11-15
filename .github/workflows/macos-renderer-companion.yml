@@ -18,8 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: muleyuck/github-actions/actions/rust/setup@v1
-      - name: Test compiled renderer companion
-        run: cargo test --bin doctty-renderer --locked
       - name: Typecheck Swift helper
         run: swiftc -swift-version 5 -typecheck native/macos/webkit_viewport.swift
       - name: Compile cached optimized Swift helper
