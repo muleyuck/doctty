@@ -38,7 +38,13 @@ def answer_kitty_query(master: int) -> None:
             answered = True
 
 
-def run_interactive(executable: Path, markdown: Path, flags: list[str], record: Path) -> int:
+def run_interactive(
+    executable: Path,
+    markdown: Path,
+    flags: list[str],
+    record: Path,
+    trace: Path | None = None,
+) -> int:
     master, slave = pty.openpty()
     responder = threading.Thread(target=answer_kitty_query, args=(master,), daemon=True)
     responder.start()
@@ -51,6 +57,8 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
                 "DOCTTY_RENDERER_SMOKE_RECORD": str(record),
             }
         )
+        if trace is not None:
+            env["DOCTTY_BENCH_TRACE_FILE"] = str(trace)
         result = subprocess.run(
             [str(executable), *flags, str(markdown)],
             stdin=slave,
@@ -65,6 +73,20 @@ def run_interactive(executable: Path, markdown: Path, flags: list[str], record: 
     finally:
         os.close(slave)
         os.close(master)
+
+
+def read_trace(trace: Path) -> list[dict]:
+    return [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+
+
+CLI_EVENT_ORDER = [
+    "cli_start",
+    "cli_args_parsed",
+    "helper_resolved",
+    "renderer_spawn",
+    "renderer_exit",
+    "cli_exit",
+]
 
 
 def check(bundle: Path, source_install: bool = False) -> None:
@@ -129,6 +151,31 @@ def check(bundle: Path, source_install: bool = False) -> None:
             assert data["mermaid"] == expected_mermaid, data
             if expected_theme is not None:
                 assert data["theme"] == expected_theme, data
+
+        # Bench tracing: the success path reports every CLI event in order.
+        trace = test_dir / "trace.jsonl"
+        assert run_interactive(doctty, markdown, [], record, trace) == 0
+        events = read_trace(trace)
+        assert [e["ev"] for e in events] == CLI_EVENT_ORDER, events
+        assert all(e["proc"] == "cli" for e in events), events
+        by_name = {e["ev"]: e for e in events}
+        assert by_name["renderer_exit"]["code"] == 0, events
+        assert by_name["renderer_exit"]["signal"] is None, events
+        assert by_name["cli_exit"]["ok"] is True, events
+        assert by_name["cli_args_parsed"]["mermaid"] == "enabled", events
+        if source_install:
+            assert by_name["helper_resolved"]["source"] in ("extracted", "cache_hit"), events
+        else:
+            assert by_name["helper_resolved"]["source"] == "adjacent", events
+
+        # A failing renderer makes the CLI fail and still closes the trace.
+        viewer.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(3)\n", encoding="utf-8")
+        trace.unlink()
+        assert run_interactive(doctty, markdown, [], record, trace) != 0
+        events = read_trace(trace)
+        by_name = {e["ev"]: e for e in events}
+        assert by_name["renderer_exit"]["code"] == 3, events
+        assert events[-1]["ev"] == "cli_exit" and events[-1]["ok"] is False, events
 
     print("OK: interactive doctty uses the compiled renderer and Swift helper")
 
