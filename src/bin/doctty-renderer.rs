@@ -26,7 +26,7 @@ mod renderer_viewer {
         process::{Child, Command, Stdio},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU8, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
             mpsc::{self, Receiver, Sender, TryRecvError},
         },
         thread,
@@ -274,6 +274,7 @@ mod renderer_viewer {
 
     static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
     static FRAME_SEQ: AtomicU64 = AtomicU64::new(0);
+    static PIXEL_BASELINE_TAKEN: AtomicBool = AtomicBool::new(false);
     // Which `input_ready` event the next tiled loop owes: the startup one, or
     // the one for a reload whose drain ended in a resize restart.
     const INPUT_READY_NONE: u8 = 0;
@@ -323,6 +324,29 @@ mod renderer_viewer {
         if bench_trace::enabled() {
             let seq = FRAME_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
             bench_trace::event("frame_hq", json!({ "reason": reason, "seq": seq, "y": y }));
+        }
+    }
+
+    fn write_pixel_baseline(dir: &Path, rgbz: &Path, width: u32, height: u32) -> Result<()> {
+        fs::create_dir_all(dir).with_context(|| format!("unable to create {}", dir.display()))?;
+        fs::copy(rgbz, dir.join("first.rgbz"))
+            .with_context(|| format!("unable to copy {}", rgbz.display()))?;
+        let meta = json!({"width": width, "height": height, "format": "rgb24+zlib"});
+        fs::write(dir.join("first.json"), meta.to_string())
+            .context("unable to write pixel baseline metadata")
+    }
+
+    // Runs after the placement flush; the first startup frame is the baseline.
+    fn dump_pixel_baseline(frame_reason: &str, rgbz: &Path, width: u32, height: u32) {
+        if frame_reason != "startup" || PIXEL_BASELINE_TAKEN.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let Some(dir) = std::env::var_os("DOCTTY_BENCH_PIXEL_DIR").filter(|dir| !dir.is_empty())
+        else {
+            return;
+        };
+        if let Err(error) = write_pixel_baseline(Path::new(&dir), rgbz, width, height) {
+            eprintln!("doctty: pixel baseline dump failed: {error:#}");
         }
     }
 
@@ -1651,6 +1675,7 @@ mod renderer_viewer {
             .is_some_and(|entry| entry.covers(position, viewport_height));
         // Emitted after the final flush so tracing adds no work before placement.
         let mut traced_upload: Option<(SnapshotTrace, usize, f64)> = None;
+        let mut uploaded_size: Option<(u32, u32)> = None;
 
         if !cache_hit {
             let document_height = cache
@@ -1708,6 +1733,7 @@ mod renderer_viewer {
                 delete_image(&mut out, previous.image_id)?;
             }
             *cache = Some(new_cache);
+            uploaded_size = Some((image_width, image_height));
             traced_upload = snapshot_trace.map(|snapshot| (snapshot, image.len(), upload_ms));
         } else if let Some(entry) = cache.as_ref() {
             let source_offset = entry.source_offset_px(position, viewport_height);
@@ -1746,6 +1772,9 @@ mod renderer_viewer {
         out.flush()?;
         drop(out);
         trace_frame_hq(frame_reason, position);
+        if let Some((width, height)) = uploaded_size {
+            dump_pixel_baseline(frame_reason, image_path, width, height);
+        }
         if let Some((snapshot, bytes, upload_ms)) = &traced_upload {
             snapshot.emit();
             trace_kitty_upload(*bytes, *upload_ms);
@@ -3247,6 +3276,48 @@ mod renderer_viewer {
                 QueuedInput::Quit
             );
             assert_eq!(input_after_reload([]), QueuedInput::Dropped);
+        }
+
+        #[test]
+        fn pixel_baseline_copies_the_tile_and_describes_it() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let rgbz = root.path().join("viewport.rgbz");
+            let bytes = [0x78, 0x9c, 0x00, 0xff, 0x10];
+            fs::write(&rgbz, bytes)?;
+            let dir = root.path().join("px");
+            fs::create_dir(&dir)?;
+
+            write_pixel_baseline(&dir, &rgbz, 640, 480)?;
+
+            assert_eq!(fs::read(dir.join("first.rgbz"))?, bytes);
+            let meta: Value = serde_json::from_slice(&fs::read(dir.join("first.json"))?)?;
+            assert_eq!(
+                meta,
+                json!({"width": 640, "height": 480, "format": "rgb24+zlib"})
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn pixel_baseline_creates_a_missing_directory() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let rgbz = root.path().join("viewport.rgbz");
+            fs::write(&rgbz, b"x")?;
+            let dir = root.path().join("a/b");
+
+            write_pixel_baseline(&dir, &rgbz, 1, 1)?;
+
+            assert!(dir.join("first.rgbz").is_file());
+            assert!(dir.join("first.json").is_file());
+            Ok(())
+        }
+
+        #[test]
+        fn pixel_baseline_fails_when_the_source_tile_is_missing() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let result = write_pixel_baseline(root.path(), &root.path().join("absent.rgbz"), 1, 1);
+            assert!(result.is_err());
+            Ok(())
         }
 
         #[test]
