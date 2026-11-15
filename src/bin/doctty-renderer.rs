@@ -146,17 +146,17 @@ mod renderer_viewer {
                 self.candidate = None;
                 return false;
             }
-            if let Some((previous, since)) = self.candidate {
-                if previous == revision {
-                    if now.saturating_duration_since(since) >= WATCH_SETTLE_DELAY {
-                        // Do not acknowledge the new revision until rebuilding
-                        // the Markdown succeeds. If a save is temporarily
-                        // unreadable, the same revision must be retried.
-                        self.candidate = None;
-                        return true;
-                    }
-                    return false;
+            if let Some((previous, since)) = self.candidate
+                && previous == revision
+            {
+                if now.saturating_duration_since(since) >= WATCH_SETTLE_DELAY {
+                    // Do not acknowledge the new revision until rebuilding
+                    // the Markdown succeeds. If a save is temporarily
+                    // unreadable, the same revision must be retried.
+                    self.candidate = None;
+                    return true;
                 }
+                return false;
             }
             self.candidate = Some((revision, now));
             false
@@ -823,6 +823,10 @@ mod renderer_viewer {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "viewer state is passed explicitly through the render loop"
+    )]
     fn display_cached(
         cache: &ImageCache,
         position: f64,
@@ -874,6 +878,10 @@ mod renderer_viewer {
 
     // Update the status line while the image is frozen; otherwise the existing
     // status disappears exactly when a cache miss is causing visible stutter.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "viewer state is passed explicitly through the render loop"
+    )]
     fn display_cache_wait(
         cache: &ImageCache,
         position: f64,
@@ -1057,15 +1065,16 @@ mod renderer_viewer {
         let bytes = raw.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
-            if bytes[i] == b'%' && i + 2 < bytes.len() {
-                if let (Some(a), Some(b)) = (
+            if bytes[i] == b'%'
+                && i + 2 < bytes.len()
+                && let (Some(a), Some(b)) = (
                     char::from(bytes[i + 1]).to_digit(16),
                     char::from(bytes[i + 2]).to_digit(16),
-                ) {
-                    decoded.push(u8::try_from(a * 16 + b).ok()?);
-                    i += 3;
-                    continue;
-                }
+                )
+            {
+                decoded.push(u8::try_from(a * 16 + b).ok()?);
+                i += 3;
+                continue;
             }
             decoded.push(bytes[i]);
             i += 1;
@@ -1419,6 +1428,10 @@ mod renderer_viewer {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "viewer state is passed explicitly through the render loop"
+    )]
     fn render_scroll(
         helper: &mut SwiftProcess,
         image_path: &Path,
@@ -1545,13 +1558,15 @@ mod renderer_viewer {
         let items = value["items"].as_array().context("missing outline items")?;
         let mut result = Vec::with_capacity(items.len().min(12_000));
         for item in items.iter().take(12_000) {
-            if let (Some(y), Some(text)) = (item["y"].as_f64(), item["text"].as_str()) {
-                if y.is_finite() && y >= 0.0 && !text.is_empty() {
-                    result.push(OutlineItem {
-                        y,
-                        text: text.to_owned(),
-                    });
-                }
+            if let (Some(y), Some(text)) = (item["y"].as_f64(), item["text"].as_str())
+                && y.is_finite()
+                && y >= 0.0
+                && !text.is_empty()
+            {
+                result.push(OutlineItem {
+                    y,
+                    text: text.to_owned(),
+                });
             }
         }
         result.sort_by(|a, b| a.y.total_cmp(&b.y));
@@ -1989,6 +2004,10 @@ mod renderer_viewer {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "viewer state is passed explicitly through the render loop"
+    )]
     fn run_tiled(
         swift: SwiftProcess,
         image_path: PathBuf,
@@ -2188,47 +2207,48 @@ mod renderer_viewer {
                     if preview_requests.is_some() {
                         if let Some(tile) =
                             hybrid_image_preview::select(&preview_tiles, position, viewport_height)
+                            && last_preview_position != Some(position.to_bits())
+                            && frame_due
                         {
-                            if last_preview_position != Some(position.to_bits()) && frame_due {
-                                let mut out = io::stdout().lock();
-                                place_image(
-                                    &mut out,
-                                    tile.id,
-                                    columns,
-                                    rows,
-                                    tile.width,
-                                    hybrid_image_preview::Tile::viewport_height_px(viewport_height),
-                                    tile.source_y(position, viewport_height),
-                                )?;
-                                if let Some(old_id) = placed_preview_id
-                                    .or_else(|| last_displayed.map(|v| v.0))
-                                    .filter(|id| *id != tile.id)
-                                {
-                                    hide_image_placement(&mut out, old_id)?;
-                                }
-                                out.flush()?;
-                                placed_preview_id = Some(tile.id);
-                                showing_preview = true;
-                                last_displayed = None;
-                                last_preview_position = Some(position.to_bits());
-                                last_preview_frame = Some(now);
-                            }
-                        }
-                    } else if let Some(ref outline) = outline {
-                        if last_preview_position != Some(position.to_bits()) && frame_due {
-                            display_preview(
-                                outline,
-                                position,
+                            let mut out = io::stdout().lock();
+                            place_image(
+                                &mut out,
+                                tile.id,
                                 columns,
                                 rows,
-                                viewport_height,
-                                last_displayed.map(|fingerprint| fingerprint.0),
+                                tile.width,
+                                hybrid_image_preview::Tile::viewport_height_px(viewport_height),
+                                tile.source_y(position, viewport_height),
                             )?;
+                            if let Some(old_id) = placed_preview_id
+                                .or_else(|| last_displayed.map(|v| v.0))
+                                .filter(|id| *id != tile.id)
+                            {
+                                hide_image_placement(&mut out, old_id)?;
+                            }
+                            out.flush()?;
+                            placed_preview_id = Some(tile.id);
                             showing_preview = true;
                             last_displayed = None;
                             last_preview_position = Some(position.to_bits());
                             last_preview_frame = Some(now);
                         }
+                    } else if let Some(ref outline) = outline
+                        && last_preview_position != Some(position.to_bits())
+                        && frame_due
+                    {
+                        display_preview(
+                            outline,
+                            position,
+                            columns,
+                            rows,
+                            viewport_height,
+                            last_displayed.map(|fingerprint| fingerprint.0),
+                        )?;
+                        showing_preview = true;
+                        last_displayed = None;
+                        last_preview_position = Some(position.to_bits());
+                        last_preview_frame = Some(now);
                     }
                 } else if last_wait_status_at.is_none_or(|previous| {
                     now.saturating_duration_since(previous) >= Duration::from_millis(100)
@@ -2254,40 +2274,39 @@ mod renderer_viewer {
                     last_wait_status_at = Some(now);
                 }
 
-                if let Some(ref sender) = preview_requests {
-                    if !preview_pending
-                        && mode == Some(HybridDisplayMode::Preview)
-                        && hybrid_image_preview::select(&preview_tiles, position, viewport_height)
-                            .is_none()
+                if let Some(ref sender) = preview_requests
+                    && !preview_pending
+                    && mode == Some(HybridDisplayMode::Preview)
+                    && hybrid_image_preview::select(&preview_tiles, position, viewport_height)
+                        .is_none()
+                {
+                    if preview_tiles.len() >= hybrid_image_preview::MAX_PREVIEW_CACHE
+                        && let Some(old) = hybrid_image_preview::evict(
+                            &mut preview_tiles,
+                            position,
+                            viewport_height,
+                            placed_preview_id,
+                        )
                     {
-                        if preview_tiles.len() >= hybrid_image_preview::MAX_PREVIEW_CACHE {
-                            if let Some(old) = hybrid_image_preview::evict(
-                                &mut preview_tiles,
-                                position,
-                                viewport_height,
-                                placed_preview_id,
-                            ) {
-                                let mut out = io::stdout().lock();
-                                delete_image(&mut out, old.id)?;
-                                out.flush()?;
-                            }
-                        }
-                        if preview_tiles.len() < hybrid_image_preview::MAX_PREVIEW_CACHE {
-                            if let Some(image_id) = hybrid_image_preview::free_id(&preview_tiles) {
-                                let origin = hybrid_image_preview::tile_origin(
-                                    position,
-                                    viewport_height,
-                                    document_height,
-                                );
-                                if unrendered_preview_origin != Some(origin) {
-                                    sender.send(hybrid_image_preview::Request {
-                                        origin,
-                                        image_id,
-                                        requested_at: position,
-                                    })?;
-                                    preview_pending = true;
-                                }
-                            }
+                        let mut out = io::stdout().lock();
+                        delete_image(&mut out, old.id)?;
+                        out.flush()?;
+                    }
+                    if preview_tiles.len() < hybrid_image_preview::MAX_PREVIEW_CACHE
+                        && let Some(image_id) = hybrid_image_preview::free_id(&preview_tiles)
+                    {
+                        let origin = hybrid_image_preview::tile_origin(
+                            position,
+                            viewport_height,
+                            document_height,
+                        );
+                        if unrendered_preview_origin != Some(origin) {
+                            sender.send(hybrid_image_preview::Request {
+                                origin,
+                                image_id,
+                                requested_at: position,
+                            })?;
+                            preview_pending = true;
                         }
                     }
                 }
@@ -2327,27 +2346,27 @@ mod renderer_viewer {
                                 last_displayed.map(|v| v.0),
                             )
                     }) {
-                        if cached.len() >= tile_cache_capacity(&cached, tile_budget) {
-                            if let Some(old) = evict_tile(
+                        if cached.len() >= tile_cache_capacity(&cached, tile_budget)
+                            && let Some(old) = evict_tile(
                                 &mut cached,
                                 position,
                                 viewport_height,
                                 last_displayed.map(|v| v.0),
-                            ) {
-                                let mut out = io::stdout().lock();
-                                delete_image(&mut out, old.image_id)?;
-                                out.flush()?;
-                            }
+                            )
+                        {
+                            let mut out = io::stdout().lock();
+                            delete_image(&mut out, old.image_id)?;
+                            out.flush()?;
                         }
-                        if cached.len() < tile_cache_capacity(&cached, tile_budget) {
-                            if let Some(image_id) = tile_image_id(&cached) {
-                                requests.send(WorkerCommand::Snapshot {
-                                    origin,
-                                    image_id,
-                                    requested_at: position,
-                                })?;
-                                pending = Some(image_id);
-                            }
+                        if cached.len() < tile_cache_capacity(&cached, tile_budget)
+                            && let Some(image_id) = tile_image_id(&cached)
+                        {
+                            requests.send(WorkerCommand::Snapshot {
+                                origin,
+                                image_id,
+                                requested_at: position,
+                            })?;
+                            pending = Some(image_id);
                         }
                     }
                 }
@@ -2615,8 +2634,8 @@ mod renderer_viewer {
         use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
         let (width, height) = terminal::size()?;
-        let columns = width.min(18).max(1);
-        let rows = height.saturating_sub(2).min(9).max(1);
+        let columns = width.clamp(1, 18);
+        let rows = height.saturating_sub(2).clamp(1, 9);
         let image = ImageBuffer::from_pixel(12, 12, Rgba([255, 0, 140, 255]));
         let mut png = Vec::new();
         DynamicImage::ImageRgba8(image)
@@ -2632,12 +2651,11 @@ mod renderer_viewer {
         out.flush()?;
         drop(out);
         loop {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press
-                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                {
-                    break;
-                }
+            if let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+                && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+            {
+                break;
             }
         }
         Ok(())
@@ -2758,12 +2776,11 @@ mod renderer_viewer {
             if prefetched
                 .as_ref()
                 .is_some_and(|next| prefetch_is_stale(&active, next, direction))
+                && let Some(stale) = prefetched.take()
             {
-                if let Some(stale) = prefetched.take() {
-                    let mut out = io::stdout().lock();
-                    delete_image(&mut out, stale.image_id)?;
-                    out.flush()?;
-                }
+                let mut out = io::stdout().lock();
+                delete_image(&mut out, stale.image_id)?;
+                out.flush()?;
             }
 
             // Only two terminal images are kept: active and one prefetched.
@@ -2803,20 +2820,21 @@ mod renderer_viewer {
                 }
             }
 
-            if !pending && prefetched.is_none() {
-                if let Some(origin) = prefetch_origin(&active, position, height, direction) {
-                    let image_id = if active.image_id == FIRST_IMAGE_ID {
-                        SECOND_IMAGE_ID
-                    } else {
-                        FIRST_IMAGE_ID
-                    };
-                    requests.send(WorkerCommand::Snapshot {
-                        origin,
-                        image_id,
-                        requested_at: position,
-                    })?;
-                    pending = true;
-                }
+            if !pending
+                && prefetched.is_none()
+                && let Some(origin) = prefetch_origin(&active, position, height, direction)
+            {
+                let image_id = if active.image_id == FIRST_IMAGE_ID {
+                    SECOND_IMAGE_ID
+                } else {
+                    FIRST_IMAGE_ID
+                };
+                requests.send(WorkerCommand::Snapshot {
+                    origin,
+                    image_id,
+                    requested_at: position,
+                })?;
+                pending = true;
             }
 
             let now = Instant::now();
@@ -2943,21 +2961,21 @@ mod renderer_viewer {
         }
 
         #[test]
-        fn helper_reply_times_out_instead_of_hanging() {
+        fn helper_reply_times_out_instead_of_hanging() -> Result<()> {
             let (sender, lines) = mpsc::channel();
-            let error = next_reply_line(&lines, Duration::from_millis(20)).unwrap_err();
+            let Err(error) = next_reply_line(&lines, Duration::from_millis(20)) else {
+                panic!("an empty channel should time out");
+            };
             assert!(error.to_string().contains("did not respond"), "{error}");
 
-            sender.send(Ok("{}".to_owned())).unwrap();
+            sender.send(Ok("{}".to_owned()))?;
             assert_eq!(
-                next_reply_line(&lines, Duration::from_millis(20)).unwrap(),
+                next_reply_line(&lines, Duration::from_millis(20))?,
                 Some("{}".to_owned())
             );
             drop(sender);
-            assert_eq!(
-                next_reply_line(&lines, Duration::from_millis(20)).unwrap(),
-                None
-            );
+            assert_eq!(next_reply_line(&lines, Duration::from_millis(20))?, None);
+            Ok(())
         }
 
         #[test]
@@ -3539,7 +3557,7 @@ mod renderer_viewer {
             let first = cached_at(0.0);
             assert_eq!(
                 next_tile_origin(
-                    &[first.clone()],
+                    std::slice::from_ref(&first),
                     0.0,
                     1000,
                     10_000.0,
@@ -3633,13 +3651,12 @@ mod renderer_viewer {
                     if let Some(origin) =
                         next_tile_origin(&cached, position, viewport, document_height, direction)
                     {
-                        if cached.len() == MAX_TILE_CACHE {
-                            if let Some(evicted) =
+                        if cached.len() == MAX_TILE_CACHE
+                            && let Some(evicted) =
                                 evict_tile(&mut cached, position, viewport, last_displayed_id)
-                            {
-                                assert_ne!(Some(evicted.image_id), last_displayed_id);
-                                assert!(!evicted.covers(position, viewport));
-                            }
+                        {
+                            assert_ne!(Some(evicted.image_id), last_displayed_id);
+                            assert!(!evicted.covers(position, viewport));
                         }
 
                         if cached.len() < MAX_TILE_CACHE {

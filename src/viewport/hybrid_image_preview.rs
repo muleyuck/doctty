@@ -282,13 +282,13 @@ fn preview_wrap_lines(text: &str, max_units: usize, max_lines: usize) -> Vec<Str
             // Always make progress, even for a wide character in a tiny box.
             end += 1;
         }
-        if end < chars.len() && !chars[end].is_whitespace() {
-            if let Some(space) = (start + 1..end)
+        if end < chars.len()
+            && !chars[end].is_whitespace()
+            && let Some(space) = (start + 1..end)
                 .rev()
                 .find(|&index| chars[index].is_whitespace())
-            {
-                end = space;
-            }
+        {
+            end = space;
         }
         let line: String = chars[start..end].iter().collect();
         let line = line.trim_end();
@@ -746,12 +746,12 @@ mod tests {
                 if let Some(tile) = select(&cached, position, viewport) {
                     displayed_id = Some(tile.id);
                 } else {
-                    if cached.len() == MAX_PREVIEW_CACHE {
-                        if let Some(old) = evict(&mut cached, position, viewport, displayed_id) {
-                            assert_ne!(Some(old.id), displayed_id);
-                            assert!(!old.covers(position, viewport));
-                            evicted_count += 1;
-                        }
+                    if cached.len() == MAX_PREVIEW_CACHE
+                        && let Some(old) = evict(&mut cached, position, viewport, displayed_id)
+                    {
+                        assert_ne!(Some(old.id), displayed_id);
+                        assert!(!old.covers(position, viewport));
+                        evicted_count += 1;
                     }
                     if cached.len() < MAX_PREVIEW_CACHE {
                         let id = free_id(&cached)
