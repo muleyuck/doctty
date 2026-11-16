@@ -26,7 +26,7 @@ mod renderer_viewer {
         process::{Child, Command, Stdio},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
             mpsc::{self, Receiver, Sender, TryRecvError},
         },
         thread,
@@ -47,6 +47,7 @@ mod renderer_viewer {
         core::config::MermaidMode,
         io::browser,
         render::github_html::{GithubPage, build_github_page},
+        support::bench_trace,
     };
     use serde_json::{Value, json};
 
@@ -269,6 +270,96 @@ mod renderer_viewer {
             }
         }
         outcome
+    }
+
+    static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
+    static FRAME_SEQ: AtomicU64 = AtomicU64::new(0);
+    static PIXEL_BASELINE_TAKEN: AtomicBool = AtomicBool::new(false);
+    // Which `input_ready` event the next tiled loop owes: the startup one, or
+    // the one for a reload whose drain ended in a resize restart.
+    const INPUT_READY_NONE: u8 = 0;
+    const INPUT_READY_STARTUP: u8 = 1;
+    const INPUT_READY_RELOAD: u8 = 2;
+    static PENDING_INPUT_READY: AtomicU8 = AtomicU8::new(INPUT_READY_STARTUP);
+
+    fn input_ready_label(state: u8) -> Option<&'static str> {
+        match state {
+            INPUT_READY_STARTUP => Some("startup"),
+            INPUT_READY_RELOAD => Some("reload"),
+            _ => None,
+        }
+    }
+
+    fn key_trace_fields(key: &KeyEvent, seq: u64, from_y: f64, target_y: f64) -> Value {
+        let name = match key.code {
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                format!("ctrl-{c}")
+            }
+            KeyCode::Char(c) => c.to_string(),
+            other => format!("{other:?}"),
+        };
+        json!({
+            "key": name,
+            "kind": match key.kind {
+                KeyEventKind::Press => "press",
+                KeyEventKind::Repeat => "repeat",
+                KeyEventKind::Release => "release",
+            },
+            "seq": seq,
+            "from_y": from_y,
+            "target_y": target_y,
+            "moved": from_y != target_y,
+        })
+    }
+
+    fn trace_key(key: &KeyEvent, from_y: f64, target_y: f64) {
+        if bench_trace::enabled() {
+            let seq = KEY_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+            bench_trace::event("key", key_trace_fields(key, seq, from_y, target_y));
+        }
+    }
+
+    // Call right after the flush that completed a full-quality placement.
+    fn trace_frame_hq(reason: &str, y: f64) {
+        if bench_trace::enabled() {
+            let seq = FRAME_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+            bench_trace::event("frame_hq", json!({ "reason": reason, "seq": seq, "y": y }));
+        }
+    }
+
+    fn write_pixel_baseline(dir: &Path, rgbz: &Path, width: u32, height: u32) -> Result<()> {
+        fs::create_dir_all(dir).with_context(|| format!("unable to create {}", dir.display()))?;
+        fs::copy(rgbz, dir.join("first.rgbz"))
+            .with_context(|| format!("unable to copy {}", rgbz.display()))?;
+        let meta = json!({"width": width, "height": height, "format": "rgb24+zlib"});
+        fs::write(dir.join("first.json"), meta.to_string())
+            .context("unable to write pixel baseline metadata")
+    }
+
+    // Runs after the placement flush; the first startup frame is the baseline.
+    fn dump_pixel_baseline(frame_reason: &str, rgbz: &Path, width: u32, height: u32) {
+        if frame_reason != "startup" || PIXEL_BASELINE_TAKEN.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let Some(dir) = std::env::var_os("DOCTTY_BENCH_PIXEL_DIR").filter(|dir| !dir.is_empty())
+        else {
+            return;
+        };
+        if let Err(error) = write_pixel_baseline(Path::new(&dir), rgbz, width, height) {
+            eprintln!("doctty: pixel baseline dump failed: {error:#}");
+        }
+    }
+
+    fn trace_input_ready(after: &str) {
+        if bench_trace::enabled() {
+            bench_trace::event("input_ready", json!({ "after": after }));
+        }
+    }
+
+    fn trace_reload_start(trigger: &str) {
+        if bench_trace::enabled() {
+            bench_trace::event("reload_start", json!({ "trigger": trigger }));
+        }
     }
 
     fn drain_input_after_reload() -> Result<QueuedInput> {
@@ -554,6 +645,9 @@ mod renderer_viewer {
                 .stderr(Stdio::inherit())
                 .spawn()
                 .context("unable to start Swift WebKit helper")?;
+            if bench_trace::enabled() {
+                bench_trace::event("helper_spawned", json!({ "pid": child.id() }));
+            }
             let mut input = child.stdin.take().context("missing Swift stdin")?;
             writeln!(input, "{}", json!({ "html": page.html }))?;
             input.flush()?;
@@ -690,6 +784,7 @@ mod renderer_viewer {
                         let mut capture_ms = 0.0;
                         let mut encode_ms = 0.0;
                         let mut write_ms = 0.0;
+                        let mut read_trace: Option<SnapshotTrace> = None;
                         let result = (|| -> Result<Option<ImageCache>> {
                             let response =
                                 swift.request(&json!({"type": "snapshot", "y": origin}))?;
@@ -717,8 +812,12 @@ mod renderer_viewer {
                             if obsolete() {
                                 return Ok(None);
                             }
+                            let read_started = Instant::now();
                             let image =
                                 fs::read(&image_path).context("missing prefetched image")?;
+                            let read_ms = elapsed_ms(read_started);
+                            read_trace = bench_trace::enabled()
+                                .then(|| SnapshotTrace::new(&response, image.len(), read_ms));
                             let mut cache = snapshot_cache(
                                 &response,
                                 image_id,
@@ -742,10 +841,15 @@ mod renderer_viewer {
                                 cache.image_height,
                             )?;
                             stdout.flush()?;
+                            drop(stdout);
                             let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
+                            trace_kitty_upload(image.len(), upload_ms);
                             cache.last_upload_ms = upload_ms;
                             Ok(Some(cache))
                         })();
+                        if let Some(trace) = &read_trace {
+                            trace.emit();
+                        }
                         match result {
                             Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
                             Ok(None) => WorkerEvent::Skipped {
@@ -1280,6 +1384,18 @@ mod renderer_viewer {
     }
 
     fn html_input(path: &Path, theme: Theme) -> Result<(WebKitPage, Option<String>)> {
+        let started = Instant::now();
+        let built = build_html_input(path, theme)?;
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "html_built",
+                json!({ "bytes": built.0.html.len(), "ms": elapsed_ms(started) }),
+            );
+        }
+        Ok(built)
+    }
+
+    fn build_html_input(path: &Path, theme: Theme) -> Result<(WebKitPage, Option<String>)> {
         let root = path.parent().context("source directory unavailable")?;
         if path
             .extension()
@@ -1346,6 +1462,65 @@ mod renderer_viewer {
         write!(out, "{clean}")?;
         out.flush()?;
         Ok(())
+    }
+
+    fn elapsed_ms(started: Instant) -> f64 {
+        started.elapsed().as_secs_f64() * 1000.0
+    }
+
+    // Stage timings of one snapshot reply plus the renderer's own file read.
+    struct SnapshotTrace {
+        capture_ms: f64,
+        encode_ms: f64,
+        write_ms: f64,
+        bytes: usize,
+        read_ms: f64,
+    }
+
+    impl SnapshotTrace {
+        fn new(response: &Value, bytes: usize, read_ms: f64) -> Self {
+            Self {
+                capture_ms: response["captureMs"].as_f64().unwrap_or(0.0),
+                encode_ms: response["encodeMs"].as_f64().unwrap_or(0.0),
+                write_ms: response["writeMs"].as_f64().unwrap_or(0.0),
+                bytes,
+                read_ms,
+            }
+        }
+
+        fn emit(&self) {
+            if bench_trace::enabled() {
+                bench_trace::event(
+                    "snapshot",
+                    json!({
+                        "capture_ms": self.capture_ms, "encode_ms": self.encode_ms,
+                        "write_ms": self.write_ms, "bytes": self.bytes,
+                        "read_ms": self.read_ms
+                    }),
+                );
+            }
+        }
+    }
+
+    fn trace_kitty_upload(bytes: usize, ms: f64) {
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "kitty_upload",
+                json!({ "bytes": bytes, "ms": ms, "kind": "tile" }),
+            );
+        }
+    }
+
+    fn trace_helper_ready(ready: &Value) {
+        if bench_trace::enabled() {
+            bench_trace::event(
+                "helper_ready",
+                json!({
+                    "doc_height": ready["height"], "nav_ms": ready["navMs"],
+                    "assets_ms": ready["assetsMs"]
+                }),
+            );
+        }
     }
 
     fn snapshot_dimensions(response: &Value) -> Result<(u32, u32)> {
@@ -1484,11 +1659,15 @@ mod renderer_viewer {
         document_height_hint: f64,
         initial_image_id: Option<u32>,
         cache: &mut Option<ImageCache>,
+        frame_reason: &str,
     ) -> Result<f64> {
         let started = Instant::now();
         let cache_hit = cache
             .as_ref()
             .is_some_and(|entry| entry.covers(position, viewport_height));
+        // Emitted after the final flush so tracing adds no work before placement.
+        let mut traced_upload: Option<(SnapshotTrace, usize, f64)> = None;
+        let mut uploaded_size: Option<(u32, u32)> = None;
 
         if !cache_hit {
             let document_height = cache
@@ -1501,7 +1680,11 @@ mod renderer_viewer {
             if result["kind"] != "snapshot" {
                 bail!("unexpected WebKit response: {result}");
             }
+            let read_started = Instant::now();
             let image = fs::read(image_path).context("missing viewport image")?;
+            let read_ms = elapsed_ms(read_started);
+            let snapshot_trace =
+                bench_trace::enabled().then(|| SnapshotTrace::new(&result, image.len(), read_ms));
             let new_id = initial_image_id.unwrap_or_else(|| {
                 if cache
                     .as_ref()
@@ -1526,7 +1709,9 @@ mod renderer_viewer {
             let source_offset = new_cache.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Keep the previous image visible while uploading the next image.
+            let upload_started = Instant::now();
             upload_rgb(&mut out, new_id, &image, image_width, image_height)?;
+            let upload_ms = elapsed_ms(upload_started);
             place_image(
                 &mut out,
                 new_id,
@@ -1540,6 +1725,8 @@ mod renderer_viewer {
                 delete_image(&mut out, previous.image_id)?;
             }
             *cache = Some(new_cache);
+            uploaded_size = Some((image_width, image_height));
+            traced_upload = snapshot_trace.map(|snapshot| (snapshot, image.len(), upload_ms));
         } else if let Some(entry) = cache.as_ref() {
             let source_offset = entry.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
@@ -1575,6 +1762,18 @@ mod renderer_viewer {
                 .collect::<String>()
         )?;
         out.flush()?;
+        drop(out);
+        trace_frame_hq(frame_reason, position);
+        if let Some((width, height)) = uploaded_size {
+            dump_pixel_baseline(frame_reason, image_path, width, height);
+        }
+        if let Some((snapshot, bytes, upload_ms)) = &traced_upload {
+            snapshot.emit();
+            trace_kitty_upload(*bytes, *upload_ms);
+        }
+        if bench_trace::enabled() {
+            bench_trace::event("cache", json!({ "hit": cache_hit }));
+        }
         Ok(current.document_height)
     }
 
@@ -2101,10 +2300,15 @@ mod renderer_viewer {
         let mut last_movement_at = Instant::now();
         let mut motion = MotionWindow::default();
         let mut last_displayed: Option<(u32, u64)> = None;
+        let mut last_cache_probe = initial_position.to_bits();
         let mut wait = CacheWaitStats::default();
         let mut last_wait_status_at: Option<Instant> = None;
 
         let mut exit = ViewerExit::Quit;
+        let mut pending_input_ready =
+            input_ready_label(PENDING_INPUT_READY.swap(INPUT_READY_NONE, Ordering::Relaxed));
+        // Set by a movement; cleared by the next placement or `frame_unchanged`.
+        let mut awaiting_frame = false;
         let mut watcher = watcher;
         // Always close and join both image workers, even if the event loop
         // exits early with an I/O/rendering error. Otherwise they could still
@@ -2115,6 +2319,7 @@ mod renderer_viewer {
                     .as_mut()
                     .is_some_and(|state| state.should_reload(Instant::now()))
                 {
+                    trace_reload_start("watch");
                     exit = ViewerExit::Reload(reading_fraction(
                         position,
                         document_height,
@@ -2160,6 +2365,8 @@ mod renderer_viewer {
                                 let mut out = io::stdout().lock();
                                 delete_image(&mut out, next.image_id)?;
                                 out.flush()?;
+                                drop(out);
+                                bench_trace::event("prefetch_stale_skip", Value::Null);
                             } else {
                                 cached.push(next);
                             }
@@ -2172,6 +2379,7 @@ mod renderer_viewer {
                         }) => {
                             pending = None;
                             skipped_uploads += 1;
+                            bench_trace::event("upload_skipped", Value::Null);
                             tile_timings.observe_snapshot(snapshot_ms);
                             tile_timings.observe_stages(capture_ms, encode_ms, write_ms);
                         }
@@ -2190,6 +2398,11 @@ mod renderer_viewer {
 
                 let now = Instant::now();
                 let selected = select_tile(&cached, position, viewport_height);
+                // Emitted after the placement below so trace I/O never precedes it.
+                let cache_probe = (position.to_bits() != last_cache_probe).then(|| {
+                    last_cache_probe = position.to_bits();
+                    selected.is_some()
+                });
                 wait.observe(selected.is_some(), now);
                 let idle_for = now.saturating_duration_since(last_movement_at);
                 let mode = outline.as_ref().map(|_| {
@@ -2226,11 +2439,15 @@ mod renderer_viewer {
                                 .or_else(|| last_displayed.map(|fingerprint| fingerprint.0)),
                             showing_preview && placed_preview_id.is_none(),
                         )?;
+                        trace_frame_hq("scroll", position);
                         placed_preview_id = None;
                         showing_preview = false;
                         last_preview_position = None;
                         last_preview_frame = None;
                         last_displayed = Some(fingerprint);
+                        awaiting_frame = false;
+                    } else if std::mem::take(&mut awaiting_frame) && bench_trace::enabled() {
+                        bench_trace::event("frame_unchanged", json!({ "y": position }));
                     }
                     last_wait_status_at = None;
                 } else if mode == Some(HybridDisplayMode::Preview) {
@@ -2305,6 +2522,11 @@ mod renderer_viewer {
                         )?;
                     }
                     last_wait_status_at = Some(now);
+                }
+                if let Some(hit) = cache_probe
+                    && bench_trace::enabled()
+                {
+                    bench_trace::event("cache", json!({ "hit": hit }));
                 }
 
                 if let Some(ref sender) = preview_requests
@@ -2404,6 +2626,9 @@ mod renderer_viewer {
                     }
                 }
 
+                if let Some(after) = pending_input_ready.take() {
+                    trace_input_ready(after);
+                }
                 if !event::poll(Duration::from_millis(12))? {
                     continue;
                 }
@@ -2427,20 +2652,23 @@ mod renderer_viewer {
                         _ => continue,
                     };
                     let previous_position = position;
-                    match apply_key(
+                    let action = apply_key(
                         key,
                         &mut position,
                         &mut direction,
                         &mut pending_g,
                         document_height,
                         viewport_height,
-                    ) {
+                    );
+                    trace_key(&key, previous_position, position);
+                    match action {
                         InputAction::Quit => break 'viewer,
                         InputAction::Select => requests.send(WorkerCommand::Select)?,
                         InputAction::OpenLink => {
                             open_document_link(first_link, columns, rows)?;
                         }
                         InputAction::Reload => {
+                            trace_reload_start("key");
                             exit = ViewerExit::Reload(reading_fraction(
                                 position,
                                 document_height,
@@ -2453,6 +2681,7 @@ mod renderer_viewer {
                     if position != previous_position {
                         last_movement_at = Instant::now();
                         motion.record(last_movement_at, position);
+                        awaiting_frame = true;
                     }
                     // Publish every accepted movement, including reversals, before
                     // returning to the drawing loop.
@@ -2462,6 +2691,15 @@ mod renderer_viewer {
             Ok(exit)
         })();
 
+        // Left before the first poll (an early reload or resize): keep owing it.
+        if let Some(label) = pending_input_ready {
+            let state = if label == "reload" {
+                INPUT_READY_RELOAD
+            } else {
+                INPUT_READY_STARTUP
+            };
+            PENDING_INPUT_READY.store(state, Ordering::Relaxed);
+        }
         drop(requests);
         drop(preview_requests);
         // Join *both* even if either the event loop or a worker failed.
@@ -2541,8 +2779,20 @@ mod renderer_viewer {
                 if ready["kind"] != "ready" {
                     bail!("expected WebKit readiness response: {ready}");
                 }
+                trace_helper_ready(&ready);
                 process
             };
+            if bench_trace::enabled() && last_geometry != Some((columns, rows, pixel_width)) {
+                let window = terminal::window_size().ok();
+                bench_trace::event(
+                    "geometry",
+                    json!({
+                        "cols": columns, "rows": total_rows,
+                        "px_w": window.as_ref().map_or(0, |size| size.width),
+                        "px_h": window.as_ref().map_or(0, |size| size.height)
+                    }),
+                );
+            }
             last_geometry = Some((columns, rows, pixel_width));
             // DOM metrics and preview coordinates must be regenerated after
             // WebKit's CSS reflow, even though the WKWebView process is reused.
@@ -2551,6 +2801,14 @@ mod renderer_viewer {
             } else {
                 None
             };
+            if let Some(reply) = &outline_reply
+                && bench_trace::enabled()
+            {
+                bench_trace::event(
+                    "outline_ready",
+                    json!({ "entries": reply["items"].as_array().map(Vec::len) }),
+                );
+            }
             let outline = match outline_reply {
                 Some(ref value) if !hybrid_image => Some(parse_outline(value)?),
                 Some(_) => Some(Vec::new()),
@@ -2588,6 +2846,7 @@ mod renderer_viewer {
                 document_height,
                 Some(initial_id),
                 &mut cached,
+                if reloaded { "reload" } else { "startup" },
             )?;
             // New placement is now complete. Old cached image bytes may be freed.
             clear_session_images_except(initial_id)?;
@@ -2598,9 +2857,13 @@ mod renderer_viewer {
                     QueuedInput::Resized => {
                         resize_count += 1;
                         swift = Some(helper);
+                        PENDING_INPUT_READY.store(INPUT_READY_RELOAD, Ordering::Relaxed);
                         continue;
                     }
-                    QueuedInput::Dropped => {}
+                    QueuedInput::Dropped => {
+                        PENDING_INPUT_READY.store(INPUT_READY_NONE, Ordering::Relaxed);
+                        trace_input_ready("reload");
+                    }
                 }
             }
             let (exit, returned) = run_tiled(
@@ -2695,6 +2958,10 @@ mod renderer_viewer {
     }
 
     pub fn run() -> Result<()> {
+        bench_trace::init("renderer");
+        if bench_trace::enabled() {
+            bench_trace::event("renderer_start", json!({ "pid": std::process::id() }));
+        }
         if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
             bail!("interactive mode requires stdin and stdout to be a terminal");
         }
@@ -2725,7 +2992,16 @@ mod renderer_viewer {
             bail!("unexpected extra WebKit experiment option: {flag:?}");
         }
         if tiled {
-            return run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
+            let result = run_resizable_tiled(&document, theme, hybrid, hybrid_image, watch);
+            if bench_trace::enabled() {
+                let reason = if result.is_ok() {
+                    format!("{:?}", ViewerExit::Quit)
+                } else {
+                    "Error".to_owned()
+                };
+                bench_trace::event("exit", json!({ "reason": reason }));
+            }
+            return result;
         }
         let (page, first_link) = html_input(&document, theme)?;
         let work = tempfile::tempdir()?;
@@ -2766,6 +3042,7 @@ mod renderer_viewer {
             ready["height"].as_f64().unwrap_or(0.0),
             None,
             &mut cache,
+            "startup",
         )?;
         let mut active = cache.context("initial snapshot did not create a cache")?;
         let mut document_height = initial_height;
@@ -2991,6 +3268,48 @@ mod renderer_viewer {
                 QueuedInput::Quit
             );
             assert_eq!(input_after_reload([]), QueuedInput::Dropped);
+        }
+
+        #[test]
+        fn pixel_baseline_copies_the_tile_and_describes_it() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let rgbz = root.path().join("viewport.rgbz");
+            let bytes = [0x78, 0x9c, 0x00, 0xff, 0x10];
+            fs::write(&rgbz, bytes)?;
+            let dir = root.path().join("px");
+            fs::create_dir(&dir)?;
+
+            write_pixel_baseline(&dir, &rgbz, 640, 480)?;
+
+            assert_eq!(fs::read(dir.join("first.rgbz"))?, bytes);
+            let meta: Value = serde_json::from_slice(&fs::read(dir.join("first.json"))?)?;
+            assert_eq!(
+                meta,
+                json!({"width": 640, "height": 480, "format": "rgb24+zlib"})
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn pixel_baseline_creates_a_missing_directory() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let rgbz = root.path().join("viewport.rgbz");
+            fs::write(&rgbz, b"x")?;
+            let dir = root.path().join("a/b");
+
+            write_pixel_baseline(&dir, &rgbz, 1, 1)?;
+
+            assert!(dir.join("first.rgbz").is_file());
+            assert!(dir.join("first.json").is_file());
+            Ok(())
+        }
+
+        #[test]
+        fn pixel_baseline_fails_when_the_source_tile_is_missing() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let result = write_pixel_baseline(root.path(), &root.path().join("absent.rgbz"), 1, 1);
+            assert!(result.is_err());
+            Ok(())
         }
 
         #[test]
@@ -4173,6 +4492,52 @@ mod renderer_viewer {
                 1000,
             );
             assert_eq!(position, 0.0);
+        }
+
+        #[test]
+        fn key_trace_reports_movement_for_a_plain_scroll_key() {
+            let fields = key_trace_fields(&key(KeyCode::Char('j')), 3, 0.0, 16.0);
+            assert_eq!(
+                fields,
+                json!({"key": "j", "kind": "press", "seq": 3, "from_y": 0.0, "target_y": 16.0, "moved": true})
+            );
+        }
+
+        #[test]
+        fn key_trace_reports_no_movement_when_the_target_is_clamped() {
+            let fields = key_trace_fields(&key(KeyCode::Char('j')), 4, 900.0, 900.0);
+            assert_eq!(fields["moved"], json!(false));
+            assert_eq!(fields["key"], json!("j"));
+        }
+
+        #[test]
+        fn key_trace_names_plain_control_and_page_keys() {
+            let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+            assert_eq!(
+                key_trace_fields(&ctrl_d, 1, 0.0, 0.0)["key"],
+                json!("ctrl-d")
+            );
+            assert_eq!(
+                key_trace_fields(&key(KeyCode::PageDown), 2, 0.0, 0.0)["key"],
+                json!("PageDown")
+            );
+            assert_eq!(
+                key_trace_fields(&key(KeyCode::Char('g')), 3, 500.0, 0.0)["key"],
+                json!("g")
+            );
+        }
+
+        #[test]
+        fn key_trace_records_press_repeat_and_release_kinds() {
+            for (kind, name) in [
+                (KeyEventKind::Press, "press"),
+                (KeyEventKind::Repeat, "repeat"),
+                (KeyEventKind::Release, "release"),
+            ] {
+                let mut event = key(KeyCode::Char('j'));
+                event.kind = kind;
+                assert_eq!(key_trace_fields(&event, 1, 0.0, 0.0)["kind"], json!(name));
+            }
         }
 
         fn cached_at(source_y: f64) -> ImageCache {

@@ -75,6 +75,8 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     private let webView: WKWebView
     private var documentHeight: Double = 0
     private var loaded = false
+    private var navigationStartedAt: UInt64?
+    private var navigationFinishedAt: UInt64?
     private let metricsStartedAt = Date()
     private var snapshotRequests = 0
     private var snapshotCompleted = 0
@@ -101,10 +103,12 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 
     func start() {
         _ = NSApplication.shared
+        navigationStartedAt = DispatchTime.now().uptimeNanoseconds
         webView.load(URLRequest(url: pageURL))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        navigationFinishedAt = DispatchTime.now().uptimeNanoseconds
         checkReady(attempt: 0)
     }
 
@@ -149,7 +153,17 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
             }
             self.documentHeight = (values["height"] as? NSNumber)?.doubleValue ?? Double(self.height)
             self.loaded = true
-            self.emit(["kind": "ready", "height": self.documentHeight])
+            let readyAt = DispatchTime.now().uptimeNanoseconds
+            var navMs = 0.0
+            var assetsMs = 0.0
+            if let started = self.navigationStartedAt, let finished = self.navigationFinishedAt {
+                navMs = Double(finished &- started) / 1_000_000
+                assetsMs = Double(readyAt &- finished) / 1_000_000
+            }
+            self.emit([
+                "kind": "ready", "height": self.documentHeight,
+                "navMs": navMs, "assetsMs": assetsMs,
+            ])
         }
     }
 
