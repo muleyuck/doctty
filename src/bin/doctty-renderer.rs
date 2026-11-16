@@ -719,11 +719,13 @@ mod renderer_viewer {
                             }
                             let image =
                                 fs::read(&image_path).context("missing prefetched image")?;
-                            let (image_width, image_height) = snapshot_dimensions(&response)?;
-                            let scale = f64::from(image_width) / f64::from(viewport_width);
-                            if scale <= 0.0 {
-                                bail!("invalid prefetched image width");
-                            }
+                            let mut cache = snapshot_cache(
+                                &response,
+                                image_id,
+                                actual_y,
+                                image.len(),
+                                viewport_width,
+                            )?;
                             // The user can move again during file IO/decoding.
                             // Recheck just before the expensive Kitty upload.
                             if obsolete() {
@@ -732,23 +734,17 @@ mod renderer_viewer {
                             // Never place the image before the complete transmission.
                             let upload_started = Instant::now();
                             let mut stdout = io::stdout().lock();
-                            upload_rgb(&mut stdout, image_id, &image, image_width, image_height)?;
+                            upload_rgb(
+                                &mut stdout,
+                                image_id,
+                                &image,
+                                cache.image_width,
+                                cache.image_height,
+                            )?;
                             stdout.flush()?;
                             let upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
-                            Ok(Some(ImageCache {
-                                image_id,
-                                source_y: actual_y,
-                                image_width,
-                                image_height,
-                                pixels_per_point: scale,
-                                document_height: response["height"].as_f64().unwrap_or(0.0),
-                                last_snapshot_ms: snapshot_ms,
-                                last_capture_ms: capture_ms,
-                                last_encode_ms: encode_ms,
-                                last_write_ms: write_ms,
-                                last_upload_ms: upload_ms,
-                                image_bytes: image.len(),
-                            }))
+                            cache.last_upload_ms = upload_ms;
+                            Ok(Some(cache))
                         })();
                         match result {
                             Ok(Some(cache)) => WorkerEvent::Snapshot(cache),
@@ -1363,6 +1359,51 @@ mod renderer_viewer {
         Ok((dimension("imageWidth")?, dimension("imageHeight")?))
     }
 
+    // Image pixels per CSS point, vertically. The helper may resample to a width
+    // whose scale is not exactly width/viewport_width, so the reported captured
+    // height is the reliable divisor; replies without it use the width rule.
+    fn snapshot_scale(
+        response: &Value,
+        image_height: u32,
+        image_width: u32,
+        viewport_width: u32,
+    ) -> Result<f64> {
+        let scale = match response["captureHeight"].as_f64().filter(|h| *h > 0.0) {
+            Some(capture_height) => f64::from(image_height) / capture_height,
+            None => f64::from(image_width) / f64::from(viewport_width),
+        };
+        if !(scale.is_finite() && scale > 0.0) {
+            bail!("invalid snapshot scale {scale} in WebKit reply: {response}");
+        }
+        Ok(scale)
+    }
+
+    // Both snapshot paths (the initial render and the prefetch worker) turn a
+    // helper reply into a cache entry here, so they share one scale rule.
+    fn snapshot_cache(
+        response: &Value,
+        image_id: u32,
+        source_y: f64,
+        image_bytes: usize,
+        viewport_width: u32,
+    ) -> Result<ImageCache> {
+        let (image_width, image_height) = snapshot_dimensions(response)?;
+        Ok(ImageCache {
+            image_id,
+            source_y,
+            image_width,
+            image_height,
+            pixels_per_point: snapshot_scale(response, image_height, image_width, viewport_width)?,
+            document_height: response["height"].as_f64().unwrap_or(0.0),
+            last_snapshot_ms: response["elapsedMs"].as_f64().unwrap_or(0.0),
+            last_capture_ms: response["captureMs"].as_f64().unwrap_or(0.0),
+            last_encode_ms: response["encodeMs"].as_f64().unwrap_or(0.0),
+            last_write_ms: response["writeMs"].as_f64().unwrap_or(0.0),
+            last_upload_ms: 0.0,
+            image_bytes,
+        })
+    }
+
     // The WebKit helper writes zlib-compressed RGB (see zlibRGB in
     // webkit_viewport.swift).
     fn upload_rgb(
@@ -1461,11 +1502,6 @@ mod renderer_viewer {
                 bail!("unexpected WebKit response: {result}");
             }
             let image = fs::read(image_path).context("missing viewport image")?;
-            let (image_width, image_height) = snapshot_dimensions(&result)?;
-            let scale = f64::from(image_width) / f64::from(viewport_width);
-            if scale <= 0.0 || f64::from(image_height) < f64::from(viewport_height) * scale {
-                bail!("cached image smaller than viewport: {image_width}x{image_height}");
-            }
             let new_id = initial_image_id.unwrap_or_else(|| {
                 if cache
                     .as_ref()
@@ -1476,20 +1512,17 @@ mod renderer_viewer {
                     FIRST_IMAGE_ID
                 }
             });
-            let new_cache = ImageCache {
-                image_id: new_id,
-                source_y: result["actualY"].as_f64().unwrap_or(0.0),
-                image_width,
-                image_height,
-                pixels_per_point: scale,
-                document_height: result["height"].as_f64().unwrap_or(0.0),
-                last_snapshot_ms: result["elapsedMs"].as_f64().unwrap_or(0.0),
-                last_capture_ms: result["captureMs"].as_f64().unwrap_or(0.0),
-                last_encode_ms: result["encodeMs"].as_f64().unwrap_or(0.0),
-                last_write_ms: result["writeMs"].as_f64().unwrap_or(0.0),
-                last_upload_ms: 0.0,
-                image_bytes: image.len(),
-            };
+            let new_cache = snapshot_cache(
+                &result,
+                new_id,
+                result["actualY"].as_f64().unwrap_or(0.0),
+                image.len(),
+                viewport_width,
+            )?;
+            let (image_width, image_height) = (new_cache.image_width, new_cache.image_height);
+            if f64::from(image_height) < f64::from(viewport_height) * new_cache.pixels_per_point {
+                bail!("cached image smaller than viewport: {image_width}x{image_height}");
+            }
             let source_offset = new_cache.source_offset_px(position, viewport_height);
             let mut out = io::stdout().lock();
             // Keep the previous image visible while uploading the next image.
@@ -3361,6 +3394,44 @@ mod renderer_viewer {
             assert!(snapshot_dimensions(&json!({"imageWidth": 1414})).is_err());
             assert!(snapshot_dimensions(&json!({"imageWidth": 0, "imageHeight": 1})).is_err());
             Ok(())
+        }
+
+        #[test]
+        fn tile_scale_comes_from_the_captured_height_when_the_reply_has_it() -> Result<()> {
+            let reply = json!({"captureHeight": 1696, "imageWidth": 703, "imageHeight": 784});
+            assert_eq!(snapshot_scale(&reply, 784, 703, 1520)?, 784.0 / 1696.0);
+            Ok(())
+        }
+
+        #[test]
+        fn snapshot_cache_built_from_a_resampled_reply_reaches_the_document_end() -> Result<()> {
+            let reply = json!({
+                "captureHeight": 1696, "imageWidth": 703, "imageHeight": 784,
+                "height": 2382,
+            });
+            let cache = snapshot_cache(&reply, FIRST_IMAGE_ID, 686.0, 0, 1520)?;
+            assert!(select_tile(std::slice::from_ref(&cache), 1534.0, 848).is_some());
+            Ok(())
+        }
+
+        #[test]
+        fn tile_scale_falls_back_to_the_width_rule_without_a_usable_captured_height() -> Result<()>
+        {
+            for reply in [
+                json!({"imageWidth": 703, "imageHeight": 784}),
+                json!({"captureHeight": 0, "imageWidth": 703, "imageHeight": 784}),
+                json!({"captureHeight": -1696, "imageWidth": 703, "imageHeight": 784}),
+            ] {
+                assert_eq!(snapshot_scale(&reply, 784, 703, 1520)?, 703.0 / 1520.0);
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn tile_scale_rejects_a_zero_width_fallback() {
+            let reply = json!({"imageWidth": 703, "imageHeight": 784});
+            assert!(snapshot_scale(&reply, 784, 703, 0).is_err());
+            assert!(snapshot_scale(&reply, 784, 0, 1520).is_err());
         }
 
         #[test]
