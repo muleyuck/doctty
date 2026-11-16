@@ -376,9 +376,14 @@ mod renderer_viewer {
 
     impl ImageCache {
         fn covers(&self, position: f64, viewport_height: u32) -> bool {
-            position >= self.source_y - 0.5
-                && position + f64::from(viewport_height)
-                    <= self.source_y + f64::from(self.image_height) / self.pixels_per_point + 0.5
+            let viewport = f64::from(viewport_height);
+            let mut bottom = self.source_y + f64::from(self.image_height) / self.pixels_per_point;
+            // WebKit can round a snapshot below its requested height, and no
+            // origin past the scroll limit exists to fetch the missing rows.
+            if self.source_y + 0.5 >= max_tile_origin(self.document_height, viewport) {
+                bottom = bottom.max(self.document_height);
+            }
+            position >= self.source_y - 0.5 && position + viewport <= bottom + 0.5
         }
 
         fn viewport_height_px(&self, viewport_height: u32) -> u32 {
@@ -787,7 +792,7 @@ mod renderer_viewer {
         let viewport = f64::from(height);
         let cache_bottom =
             active.source_y + f64::from(active.image_height) / active.pixels_per_point;
-        let max_origin = (active.document_height - viewport * 2.0).max(0.0);
+        let max_origin = max_tile_origin(active.document_height, viewport);
         let candidate = if !active.covers(desired, height) {
             // Recovery when the user outpaces a pending snapshot.
             (desired - viewport * 0.5).clamp(0.0, max_origin)
@@ -1723,6 +1728,11 @@ mod renderer_viewer {
             })
     }
 
+    // Matches the WebKit helper's snapshot clamp: tiles are two viewports tall.
+    fn max_tile_origin(document_height: f64, viewport_height: f64) -> f64 {
+        (document_height - viewport_height * 2.0).max(0.0)
+    }
+
     // Directional queue priority: current viewport, two ahead, one behind.
     // Work is admitted only when the previous snapshot has finished, so
     // unused tiles cannot accumulate in an unbounded worker queue.
@@ -1734,7 +1744,7 @@ mod renderer_viewer {
         direction: ScrollDirection,
     ) -> Option<f64> {
         let height = f64::from(viewport_height);
-        let max_origin = (document_height - height * 2.0).max(0.0);
+        let max_origin = max_tile_origin(document_height, height);
         let tile_index = (position / height).floor() as i64;
         let offsets: [i64; 4] = match direction {
             ScrollDirection::Forward => [0, 1, 2, -1],
@@ -1765,7 +1775,7 @@ mod renderer_viewer {
         direction: ScrollDirection,
     ) -> usize {
         let height = f64::from(viewport_height);
-        let max_origin = (document_height - height * 2.0).max(0.0);
+        let max_origin = max_tile_origin(document_height, height);
         let index = (position / height).floor() as i64;
         let offsets: [i64; 4] = match direction {
             ScrollDirection::Forward => [0, 1, 2, -1],
@@ -1951,7 +1961,7 @@ mod renderer_viewer {
             return None;
         }
         let height = f64::from(viewport_height);
-        let max_origin = (document_height - height * 2.0).max(0.0);
+        let max_origin = max_tile_origin(document_height, height);
         let candidates = [
             (position - height * 0.5).clamp(0.0, max_origin),
             position.clamp(0.0, max_origin),
@@ -4129,6 +4139,41 @@ mod renderer_viewer {
                 image_height,
                 ..cached_at(0.0)
             }
+        }
+
+        // Observed in a Herdr pane: a 1520x848-point viewport snapshotted at
+        // 2030px is 2265.05px tall in theory, but WebKit returns 2264px.
+        fn herdr_rounded_tile(source_y: f64) -> ImageCache {
+            ImageCache {
+                source_y,
+                image_width: 2030,
+                image_height: 2264,
+                pixels_per_point: 2030.0 / 1520.0,
+                document_height: 2382.0,
+                ..cached_at(0.0)
+            }
+        }
+
+        #[test]
+        fn tile_at_the_scroll_limit_covers_the_document_end_despite_rounding() {
+            let cached = [cached_at(0.0), herdr_rounded_tile(686.0)];
+            let bottom = 2382.0 - 848.0;
+            let source_y = select_tile(&cached, bottom, 848).map(|tile| tile.source_y);
+            assert_eq!(source_y, Some(686.0));
+        }
+
+        #[test]
+        fn rounded_tile_below_the_scroll_limit_covers_only_its_own_pixels() {
+            let tile = herdr_rounded_tile(600.0);
+            let bottom = 600.0 + 2264.0 * 1520.0 / 2030.0;
+            assert!(tile.covers(bottom - 848.0, 848));
+            assert!(!tile.covers(bottom - 848.0 + 1.0, 848));
+        }
+
+        #[test]
+        fn only_a_tile_within_half_a_point_of_the_scroll_limit_reaches_the_end() {
+            assert!(!herdr_rounded_tile(685.49).covers(1534.0, 848));
+            assert!(herdr_rounded_tile(685.5).covers(1534.0, 848));
         }
 
         #[test]
