@@ -403,17 +403,42 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         return Data(output[0..<Int(length)])
     }
 
+    // Resample to exactly `outWidth` x `outHeight`. WebKit truncates its own
+    // scaled snapshot when the size is not an integer, so non-exact targets
+    // are captured at an integer scale and resized here.
+    private static func downsample(_ image: CGImage, outWidth: Int, outHeight: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil, width: outWidth, height: outHeight, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: outWidth, height: outHeight))
+        return context.makeImage()
+    }
+
     private func capture(started: Date, requestedY: Double, actualY: Double) {
-        let configuration = WKSnapshotConfiguration()
-        configuration.rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
-        if pixelWidth > 0 {
-            // snapshotWidth is in points; WebKit multiplies it by the backing scale.
-            let backingScale = NSScreen.main?.backingScaleFactor ?? 1
-            configuration.snapshotWidth = NSNumber(value: Double(pixelWidth / backingScale))
-        }
-        configuration.afterScreenUpdates = true
+        let rect = CGRect(x: 0, y: 0, width: width, height: height * 2)
+        let captureHeight = Double(rect.height)
+        let backingScale = NSScreen.main?.backingScaleFactor ?? 1
+        let hasTarget = pixelWidth > 0
+        let targetWidth = Int(pixelWidth.rounded())
+        let targetHeight = Int((captureHeight * Double(pixelWidth) / Double(width)).rounded())
+        // WebKit's fractional scaling can return the right size with mis-scaled
+        // content, so it is trusted only for no target or an exact 1:1 snapshot.
+        let fastEligible = !hasTarget || pixelWidth == width * backingScale
+
         let captureStarted = Date()
-        webView.takeSnapshot(with: configuration) { image, error in
+        func snapshot(snapshotWidth: Double?, _ completion: @escaping (CGImage?, Error?) -> Void) {
+            let configuration = WKSnapshotConfiguration()
+            configuration.rect = rect
+            if let snapshotWidth { configuration.snapshotWidth = NSNumber(value: snapshotWidth) }
+            configuration.afterScreenUpdates = true
+            webView.takeSnapshot(with: configuration) { image, error in
+                completion(image?.cgImage(forProposedRect: nil, context: nil, hints: nil), error)
+            }
+        }
+        func finish(_ captured: CGImage?, _ error: Error?, exact: Bool) {
             let captureMs = Date().timeIntervalSince(captureStarted) * 1000
             let encodeStarted = Date()
             if let error {
@@ -421,8 +446,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 return
             }
             guard
-                let image,
-                let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                let captured,
+                let cgImage = exact
+                    ? Self.downsample(captured, outWidth: targetWidth, outHeight: targetHeight)
+                    : captured,
                 let encoded = Self.zlibRGB(cgImage)
             else {
                 self.emit(["kind": "error", "message": "could not encode viewport image"])
@@ -445,12 +472,23 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                     "writeMs": writeMs,
                     "imageWidth": cgImage.width,
                     "imageHeight": cgImage.height,
+                    "captureHeight": captureHeight,
                     "imageBytes": encoded.count
                 ])
             } catch {
                 self.emit(["kind": "error", "message": error.localizedDescription])
             }
         }
+        func exactCapture() {
+            // One snapshot point per CSS point, so the backing scale is an
+            // integer multiple and WebKit never truncates the rect.
+            snapshot(snapshotWidth: Double(width)) { finish($0, $1, exact: true) }
+        }
+
+        guard fastEligible else { return exactCapture() }
+        // snapshotWidth is in points; WebKit multiplies it by the backing scale.
+        let fastWidth = hasTarget ? Double(pixelWidth / backingScale) : nil
+        snapshot(snapshotWidth: fastWidth) { finish($0, $1, exact: false) }
     }
 
     private func emit(_ object: [String: Any]) {
