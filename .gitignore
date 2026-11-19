@@ -7,3 +7,8 @@
 
 # Claude Code per-machine approvals and local permissions
 /.claude/settings.local.json
+
+# Benchmark harness outputs
+/bench/results/
+/bench/fixtures/large.md
+/bench/__pycache__/
