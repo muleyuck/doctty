@@ -446,6 +446,12 @@ def run_scenario(
         if sampler:
             sampler.stop()
     events = read_trace(trace)
+    # Ghostty sometimes opens a window small and resizes it during startup, and the renderer
+    # keeps the first size until the next reload; such a run measured a different viewport.
+    sizes = list(dict.fromkeys((e["cols"], e["rows"]) for e in events if e["ev"] == "geometry"))
+    if result["status"] == "ok" and len(sizes) > 1:
+        result["status"] = "invalid"
+        result["detail"] = "terminal size changed during the run: " + " -> ".join(f"{c}x{r}" for c, r in sizes)
     if result["status"] == "ok":
         rows = read_trace(ps_path) if sampler else None
         seen_webkit = {row["pid"] for row in rows or [] if "WebKit" in row["comm"]} - (
@@ -555,18 +561,28 @@ def _fmt(value) -> str:
 
 
 def _write_results(out: Path, meta: dict, summary: dict) -> None:
-    meta["geometry"] = meta.get("geometry") or find_geometry(out)
+    meta["geometry"] = find_geometry(out) or find_geometry(out, pixels=True) or meta.get("geometry")
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     (out / "summary.md").write_text(summary_markdown(summary))
 
 
-def find_geometry(out: Path) -> dict | None:
+def find_geometry(out: Path, *, pixels: bool = False) -> dict | None:
+    """The geometry most scenario launches ran at (pixel launches only when pixels=True);
+    launches whose size changed are ignored."""
+    counts: dict[tuple, int] = {}
     for trace in sorted(out.glob("trace-*.jsonl")):
-        event = _first(read_trace(trace), "geometry")
-        if event is not None:
-            return {key: event[key] for key in ("cols", "rows", "px_w", "px_h")}
-    return None
+        if trace.name.startswith("trace-pixels-") != pixels:
+            continue
+        events = [e for e in read_trace(trace) if e["ev"] == "geometry"]
+        if not events or len({(e["cols"], e["rows"]) for e in events}) > 1:
+            continue
+        key = tuple(events[0][k] for k in ("cols", "rows", "px_w", "px_h"))
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    best = max(counts, key=counts.get)  # ties: the first trace in name order
+    return dict(zip(("cols", "rows", "px_w", "px_h"), best))
 
 
 def mmdc_version(command: str, run=subprocess.run) -> str | None:
@@ -601,13 +617,26 @@ def preflight(system: str, get_ghostty, build, driver, stderr=sys.stderr) -> int
     return None
 
 
-def _pixels(driver, fixture: Path, theme: str, out: Path, **launch) -> bool:
+def _cells(geometry: dict | None) -> tuple[int, int] | None:
+    return geometry and (geometry["cols"], geometry["rows"])
+
+
+def _pixels(driver, fixture: Path, theme: str, out: Path, expected: dict | None, **launch) -> bool:
     with tempfile.TemporaryDirectory() as tmp:
         extra_env = {**launch.pop("extra_env"), "DOCTTY_BENCH_PIXEL_DIR": tmp}
         result = run_scenario(driver, "pixels", fixture, out, index=1, theme=theme, extra_env=extra_env, **launch)
         first, size = Path(tmp) / "first.rgbz", Path(tmp) / "first.json"
         if result["status"] != "ok" or not first.is_file() or not size.is_file():
             print(f"error: pixel capture {fixture.stem}-{theme}: {result['status']}", file=sys.stderr)
+            return False
+        # The renderer may cap a tile's width (image limits), so compare cells, not the tile.
+        geometry = _first(read_trace(out / f"trace-pixels-{fixture.stem}-1.jsonl"), "geometry")
+        if expected and _cells(geometry) != _cells(expected):
+            print(
+                f"error: pixel capture {fixture.stem}-{theme}: terminal was {_cells(geometry)}, "
+                f"other launches ran at {_cells(expected)}",
+                file=sys.stderr,
+            )
             return False
         (out / "pixels").mkdir(exist_ok=True)
         shutil.copy(first, out / "pixels" / f"{fixture.stem}-{theme}.rgbz")
@@ -653,12 +682,13 @@ def run_all(
                 failed |= result["status"] == "failed"
                 _write_results(out, meta, summary)
         if pixels:
+            expected = find_geometry(out)  # fixed before any capture, from scenario launches only
             for name in fixture_names:
                 if name == "mermaid-images" and not mermaid_cmd:
                     continue
                 for pixel_theme in ("light", "dark"):
                     ok = _pixels(
-                        driver, fixtures_dir / f"{name}.md", pixel_theme, out,
+                        driver, fixtures_dir / f"{name}.md", pixel_theme, out, expected,
                         clock=clock, sleep=sleep, font_size=font_size,
                         no_mermaid=not mermaid_cmd, extra_env=extra_env,
                     )
