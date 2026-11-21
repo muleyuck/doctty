@@ -178,10 +178,17 @@ class ProcessUsage(unittest.TestCase):
 
     def test_exited_process_sampled_last_with_zero_cputime_keeps_its_cpu(self):
         # Real run: the helper's last ps row was its zombie, "(doctty-webkit-sw)" 0.0 / 0 KB.
-        rows = [ps(1, 30, 0.62, 179648), ps(2, 30, 0.75, 153568), ps(3, 30, 0.0, 0)]
+        zombie = "(doctty-webkit-sw)"
+        rows = [ps(1, 30, 0.62, 179648), ps(2, 30, 0.75, 153568), ps(3, 30, 0.0, 0, zombie)]
         usage = stats.process_usage(rows, self.PIDS, set())
         self.assertEqual(usage["helper"]["cpu_s"], 0.75)
         self.assertEqual(usage["helper"]["peak_rss_kb"], 179648)
+
+    def test_process_seen_only_as_a_zombie_is_unsampled(self):
+        rows = [ps(1, 30, 1.0, 50), ps(2, 31, 0.0, 0, "(doctty-webkit-sw)")]
+        usage = stats.process_usage(rows, self.PIDS, set())
+        self.assertEqual(usage["helper"]["unsampled"], [31, 32])
+        self.assertEqual(usage["helper"]["cpu_s"], 1.0)
 
     def test_helper_pids_across_reloads_are_summed(self):
         rows = [ps(1, 30, 1.0, 50), ps(2, 31, 2.0, 60), ps(3, 32, 3.0, 70)]

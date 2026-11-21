@@ -108,11 +108,13 @@ def counters(events: list[dict]) -> dict:
 
 def process_usage(ps_rows: list[dict], pids: dict[str, set[int]], webkit_new: set[int]) -> dict:
     groups = {**pids, "webkit": webkit_new}
-    # cputime only grows, so take the largest sample: ps reports an exited process
-    # (a zombie, comm in parentheses) with cputime 0.
+    # ps lists an exited process (a zombie) with its comm in parentheses and cputime
+    # and rss 0; such a row is not a measurement. cputime only grows, so take the max.
     max_cpu: dict[int, float] = {}
     rss_by_time: dict[int, dict[float, int]] = {}
     for row in ps_rows:
+        if row["comm"].startswith("("):
+            continue
         pid = row["pid"]
         max_cpu[pid] = max(max_cpu.get(pid, 0.0), row["cpu_s"])
         rss_by_time.setdefault(pid, {})[row["t"]] = row["rss_kb"]
