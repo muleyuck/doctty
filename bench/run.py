@@ -106,16 +106,16 @@ def _cpu_seconds(text: str) -> float:
 def parse_ps(output: str) -> list[dict]:
     rows = []
     for line in output.splitlines():
-        parts = line.split()
+        parts = line.split(None, 3)
         if len(parts) < 4:
             continue
         try:
             rows.append(
                 {
                     "pid": int(parts[0]),
-                    "comm": " ".join(parts[1:-2]),
-                    "cpu_s": _cpu_seconds(parts[-2]),
-                    "rss_kb": int(parts[-1]),
+                    "comm": parts[3],
+                    "cpu_s": _cpu_seconds(parts[1]),
+                    "rss_kb": int(parts[2]),
                 }
             )
         except ValueError:
@@ -124,7 +124,8 @@ def parse_ps(output: str) -> list[dict]:
 
 
 def _ps() -> list[dict]:
-    out = subprocess.run(["ps", "-axo", "pid=,comm=,cputime=,rss="], capture_output=True, text=True)
+    # macOS ps cuts comm to 16 characters unless it is the last column.
+    out = subprocess.run(["ps", "-axo", "pid=,cputime=,rss=,comm="], capture_output=True, text=True)
     return parse_ps(out.stdout)
 
 

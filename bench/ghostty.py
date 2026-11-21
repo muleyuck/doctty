@@ -97,13 +97,10 @@ end run
 
 _PROBE = 'tell application "Ghostty" to return version'
 
-_KEY_NAMES = {"PageDown": "page_down"}
-
-
 def _key_spec(key: str) -> tuple[str, str]:
     if key.startswith("ctrl-"):
         return key.removeprefix("ctrl-"), "control"
-    return _KEY_NAMES.get(key, key), ""
+    return key, ""
 
 
 def _osascript(script: str, *args: str, timeout: float = 15) -> str:
