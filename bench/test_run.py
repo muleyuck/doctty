@@ -92,10 +92,13 @@ class FakeDriver:
             return terminal
         self._emit("helper_resolved", proc="cli", source=self.behavior.get("source", "extracted"), ms=1.0)
         self._emit("renderer_start", pid=2000 + index)
+        for cols, rows, px_w in self.behavior.get("geometry", [(120, 40, 2)]):
+            self._emit("geometry", cols=cols, rows=rows, px_w=px_w, px_h=1)
         if "pixel" in self.behavior:
             pixel_dir = Path(env["DOCTTY_BENCH_PIXEL_DIR"])
             (pixel_dir / "first.rgbz").write_bytes(self.behavior["pixel"])
-            (pixel_dir / "first.json").write_text('{"width": 2, "height": 1}')
+            width = self.behavior.get("pixel_width", 2)
+            (pixel_dir / "first.json").write_text(json.dumps({"width": width, "height": 1}))
         if self.behavior.get("no_ready"):
             return terminal
         delay = self.behavior.get("startup_delay", 0.0)
@@ -244,6 +247,17 @@ class RunScenarioTest(unittest.TestCase):
 
         hit = self.go(FakeDriver([{"source": "cache_hit"}]), "startup-cold")
         self.assertEqual(hit["status"], "invalid")
+
+    def test_terminal_resized_during_the_run_is_invalid(self):
+        # Real run: Ghostty opened the window at 56x20, then the first reload saw 204x59.
+        driver = FakeDriver([{"source": "extracted", "geometry": [(56, 20, 2856), (204, 59, 2856)]}])
+        result = self.go(driver, "startup-cold")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("56x20 -> 204x59", result["detail"])
+
+    def test_pixel_width_change_at_the_same_cell_size_stays_ok(self):
+        driver = FakeDriver([{"source": "extracted", "geometry": [(204, 59, 2800), (204, 59, 2856)]}])
+        self.assertEqual(self.go(driver, "startup-cold")["status"], "ok")
 
     def test_warm_startup_requires_cache_hit(self):
         self.assertEqual(self.go(FakeDriver([{"source": "cache_hit"}]), "startup-warm")["status"], "ok")
@@ -653,6 +667,36 @@ class RunAllTest(unittest.TestCase):
         self.assertFalse((self.out / "pixels" / "small-dark.rgbz").exists())
 
 
+    def test_rejected_pixel_capture_does_not_shift_the_reference_size(self):
+        # One scenario launch, then a stale light capture: a tie must not make 56x20 the reference.
+        stale = {"pixel": b"LIGHT", "geometry": [(56, 20, 2)]}
+        driver = FakeDriver([{}, stale, {"pixel": b"DARK"}])
+        code, stderr = self.go(driver, scenarios=["startup-cold"], runs=1, pixels=True)
+        self.assertEqual(code, 1)
+        self.assertIn("small-light", stderr)
+        self.assertNotIn("small-dark", stderr)
+        self.assertTrue((self.out / "pixels" / "small-dark.rgbz").is_file())
+        self.assertEqual(json.loads((self.out / "meta.json").read_text())["geometry"]["cols"], 120)
+
+    def test_pixel_capture_at_a_different_terminal_size_fails(self):
+        # Real run: one pixel launch stayed at 56x20 while every other launch ran at 120x40.
+        stale = {"pixel": b"LIGHT", "geometry": [(56, 20, 2)]}
+        driver = FakeDriver([{}, {}, stale, {"pixel": b"DARK"}])
+        code, stderr = self.go(driver, scenarios=["startup-cold"], runs=2, pixels=True)
+        self.assertEqual(code, 1)
+        self.assertIn("small-light", stderr)
+        self.assertIn("(56, 20)", stderr)
+        self.assertFalse((self.out / "pixels" / "small-light.rgbz").exists())
+        self.assertTrue((self.out / "pixels" / "small-dark.rgbz").is_file())
+
+    def test_capped_tile_width_at_the_usual_terminal_size_is_kept(self):
+        # The renderer caps tile width under image-size limits; that is not a size change.
+        driver = FakeDriver([{}, {}, {"pixel": b"LIGHT", "pixel_width": 1}, {"pixel": b"DARK"}])
+        code, _ = self.go(driver, scenarios=["startup-cold"], runs=2, pixels=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.out / "pixels" / "small-light.json").read_text())["width"], 1)
+
+
 class PreflightTest(unittest.TestCase):
     class Driver:
         def __init__(self, denied=False, hangs=False):
@@ -747,16 +791,34 @@ class OsascriptTest(unittest.TestCase):
 
 
 class FindGeometryTest(unittest.TestCase):
-    def test_reads_the_first_geometry_event_from_the_traces(self):
+    @staticmethod
+    def write(out, name, *sizes):
+        lines = [
+            json.dumps({"t_us": i, "ev": "geometry", "cols": c, "rows": r, "px_w": w, "px_h": h})
+            for i, (c, r, w, h) in enumerate(sizes)
+        ]
+        (out / f"trace-{name}.jsonl").write_text("\n".join(lines) + "\n")
+
+    def test_no_geometry_gives_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(run.find_geometry(Path(tmp)))
+
+    def test_pixel_launches_count_only_when_asked(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
+            self.write(out, "pixels-small-1", (56, 20, 2856, 1712))
             self.assertIsNone(run.find_geometry(out))
-            event = {"t_us": 1, "ev": "geometry", "cols": 120, "rows": 40, "px_w": 1440, "px_h": 900}
-            (out / "trace-a-small-1.jsonl").write_text(json.dumps(event) + "\n")
-            self.assertEqual(
-                run.find_geometry(out), {"cols": 120, "rows": 40, "px_w": 1440, "px_h": 900}
-            )
+            self.assertEqual(run.find_geometry(out, pixels=True)["cols"], 56)
 
+    def test_most_launches_win_and_resized_launches_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            # Name order puts the resized and the odd launch first.
+            self.write(out, "a-resized-1", (56, 20, 2856, 1712), (204, 59, 2856, 1712))
+            self.write(out, "b-odd-1", (56, 20, 2856, 1712))
+            self.write(out, "c-small-1", (204, 59, 2856, 1712))
+            self.write(out, "d-small-2", (204, 59, 2856, 1712))
+            self.assertEqual(run.find_geometry(out), {"cols": 204, "rows": 59, "px_w": 2856, "px_h": 1712})
 
 class TouchIdenticalTest(unittest.TestCase):
     def test_rewrites_same_bytes_and_bumps_mtime(self):
