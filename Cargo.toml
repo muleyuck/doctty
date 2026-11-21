@@ -33,7 +33,7 @@ expect_used = "deny"
 anyhow = "1.0.102"
 base64 = "0.22.1"
 clap = { version = "4.6.0", features = ["derive"] }
-comrak = "0.51.0"
+comrak = "0.59.0"
 crossterm = "0.29.0"
 dark-light = "1.1.1"
 htmlize = { version = "1.1.0", features = ["unescape"] }
