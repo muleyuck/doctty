@@ -97,10 +97,14 @@ end run
 
 _PROBE = 'tell application "Ghostty" to return version'
 
+# send key takes Ghostty.Input.Key raw values (case names, camelCase).
+_KEY_NAMES = {"PageDown": "pageDown"}
+
+
 def _key_spec(key: str) -> tuple[str, str]:
     if key.startswith("ctrl-"):
         return key.removeprefix("ctrl-"), "control"
-    return key, ""
+    return _KEY_NAMES.get(key, key), ""
 
 
 def _osascript(script: str, *args: str, timeout: float = 15) -> str:
