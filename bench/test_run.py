@@ -718,7 +718,7 @@ class PsTest(unittest.TestCase):
         completed = subprocess.CompletedProcess([], 0, stdout=line)
         with mock.patch("run.subprocess.run", return_value=completed) as ps:
             rows = run._ps()
-        self.assertTrue(ps.call_args.args[0][2].endswith(",comm="))
+        self.assertEqual(ps.call_args.args[0], ["ps", "-axo", "pid=,cputime=,rss=,comm="])
         self.assertEqual(
             rows,
             [
