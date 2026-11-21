@@ -712,7 +712,33 @@ class MmdcVersionTest(unittest.TestCase):
         self.assertIsNone(run.mmdc_version("/nonexistent/mmdc"))
 
 
+class PsTest(unittest.TestCase):
+    def test_comm_is_the_last_column_so_ps_does_not_truncate_it(self):
+        line = " 4242   0:01.50  20480 /Users/a b/Library/Caches/doctty/native/doctty-webkit-helper\n"
+        completed = subprocess.CompletedProcess([], 0, stdout=line)
+        with mock.patch("run.subprocess.run", return_value=completed) as ps:
+            rows = run._ps()
+        self.assertTrue(ps.call_args.args[0][2].endswith(",comm="))
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "pid": 4242,
+                    "comm": "/Users/a b/Library/Caches/doctty/native/doctty-webkit-helper",
+                    "cpu_s": 1.5,
+                    "rss_kb": 20480,
+                }
+            ],
+        )
+        self.assertTrue(run._is_interesting(rows[0]))
+
+
 class OsascriptTest(unittest.TestCase):
+    def test_page_down_is_sent_with_ghosttys_key_name(self):
+        with mock.patch("ghostty._osascript", return_value="") as osascript:
+            ghostty.GhosttyDriver().send_keys("term-1", ["PageDown", "ctrl-d"])
+        self.assertEqual(osascript.call_args.args[1:], ("term-1", "0.0", "PageDown", "", "d", "control"))
+
     def test_subprocess_timeout_becomes_driver_timeout(self):
         expired = subprocess.TimeoutExpired(cmd="osascript", timeout=15)
         with mock.patch("ghostty.subprocess.run", side_effect=expired):
