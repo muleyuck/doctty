@@ -108,24 +108,25 @@ def counters(events: list[dict]) -> dict:
 
 def process_usage(ps_rows: list[dict], pids: dict[str, set[int]], webkit_new: set[int]) -> dict:
     groups = {**pids, "webkit": webkit_new}
-    last_cpu: dict[int, tuple[float, float]] = {}
+    # cputime only grows, so take the largest sample: ps reports an exited process
+    # (a zombie, comm in parentheses) with cputime 0.
+    max_cpu: dict[int, float] = {}
     rss_by_time: dict[int, dict[float, int]] = {}
     for row in ps_rows:
         pid = row["pid"]
-        if pid not in last_cpu or row["t"] >= last_cpu[pid][0]:
-            last_cpu[pid] = (row["t"], row["cpu_s"])
+        max_cpu[pid] = max(max_cpu.get(pid, 0.0), row["cpu_s"])
         rss_by_time.setdefault(pid, {})[row["t"]] = row["rss_kb"]
     usage = {}
     for group, members in groups.items():
-        sampled = [pid for pid in members if pid in last_cpu]
+        sampled = [pid for pid in members if pid in max_cpu]
         totals: dict[float, int] = {}
         for pid in sampled:
             for t, rss in rss_by_time[pid].items():
                 totals[t] = totals.get(t, 0) + rss
         usage[group] = {
-            "cpu_s": sum(last_cpu[pid][1] for pid in sampled),
+            "cpu_s": sum(max_cpu[pid] for pid in sampled),
             "peak_rss_kb": max(totals.values(), default=0),
-            "unsampled": sorted(pid for pid in members if pid not in last_cpu),
+            "unsampled": sorted(pid for pid in members if pid not in max_cpu),
         }
     return usage
 
