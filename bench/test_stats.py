@@ -170,11 +170,18 @@ class Counters(unittest.TestCase):
 class ProcessUsage(unittest.TestCase):
     PIDS = {"cli": {10}, "renderer": {20}, "helper": {30, 31, 32}}
 
-    def test_cpu_is_the_last_cumulative_sample_with_zero_baseline(self):
+    def test_cpu_is_the_largest_cumulative_sample_with_zero_baseline(self):
         rows = [ps(1, 20, 4.0, 100), ps(2, 20, 5.5, 100), ps(1, 10, 0.25, 10)]
         usage = stats.process_usage(rows, self.PIDS, set())
         self.assertEqual(usage["renderer"]["cpu_s"], 5.5)
         self.assertEqual(usage["cli"]["cpu_s"], 0.25)
+
+    def test_exited_process_sampled_last_with_zero_cputime_keeps_its_cpu(self):
+        # Real run: the helper's last ps row was its zombie, "(doctty-webkit-sw)" 0.0 / 0 KB.
+        rows = [ps(1, 30, 0.62, 179648), ps(2, 30, 0.75, 153568), ps(3, 30, 0.0, 0)]
+        usage = stats.process_usage(rows, self.PIDS, set())
+        self.assertEqual(usage["helper"]["cpu_s"], 0.75)
+        self.assertEqual(usage["helper"]["peak_rss_kb"], 179648)
 
     def test_helper_pids_across_reloads_are_summed(self):
         rows = [ps(1, 30, 1.0, 50), ps(2, 31, 2.0, 60), ps(3, 32, 3.0, 70)]
