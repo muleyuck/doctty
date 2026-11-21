@@ -737,7 +737,7 @@ class OsascriptTest(unittest.TestCase):
     def test_page_down_is_sent_with_ghosttys_key_name(self):
         with mock.patch("ghostty._osascript", return_value="") as osascript:
             ghostty.GhosttyDriver().send_keys("term-1", ["PageDown", "ctrl-d"])
-        self.assertEqual(osascript.call_args.args[1:], ("term-1", "0.0", "PageDown", "", "d", "control"))
+        self.assertEqual(osascript.call_args.args[1:], ("term-1", "0.0", "pageDown", "", "d", "control"))
 
     def test_subprocess_timeout_becomes_driver_timeout(self):
         expired = subprocess.TimeoutExpired(cmd="osascript", timeout=15)
