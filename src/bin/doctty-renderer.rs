@@ -403,6 +403,14 @@ mod renderer_viewer {
     impl TerminalSession {
         fn enter() -> Result<Self> {
             terminal::enable_raw_mode()?;
+            // crossterm 0.29 installs its SIGWINCH handler only when its event
+            // reader is first created, on the first poll. Create it before
+            // callers read the terminal size: otherwise a resize during WebKit
+            // startup is never reported and the first view keeps the old size.
+            if let Err(error) = event::poll(Duration::ZERO) {
+                let _ = terminal::disable_raw_mode();
+                return Err(error.into());
+            }
             if let Err(error) = execute!(
                 io::stdout(),
                 EnterAlternateScreen,
