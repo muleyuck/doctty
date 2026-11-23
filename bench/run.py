@@ -70,13 +70,33 @@ def touch_identical(path: Path) -> None:
     path.write_bytes(path.read_bytes())
 
 
+# Ghostty sometimes opens a window small and resizes it a moment later. Wait until `stty size`
+# repeats `reads` times in a row (or `limit` reads pass) before exec, so the launch sees the
+# final size. Startup is timed from doctty's own cli_start, so the wait is not measured.
+_SETTLE = (
+    'last=; same=0; n=0; while :; do size=$(stty size 2>/dev/null); '
+    'if [ -n "$size" ] && [ "$size" = "$last" ]; then same=$((same + 1)); else same=1; last=$size; fi; '
+    'n=$((n + 1)); if [ -n "$size" ] && [ "$same" -ge "$1" ] || [ "$n" -ge "$2" ]; then break; fi; '
+    'sleep "$3"; done; shift 3; exec "$@"'
+)
+SETTLE_READS = 4  # 300 ms of an unchanged size at SETTLE_POLL
+SETTLE_LIMIT = 50
+SETTLE_POLL = 0.1
+
+
+def settled_argv(
+    argv: list[str], *, reads: int = SETTLE_READS, limit: int = SETTLE_LIMIT, poll: float = SETTLE_POLL
+) -> list[str]:
+    return ["/bin/sh", "-c", _SETTLE, "sh", str(reads), str(limit), str(poll), *argv]
+
+
 def launch_argv(binary: Path, fixture: Path, theme: str, watch: bool, no_mermaid: bool) -> list[str]:
     argv = [str(binary), "--theme", theme]
     if watch:
         argv.append("--watch")
     if no_mermaid:
         argv.append("--no-mermaid")
-    return argv + [str(fixture)]
+    return settled_argv(argv + [str(fixture)])
 
 
 def read_trace(path: Path) -> list[dict]:
