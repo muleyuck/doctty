@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 UNAME_S := $(shell uname -s)
 
-.PHONY: build fmt fmt-check lint test test-unit test-integration test-e2e check ci ci-macos hooks-install install-local run-local
+.PHONY: build fmt fmt-check lint test test-unit test-integration test-e2e check bench bench-test ci ci-macos hooks-install install-local run-local
 
 build:
 	cargo build --release
@@ -41,7 +41,13 @@ test-e2e:
 check:
 	cargo check --workspace --all-targets --all-features
 
-ci: fmt-check lint test
+bench:
+	python3 bench/run.py
+
+bench-test:
+	python3 -m unittest discover -s bench -p 'test_*.py'
+
+ci: fmt-check lint test bench-test
 
 # The renderer is macOS-only. Build with --locked before `lint` so a stale
 # Cargo.lock fails here instead of being rewritten by Clippy.

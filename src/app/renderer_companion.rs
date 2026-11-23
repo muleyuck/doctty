@@ -10,11 +10,19 @@ use anyhow::{Result, bail};
 use crate::{cli::Theme, core::config::MermaidMode};
 
 #[cfg(target_os = "macos")]
+use crate::support::bench_trace;
+#[cfg(target_os = "macos")]
 use anyhow::Context;
+#[cfg(target_os = "macos")]
+use serde_json::{Value, json};
+#[cfg(target_os = "macos")]
+use std::os::unix::process::ExitStatusExt;
 #[cfg(any(target_os = "macos", test))]
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(any(target_os = "macos", test))]
 fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
@@ -25,8 +33,35 @@ fn companion_paths(main_executable: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
+/// How the Swift helper path was resolved; the strings go into bench traces.
 #[cfg(any(target_os = "macos", test))]
-fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HelperSource {
+    Adjacent,
+    CacheHit,
+    Extracted,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl HelperSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Adjacent => "adjacent",
+            Self::CacheHit => "cache_hit",
+            Self::Extracted => "extracted",
+        }
+    }
+}
+
+pub(super) fn mermaid_str(mermaid: MermaidMode) -> &'static str {
+    match mermaid {
+        MermaidMode::Enabled => "enabled",
+        MermaidMode::Disabled => "disabled",
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf, HelperSource)> {
     let (viewer, swift_helper) = companion_paths(main_executable);
     if !viewer.is_file() {
         bail!(
@@ -34,44 +69,49 @@ fn require_companions(main_executable: &Path) -> Result<(PathBuf, PathBuf)> {
             main_executable.display()
         );
     }
-    let swift_helper = if swift_helper.is_file() {
-        swift_helper
+    let (swift_helper, source) = if swift_helper.is_file() {
+        (swift_helper, HelperSource::Adjacent)
     } else {
         source_install_swift_helper()?
     };
-    Ok((viewer, swift_helper))
+    Ok((viewer, swift_helper, source))
 }
 
 /// Source installs embed the Swift executable built by build.rs. Extracting it
 /// into a private cache requires no Swift interpreter or compiler at runtime.
 #[cfg(target_os = "macos")]
-fn source_install_swift_helper() -> Result<PathBuf> {
-    use std::{fs, io::Write, os::unix::fs::PermissionsExt};
-
+fn source_install_swift_helper() -> Result<(PathBuf, HelperSource)> {
     const SWIFT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/doctty-webkit-swift"));
     let home = std::env::var_os("HOME").context("HOME is needed for the WebKit helper cache")?;
     let cache = PathBuf::from(home)
         .join("Library/Caches/doctty/native")
         .join(env!("CARGO_PKG_VERSION"));
-    fs::create_dir_all(&cache).with_context(|| format!("create {}", cache.display()))?;
-    fs::set_permissions(&cache, fs::Permissions::from_mode(0o700))?;
+    extract_helper(&cache, SWIFT)
+}
+
+#[cfg(target_os = "macos")]
+fn extract_helper(cache: &Path, bytes: &[u8]) -> Result<(PathBuf, HelperSource)> {
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt};
+
+    fs::create_dir_all(cache).with_context(|| format!("create {}", cache.display()))?;
+    fs::set_permissions(cache, fs::Permissions::from_mode(0o700))?;
     let destination = cache.join("doctty-webkit-swift");
     // Verify actual bytes rather than only trusting a filename/version marker.
-    if fs::read(&destination).ok().as_deref() == Some(SWIFT) {
-        return Ok(destination);
+    if fs::read(&destination).ok().as_deref() == Some(bytes) {
+        return Ok((destination, HelperSource::CacheHit));
     }
 
-    let mut temp = tempfile::NamedTempFile::new_in(&cache)?;
-    temp.write_all(SWIFT)?;
+    let mut temp = tempfile::NamedTempFile::new_in(cache)?;
+    temp.write_all(bytes)?;
     temp.as_file()
         .set_permissions(fs::Permissions::from_mode(0o700))?;
     temp.persist(&destination)
         .with_context(|| format!("install {}", destination.display()))?;
-    Ok(destination)
+    Ok((destination, HelperSource::Extracted))
 }
 
 #[cfg(all(test, not(target_os = "macos")))]
-fn source_install_swift_helper() -> Result<PathBuf> {
+fn source_install_swift_helper() -> Result<(PathBuf, HelperSource)> {
     bail!("Swift/WebKit helper requires macOS")
 }
 
@@ -80,27 +120,34 @@ pub(super) fn run(document: &Path, theme: Theme, watch: bool, mermaid: MermaidMo
     {
         let exe = std::env::current_exe().context("unable to resolve doctty executable")?;
         // Fail clearly instead of falling back silently to interpreted Swift.
-        let (viewer, swift_helper) = require_companions(&exe)?;
+        let resolve_started = Instant::now();
+        let (viewer, swift_helper, helper_source) = require_companions(&exe)?;
+        bench_trace::event(
+            "helper_resolved",
+            json!({
+                "source": helper_source.as_str(),
+                "ms": resolve_started.elapsed().as_secs_f64() * 1000.0,
+            }),
+        );
         let mut command = Command::new(&viewer);
         command
             .arg("--hybrid-image")
             .arg(document)
             .env("DOCTTY_WEBKIT_HELPER_BIN", &swift_helper)
             .env("DOCTTY_WEBKIT_THEME", theme.as_str())
-            .env(
-                "DOCTTY_WEBKIT_MERMAID",
-                match mermaid {
-                    MermaidMode::Enabled => "enabled",
-                    MermaidMode::Disabled => "disabled",
-                },
-            );
+            .env("DOCTTY_WEBKIT_MERMAID", mermaid_str(mermaid));
         if watch {
             command.arg("--watch");
         }
 
+        bench_trace::event("renderer_spawn", Value::Null);
         let status = command
             .status()
             .context("failed to start doctty renderer")?;
+        bench_trace::event(
+            "renderer_exit",
+            json!({ "code": status.code(), "signal": status.signal() }),
+        );
         if !status.success() {
             bail!("doctty renderer exited with {status}");
         }
@@ -130,8 +177,30 @@ mod tests {
         assert!(!viewer.exists());
         std::fs::write(&viewer, b"test placeholder")?;
         std::fs::write(&helper, b"test placeholder")?;
-        assert_eq!(require_companions(&exe)?, (viewer, helper));
+        assert_eq!(
+            require_companions(&exe)?,
+            (viewer, helper, HelperSource::Adjacent)
+        );
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn helper_extraction_reports_whether_the_cache_was_reused() -> Result<()> {
+        let cache = tempfile::tempdir()?;
+        let source = |bytes: &[u8]| extract_helper(cache.path(), bytes).map(|(_, source)| source);
+        assert_eq!(source(b"v1")?, HelperSource::Extracted);
+        assert_eq!(source(b"v1")?, HelperSource::CacheHit);
+        assert_eq!(source(b"v2")?, HelperSource::Extracted);
+        Ok(())
+    }
+
+    // The bench harness tells cold and warm startups apart by these trace strings.
+    #[test]
+    fn helper_sources_keep_the_names_the_bench_harness_reads() {
+        assert_eq!(HelperSource::Adjacent.as_str(), "adjacent");
+        assert_eq!(HelperSource::CacheHit.as_str(), "cache_hit");
+        assert_eq!(HelperSource::Extracted.as_str(), "extracted");
     }
 
     #[cfg(not(target_os = "macos"))]

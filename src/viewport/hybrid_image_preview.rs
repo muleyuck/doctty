@@ -189,9 +189,21 @@ pub(crate) fn spawn(
                             Response::Skipped
                         } else {
                             let uploaded = (|| -> Result<()> {
+                                let started = std::time::Instant::now();
                                 let mut out = io::stdout().lock();
                                 upload_png(&mut out, request.image_id, &png)?;
                                 out.flush()?;
+                                drop(out);
+                                if doctty::support::bench_trace::enabled() {
+                                    doctty::support::bench_trace::event(
+                                        "kitty_upload",
+                                        serde_json::json!({
+                                            "bytes": png.len(),
+                                            "ms": started.elapsed().as_secs_f64() * 1000.0,
+                                            "kind": "preview"
+                                        }),
+                                    );
+                                }
                                 Ok(())
                             })();
                             match uploaded {
