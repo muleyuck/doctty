@@ -33,6 +33,7 @@ SCROLL_INTERVAL = 0.05
 RELOADS = 10
 FAILED_RUNS_LIMIT = 3
 WEBKIT_EXIT_GRACE = 5.0
+OWNER_WAIT = 2.0
 MIN_GHOSTTY = (1, 4)
 
 
@@ -70,10 +71,13 @@ def touch_identical(path: Path) -> None:
     path.write_bytes(path.read_bytes())
 
 
+# The wrapper first writes its pid to the launch's pid file, so a launch interrupted before
+# doctty writes cli_start can still find its window; exec keeps the pid, so it is doctty's pid.
 # Ghostty sometimes opens a window small and resizes it a moment later. Wait until `stty size`
 # repeats `reads` times in a row (or `limit` reads pass) before exec, so the launch sees the
 # final size. Startup is timed from doctty's own cli_start, so the wait is not measured.
 _SETTLE = (
+    'echo $$ > "$1"; shift; '
     'last=; same=0; n=0; while :; do size=$(stty size 2>/dev/null); '
     'if [ -n "$size" ] && [ "$size" = "$last" ]; then same=$((same + 1)); else same=1; last=$size; fi; '
     'n=$((n + 1)); if [ -n "$size" ] && [ "$same" -ge "$1" ] || [ "$n" -ge "$2" ]; then break; fi; '
@@ -85,18 +89,25 @@ SETTLE_POLL = 0.1
 
 
 def settled_argv(
-    argv: list[str], *, reads: int = SETTLE_READS, limit: int = SETTLE_LIMIT, poll: float = SETTLE_POLL
+    argv: list[str],
+    pid_file: Path,
+    *,
+    reads: int = SETTLE_READS,
+    limit: int = SETTLE_LIMIT,
+    poll: float = SETTLE_POLL,
 ) -> list[str]:
-    return ["/bin/sh", "-c", _SETTLE, "sh", str(reads), str(limit), str(poll), *argv]
+    return ["/bin/sh", "-c", _SETTLE, "sh", str(pid_file), str(reads), str(limit), str(poll), *argv]
 
 
-def launch_argv(binary: Path, fixture: Path, theme: str, watch: bool, no_mermaid: bool) -> list[str]:
+def launch_argv(
+    binary: Path, fixture: Path, theme: str, watch: bool, no_mermaid: bool, pid_file: Path
+) -> list[str]:
     argv = [str(binary), "--theme", theme]
     if watch:
         argv.append("--watch")
     if no_mermaid:
         argv.append("--no-mermaid")
-    return settled_argv(argv + [str(fixture)])
+    return settled_argv(argv + [str(fixture)], pid_file)
 
 
 def read_trace(path: Path) -> list[dict]:
@@ -346,14 +357,30 @@ def pid_tty(pid: int) -> str | None:
     return out if out.startswith("/") else f"/dev/{out}"
 
 
-def _close_owned_terminals(driver: Driver, before: set[str], trace: Path, tty_of_pid) -> str | None:
-    """Close the terminals this launch created, found by the tty of its cli_start process.
+def _owner_tty(trace: Path, pid_file: Path, tty_of_pid) -> str | None:
+    """The tty of the launched process while it is alive; a dead process's tty may be reused."""
+    try:
+        written = pid_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        written = ""
+    if written.isdigit():
+        return tty_of_pid(int(written))
+    cli = _first(read_trace(trace), "cli_start")
+    return tty_of_pid(cli["pid"]) if cli is not None else None
+
+
+def _close_owned_terminals(
+    driver: Driver, before: set[str], trace: Path, pid_file: Path, tty_of_pid, clock, sleep
+) -> str | None:
+    """Close the terminals this launch created, found by the tty of its wrapper (or cli_start) pid.
 
     A window the user opened meanwhile is also new since `before`, so only the tty tells them apart.
+    The wrapper starts shortly after the window appears, so wait up to OWNER_WAIT for its pid.
     Returns a note when no window could be closed.
     """
-    cli = _first(read_trace(trace), "cli_start")
-    owner_tty = tty_of_pid(cli["pid"]) if cli is not None else None
+    deadline = clock() + OWNER_WAIT
+    while (owner_tty := _owner_tty(trace, pid_file, tty_of_pid)) is None and clock() < deadline:
+        sleep(POLL)
     after = _terminal_ids(driver)
     if owner_tty is None or after is None:
         return "could not identify the launched window; a window may have been left open"
@@ -393,8 +420,10 @@ def run_scenario(
     stem = f"{scenario}-{fixture.stem}-{index}"
     trace = run_dir / f"trace-{stem}.jsonl"
     trace.unlink(missing_ok=True)
+    pid_file = run_dir / f"pid-{stem}.txt"
+    pid_file.unlink(missing_ok=True)
     env = {**(extra_env or {}), "DOCTTY_BENCH_TRACE_FILE": str(trace)}
-    argv = launch_argv(binary, fixture, theme, scenario == "reload-watch", no_mermaid)
+    argv = launch_argv(binary, fixture, theme, scenario == "reload-watch", no_mermaid, pid_file)
     if scenario == "startup-cold" and clear_cache is not None:
         clear_cache()
     ps_path = run_dir / f"ps-{stem}.jsonl"
@@ -414,7 +443,7 @@ def run_scenario(
             try:
                 terminal = driver.open(argv, env, fixture.parent, font_size)
             except BaseException as error:  # includes Ctrl-C: the window may exist before open() returns
-                note = _close_owned_terminals(driver, before, trace, tty_of_pid)
+                note = _close_owned_terminals(driver, before, trace, pid_file, tty_of_pid, clock, sleep)
                 if isinstance(error, DriverTimeout):
                     leak_note = note
                 raise
