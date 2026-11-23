@@ -40,6 +40,7 @@ class FakeDriver:
         self.key_times = []
         self.closed = []
         self.pending = []
+        self.pending_files = []
         self.alive = {}
         self.behavior = {}
         self.g_presses = {}
@@ -52,6 +53,9 @@ class FakeDriver:
 
     def sleep(self, seconds):
         self.now += seconds
+        for item in [f for f in self.pending_files if f[0] <= self.now]:
+            self.pending_files.remove(item)
+            Path(item[1]).write_text(item[2] + "\n")
         for item in [p for p in self.pending if p[0] <= self.now]:
             self.pending.remove(item)
             self._emit(item[1], **{"t_us": round(item[0] * 1e6), **item[2]})
@@ -78,6 +82,9 @@ class FakeDriver:
             self.terminals.add(self.behavior["also_create"])
         self.alive[terminal] = True
         self.g_presses[terminal] = 0
+        if "wrapper_pid_after" in self.behavior:  # the settle wrapper writes its pid (argv[4])
+            self.pending_files.append((self.now + self.behavior["wrapper_pid_after"], argv[4], str(1000 + index)))
+            self.sleep(0)
         if not self.behavior.get("no_cli_start"):
             self._emit("cli_start", proc="cli", pid=1000 + index)
         if self.behavior.get("leak_on_open"):
@@ -382,6 +389,29 @@ class RunScenarioTest(unittest.TestCase):
             self.go(driver, "startup-cold")
         self.assertEqual(driver.closed, ["term-0"])
 
+    def test_ctrl_c_before_cli_start_closes_the_window_found_by_the_wrapper_pid(self):
+        for delay in (0, 0.5):  # the wrapper may write its pid only after open() was interrupted
+            with self.subTest(delay=delay):
+                driver = FakeDriver([{"interrupt_on_open": True, "no_cli_start": True, "wrapper_pid_after": delay,
+                                      "also_create": "user-opened-meanwhile"}])
+                with self.assertRaises(KeyboardInterrupt):
+                    self.go(driver, "startup-cold")
+                self.assertEqual(driver.closed, ["term-0"])
+
+    def test_a_dead_wrapper_pid_closes_nothing_because_its_tty_may_be_reused(self):
+        driver = FakeDriver([{"interrupt_on_open": True, "no_cli_start": True, "wrapper_pid_after": 0}])
+        with self.assertRaises(KeyboardInterrupt):
+            self.go(driver, "startup-cold", tty_of_pid=lambda pid: None)
+        self.assertEqual(driver.closed, [])
+
+    def test_a_pid_file_left_by_an_earlier_launch_is_not_used(self):
+        stale = self.dir / "pid-startup-cold-small-1.txt"
+        stale.write_text("1000\n")  # fake_tty_of_pid maps it to term-0, this launch's own window
+        driver = FakeDriver([{"interrupt_on_open": True, "no_cli_start": True}])
+        with self.assertRaises(KeyboardInterrupt):
+            self.go(driver, "startup-cold")
+        self.assertEqual(driver.closed, [])
+
     def test_open_timeout_is_still_reported_when_listing_terminals_after_open_fails(self):
         driver = FakeDriver([{"leak_on_open": True}])
         driver.fail_ids_calls = {2}
@@ -514,12 +544,14 @@ class SettledArgvTest(unittest.TestCase):
         )
         stty.chmod(0o755)
         self.target = self.dir / "target"
-        self.target.write_text('#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$ARGS_OUT"\n')
+        self.target.write_text('#!/bin/sh\necho $$ > "$ARGS_OUT.pid"\nfor a in "$@"; do echo "$a"; done > "$ARGS_OUT"\n')
         self.target.chmod(0o755)
 
     def launch(self, sizes, reads=4, limit=10):
         (self.dir / "sizes").write_text("\n".join(sizes) + "\n")
-        argv = run.settled_argv([str(self.target), "a b", "--theme"], reads=reads, limit=limit, poll=0)
+        argv = run.settled_argv(
+            [str(self.target), "a b", "--theme"], self.dir / "pid.txt", reads=reads, limit=limit, poll=0
+        )
         env = {
             **os.environ,
             "PATH": f"{self.dir}:{os.environ['PATH']}",
@@ -534,6 +566,8 @@ class SettledArgvTest(unittest.TestCase):
         count, args = self.launch(["20 56"] * 3 + ["59 204"] * 5)
         self.assertEqual(count, 7)  # 3 reads of the old size do not count toward the 4 of the new one
         self.assertEqual(args, ["a b", "--theme"])
+        # exec keeps the pid, so the wrapper's pid file names doctty itself
+        self.assertEqual((self.dir / "pid.txt").read_text(), (self.dir / "args.pid").read_text())
 
     def test_starts_anyway_after_the_limit_when_the_size_keeps_changing(self):
         count, args = self.launch(["20 56", "59 204"] * 10, limit=7)
@@ -545,7 +579,7 @@ class SettledArgvTest(unittest.TestCase):
         self.assertEqual(count, 6)
 
     def test_launch_argv_wraps_the_doctty_command(self):
-        argv = run.launch_argv(Path("/b/doctty"), Path("/f/small.md"), "dark", True, False)
+        argv = run.launch_argv(Path("/b/doctty"), Path("/f/small.md"), "dark", True, False, Path("/r/pid.txt"))
         self.assertEqual(argv[0], "/bin/sh")
         self.assertEqual(argv[-5:], ["/b/doctty", "--theme", "dark", "--watch", "/f/small.md"])
 
