@@ -498,6 +498,58 @@ class PidTtyTest(unittest.TestCase):
         self.assertIsNone(self.tty("??\n"))
 
 
+class SettledArgvTest(unittest.TestCase):
+    """Runs the real wrapper under /bin/sh with a fake stty that replays a size sequence."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.reads = self.dir / "reads"
+        stty = self.dir / "stty"
+        # Prints line N of sizes on the Nth call, repeating the last line after that.
+        stty.write_text(
+            '#!/bin/sh\necho x >> "$READS"\nn=$(wc -l < "$READS")\n'
+            'line=$(sed -n "${n}p" "$SIZES")\n[ -n "$line" ] || line=$(tail -n 1 "$SIZES")\necho "$line"\n'
+        )
+        stty.chmod(0o755)
+        self.target = self.dir / "target"
+        self.target.write_text('#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$ARGS_OUT"\n')
+        self.target.chmod(0o755)
+
+    def launch(self, sizes, reads=4, limit=10):
+        (self.dir / "sizes").write_text("\n".join(sizes) + "\n")
+        argv = run.settled_argv([str(self.target), "a b", "--theme"], reads=reads, limit=limit, poll=0)
+        env = {
+            **os.environ,
+            "PATH": f"{self.dir}:{os.environ['PATH']}",
+            "READS": str(self.reads),
+            "SIZES": str(self.dir / "sizes"),
+            "ARGS_OUT": str(self.dir / "args"),
+        }
+        subprocess.run(argv, env=env, check=True, timeout=10)
+        return len(self.reads.read_text().splitlines()), (self.dir / "args").read_text().splitlines()
+
+    def test_starts_once_the_size_repeats_after_a_resize(self):
+        count, args = self.launch(["20 56"] * 3 + ["59 204"] * 5)
+        self.assertEqual(count, 7)  # 3 reads of the old size do not count toward the 4 of the new one
+        self.assertEqual(args, ["a b", "--theme"])
+
+    def test_starts_anyway_after_the_limit_when_the_size_keeps_changing(self):
+        count, args = self.launch(["20 56", "59 204"] * 10, limit=7)
+        self.assertEqual(count, 7)
+        self.assertEqual(args, ["a b", "--theme"])
+
+    def test_an_unreadable_size_never_counts_as_settled(self):
+        count, _ = self.launch([""], limit=6)
+        self.assertEqual(count, 6)
+
+    def test_launch_argv_wraps_the_doctty_command(self):
+        argv = run.launch_argv(Path("/b/doctty"), Path("/f/small.md"), "dark", True, False)
+        self.assertEqual(argv[0], "/bin/sh")
+        self.assertEqual(argv[-5:], ["/b/doctty", "--theme", "dark", "--watch", "/f/small.md"])
+
+
 class RunScenarioSetTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
