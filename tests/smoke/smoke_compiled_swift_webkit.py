@@ -459,6 +459,7 @@ def test(binary: Path) -> None:
         metrics = request({"type": "metrics"}, "metrics")
 
         assert ready["height"] > 3000, ready
+        assert ready["readRoot"] == os.path.realpath(image.parent), ready
         assert any(
             "Compiled Swift helper smoke test" in item.get("text", "")
             for item in outline["items"]

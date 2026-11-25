@@ -12,7 +12,8 @@ import zlib
 final class PageSchemeHandler: NSObject, WKURLSchemeHandler {
     private let pagePath: String
     private var html: Data
-    private let readRoot: String?
+    // The directory the helper actually enforces; reported in `ready`.
+    let readRoot: String?
 
     init(pagePath: String, html: Data, readRoot: String) {
         self.pagePath = pagePath
@@ -179,7 +180,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
             self.loaded = true
             self.loadPhase = "loaded"
             if generation == 0 {
-                self.emit(["kind": "ready", "height": self.documentHeight])
+                self.emit([
+                    "kind": "ready", "height": self.documentHeight,
+                    "readRoot": self.handler.readRoot.map { $0 as Any } ?? NSNull(),
+                ])
             } else {
                 self.reloadPending = false
                 self.emit(["kind": "reloaded", "height": self.documentHeight])

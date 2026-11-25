@@ -491,13 +491,21 @@ mod renderer_viewer {
 
     struct SwiftProcess {
         child: Child,
-        input: std::process::ChildStdin,
+        // Lent to the writer thread during a request; `None` once a write timed out.
+        input: Option<std::process::ChildStdin>,
         replies: Receiver<io::Result<String>>,
         // Set when a reply was not read. A late reply would otherwise be
         // taken as the answer to the next request.
         broken: bool,
         // The only directory WebKit may read; preview thumbnails obey it too.
         read_root: PathBuf,
+        reply_timeout: Duration,
+        // The read root the helper itself resolved and enforces, as reported
+        // in its `ready` reply (`None` until then, or when it reports none),
+        // and whether the page's images were staged. A reload may reuse this
+        // helper only while neither changes its file access scope.
+        resolved_root: Option<PathBuf>,
+        staged: bool,
     }
 
     // Normal replies take well under a second (a few seconds when the helper
@@ -538,7 +546,7 @@ mod renderer_viewer {
             }
             // Compare the interpreter with a compiled executable without
             // changing the image production or cache algorithm.
-            let mut command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
+            let command = if let Some(binary) = std::env::var_os("DOCTTY_WEBKIT_HELPER_BIN") {
                 let path = PathBuf::from(binary);
                 if !path.is_file() {
                     bail!("DOCTTY_WEBKIT_HELPER_BIN is not a file: {}", path.display());
@@ -549,6 +557,26 @@ mod renderer_viewer {
                 command.arg("-swift-version").arg("5").arg(helper);
                 command
             };
+            Self::spawn(
+                command,
+                page,
+                output,
+                width,
+                height,
+                pixel_width,
+                HELPER_REPLY_TIMEOUT,
+            )
+        }
+
+        fn spawn(
+            mut command: Command,
+            page: &WebKitPage,
+            output: &Path,
+            width: u32,
+            height: u32,
+            pixel_width: u32,
+            reply_timeout: Duration,
+        ) -> Result<Self> {
             let mut child = command
                 .arg(hybrid_image_preview::PAGE_URL_SCHEME)
                 .arg(&page.path)
@@ -577,27 +605,74 @@ mod renderer_viewer {
             });
             Ok(Self {
                 child,
-                input,
+                input: Some(input),
                 replies,
                 broken: false,
                 read_root: page.read_root.clone(),
+                reply_timeout,
+                resolved_root: None,
+                staged: page._isolated_assets.is_some(),
             })
+        }
+
+        // Takes the root from the helper's own reply: it resolves the root
+        // separately, so a symlink retargeted after spawn would otherwise make
+        // Rust record a root the helper does not enforce.
+        fn await_ready(&mut self) -> Result<()> {
+            let ready = self.response()?;
+            if ready["kind"] != "ready" {
+                bail!("expected WebKit readiness response: {ready}");
+            }
+            self.resolved_root = ready["readRoot"].as_str().map(PathBuf::from);
+            Ok(())
         }
 
         fn request(&mut self, request: &Value) -> Result<Value> {
             if self.broken {
                 bail!("WebKit helper stopped responding");
             }
-            writeln!(self.input, "{request}")?;
-            self.input.flush()?;
-            self.response()
+            let deadline = Instant::now() + self.reply_timeout;
+            let mut input = self
+                .input
+                .take()
+                .context("WebKit helper stopped responding")?;
+            let line = format!("{request}\n");
+            // A helper that is not reading leaves the write blocked once the
+            // pipe is full, so it runs apart and is bounded like the reply.
+            // Killing the helper makes a blocked write fail and end the thread.
+            let (written, write_result) = mpsc::channel();
+            thread::spawn(move || {
+                let result = input
+                    .write_all(line.as_bytes())
+                    .and_then(|()| input.flush());
+                let _ = written.send((result, input));
+            });
+            match write_result.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok((result, input)) => {
+                    self.input = Some(input);
+                    result?;
+                }
+                Err(_) => {
+                    self.broken = true;
+                    let _ = self.child.kill();
+                    bail!(
+                        "WebKit helper did not accept a request within {}s",
+                        self.reply_timeout.as_secs()
+                    );
+                }
+            }
+            self.response_within(deadline.saturating_duration_since(Instant::now()))
         }
 
         fn response(&mut self) -> Result<Value> {
+            self.response_within(self.reply_timeout)
+        }
+
+        fn response_within(&mut self, timeout: Duration) -> Result<Value> {
             if self.broken {
                 bail!("WebKit helper stopped responding");
             }
-            let reply = next_reply_line(&self.replies, HELPER_REPLY_TIMEOUT);
+            let reply = next_reply_line(&self.replies, timeout);
             if reply.is_err() {
                 // Fail every queued request at once instead of waiting again.
                 self.broken = true;
@@ -633,6 +708,42 @@ mod renderer_viewer {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+
+    // The helper's file access is fixed when it starts, so it may serve a new
+    // page only when that scope is unchanged and no staged copy is involved.
+    fn can_reuse_helper(
+        running_root: Option<&Path>,
+        running_staged: bool,
+        new_root: Option<&Path>,
+        new_staged: bool,
+    ) -> bool {
+        matches!((running_root, new_root), (Some(running), Some(new)) if running == new)
+            && !running_staged
+            && !new_staged
+    }
+
+    // Swap the page inside the running helper. On any failure, stop it before
+    // launching a replacement once, so two helpers never run at the same time.
+    fn reload_helper(
+        mut helper: SwiftProcess,
+        new_page: &WebKitPage,
+        launch: impl FnOnce(&WebKitPage) -> Result<SwiftProcess>,
+    ) -> Result<SwiftProcess> {
+        let new_root = fs::canonicalize(&new_page.read_root).ok();
+        if can_reuse_helper(
+            helper.resolved_root.as_deref(),
+            helper.staged,
+            new_root.as_deref(),
+            new_page._isolated_assets.is_some(),
+        ) {
+            let reply = helper.request(&json!({"type": "reload", "html": new_page.html}));
+            if matches!(reply, Ok(ref value) if value["kind"] == "reloaded") {
+                return Ok(helper);
+            }
+        }
+        drop(helper);
+        launch(new_page)
     }
 
     enum WorkerCommand {
@@ -2495,6 +2606,18 @@ mod renderer_viewer {
         Ok((exit, swift))
     }
 
+    fn launch_helper(
+        page: &WebKitPage,
+        output: &Path,
+        width: u32,
+        height: u32,
+        pixel_width: u32,
+    ) -> Result<SwiftProcess> {
+        let mut process = SwiftProcess::start(page, output, width, height, pixel_width)?;
+        process.await_ready()?;
+        Ok(process)
+    }
+
     // Recreate WebKit with the new CSS width after a resize. Unlike the
     // scroll hot path, this intentionally favors correctness over latency.
     fn run_resizable_tiled(
@@ -2544,12 +2667,7 @@ mod renderer_viewer {
                 }
                 existing
             } else {
-                let mut process = SwiftProcess::start(&page, &output, width, height, pixel_width)?;
-                let ready = process.response()?;
-                if ready["kind"] != "ready" {
-                    bail!("expected WebKit readiness response: {ready}");
-                }
-                process
+                launch_helper(&page, &output, width, height, pixel_width)?
             };
             last_geometry = Some((columns, rows, pixel_width));
             // DOM metrics and preview coordinates must be regenerated after
@@ -2648,12 +2766,14 @@ mod renderer_viewer {
                             {
                                 state.acknowledge_loaded(revision);
                             }
-                            drop(returned);
+                            let helper = reload_helper(returned, &new_page, |next| {
+                                launch_helper(next, &output, width, height, pixel_width)
+                            })?;
                             // Old staged images stay alive until the old
                             // Swift process has exited.
                             page = new_page;
                             first_link = new_first_link;
-                            swift = None;
+                            swift = Some(helper);
                         }
                         Err(_) => {
                             // Keep the last valid render, but do not mark the
@@ -3016,6 +3136,317 @@ mod renderer_viewer {
             );
             drop(sender);
             assert_eq!(next_reply_line(&lines, Duration::from_millis(20))?, None);
+            Ok(())
+        }
+
+        #[test]
+        fn helper_is_reused_only_for_the_same_unstaged_resolved_root() {
+            let a = Path::new("/a");
+            let b = Path::new("/b");
+            assert!(can_reuse_helper(Some(a), false, Some(a), false));
+            assert!(!can_reuse_helper(Some(a), false, Some(b), false));
+            assert!(!can_reuse_helper(None, false, Some(a), false));
+            assert!(!can_reuse_helper(Some(a), false, None, false));
+            assert!(!can_reuse_helper(Some(a), true, Some(a), false));
+            assert!(!can_reuse_helper(Some(a), false, Some(a), true));
+        }
+
+        fn test_page(root: &Path) -> WebKitPage {
+            WebKitPage {
+                html: "<p>x</p>".to_owned(),
+                path: PathBuf::from("/page.html"),
+                read_root: root.to_path_buf(),
+                _isolated_assets: None,
+            }
+        }
+
+        // What a fake helper puts in `ready.readRoot`.
+        #[derive(Clone, Copy)]
+        enum ReadyRoot {
+            PageRoot,
+            Other(&'static str),
+            Missing,
+        }
+
+        // A stand-in for the Swift helper: answers the first line (the page)
+        // with `ready`, then runs `after_ready` with stdin and stdout attached.
+        fn fake_helper_reporting(
+            page: &WebKitPage,
+            root: ReadyRoot,
+            after_ready: &str,
+        ) -> Result<SwiftProcess> {
+            let read_root = match root {
+                ReadyRoot::PageRoot => Some(fs::canonicalize(&page.read_root)?),
+                ReadyRoot::Other(path) => Some(PathBuf::from(path)),
+                ReadyRoot::Missing => None,
+            };
+            let ready = json!({"kind": "ready", "height": 100, "readRoot": read_root});
+            let mut command = Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg(format!("read first; echo '{ready}'; {after_ready}"));
+            let mut helper = SwiftProcess::spawn(
+                command,
+                page,
+                Path::new("/unused"),
+                80,
+                24,
+                0,
+                Duration::from_millis(500),
+            )?;
+            helper.await_ready()?;
+            Ok(helper)
+        }
+
+        fn fake_helper(page: &WebKitPage, after_ready: &str) -> Result<SwiftProcess> {
+            fake_helper_reporting(page, ReadyRoot::PageRoot, after_ready)
+        }
+
+        fn echo_reply(log: &Path, reply: &str) -> String {
+            format!(
+                "while read line; do echo \"$line\" >> '{}'; echo '{reply}'; done",
+                log.display()
+            )
+        }
+
+        struct ReloadRun {
+            launches: usize,
+            old_helper_gone_at_launch: Vec<bool>,
+            reused: bool,
+            logged: String,
+        }
+
+        // Reloads a fake helper, launching a second fake one when asked to.
+        fn run_reload(
+            old_page: &WebKitPage,
+            new_page: &WebKitPage,
+            ready_root: ReadyRoot,
+            before_reload: &dyn Fn() -> Result<()>,
+            script: &dyn Fn(&Path) -> String,
+        ) -> Result<ReloadRun> {
+            let dir = tempfile::tempdir()?;
+            let log = dir.path().join("stdin.log");
+            let helper = fake_helper_reporting(old_page, ready_root, &script(&log))?;
+            let old_pid = helper.child.id().to_string();
+            before_reload()?;
+            let mut launches = 0;
+            let mut old_helper_gone_at_launch = Vec::new();
+            let result = reload_helper(helper, new_page, |page| {
+                launches += 1;
+                let alive = Command::new("kill")
+                    .args(["-0", &old_pid])
+                    .stderr(Stdio::null())
+                    .status()?
+                    .success();
+                old_helper_gone_at_launch.push(!alive);
+                fake_helper_reporting(page, ReadyRoot::Missing, "sleep 5")
+            })?;
+            Ok(ReloadRun {
+                launches,
+                old_helper_gone_at_launch,
+                reused: result.child.id().to_string() == old_pid,
+                logged: fs::read_to_string(&log).unwrap_or_default(),
+            })
+        }
+
+        #[test]
+        fn reload_keeps_the_helper_when_it_answers_reloaded() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let page = test_page(root.path());
+            let run = run_reload(&page, &page, ReadyRoot::PageRoot, &|| Ok(()), &|log| {
+                echo_reply(log, r#"{"kind":"reloaded","height":120}"#)
+            })?;
+            assert!(run.reused);
+            assert_eq!(run.launches, 0);
+            assert!(run.logged.contains(r#""type":"reload""#), "{}", run.logged);
+            assert!(run.logged.contains("<p>x</p>"), "{}", run.logged);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_relaunches_once_after_the_old_helper_is_reaped() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let page = test_page(root.path());
+            let scripts = [
+                ("error reply", Some(r#"{"kind":"error","message":"x"}"#)),
+                ("unexpected reply", Some(r#"{"kind":"resized"}"#)),
+                ("no reply", None),
+                ("closed output", Some("")),
+            ];
+            for (name, script) in scripts {
+                let run =
+                    run_reload(
+                        &page,
+                        &page,
+                        ReadyRoot::PageRoot,
+                        &|| Ok(()),
+                        &|log| match script {
+                            Some("") => String::new(),
+                            Some(reply) => echo_reply(log, reply),
+                            None => "read line; exec sleep 5".to_owned(),
+                        },
+                    )?;
+                assert!(!run.reused, "{name}");
+                assert_eq!(run.launches, 1, "{name}");
+                assert_eq!(run.old_helper_gone_at_launch, [true], "{name}");
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn consecutive_requests_reach_the_same_helper_and_get_their_own_replies() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let log = root.path().join("stdin.log");
+            let mut helper = fake_helper(
+                &test_page(root.path()),
+                &format!(
+                    "n=0; while read line; do n=$((n+1)); echo \"$line\" >> '{}'; \
+                     echo \"{{\\\"kind\\\":\\\"reply\\\",\\\"n\\\":$n}}\"; done",
+                    log.display()
+                ),
+            )?;
+            let requests = [
+                json!({"type": "reload", "html": "<p>y</p>"}),
+                json!({"type": "outline"}),
+                json!({"type": "resize", "width": 80}),
+            ];
+            for (index, request) in requests.iter().enumerate() {
+                let reply = helper.request(request)?;
+                assert_eq!(reply["n"], index + 1, "{request}");
+            }
+            let logged = fs::read_to_string(&log)?;
+            let types: Vec<_> = logged
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).map(|value| value["type"].clone()))
+                .collect::<Result<_, _>>()?;
+            assert_eq!(types, ["reload", "outline", "resize"]);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_relaunches_when_the_helper_stops_reading_the_request() -> Result<()> {
+            // The page is far larger than the pipe buffer, so the write itself
+            // blocks while the old fake sleeps without reading stdin.
+            let (done, finished) = mpsc::channel();
+            thread::spawn(move || {
+                let outcome = (|| -> Result<ReloadRun> {
+                    let root = tempfile::tempdir()?;
+                    let mut page = test_page(root.path());
+                    page.html = "x".repeat(2 * 1024 * 1024);
+                    run_reload(&page, &page, ReadyRoot::PageRoot, &|| Ok(()), &|_| {
+                        "exec sleep 30".to_owned()
+                    })
+                })();
+                let _ = done.send(outcome.map_err(|error| error.to_string()));
+            });
+            let run = finished
+                .recv_timeout(Duration::from_secs(10))
+                .context("reload_helper stayed blocked writing the request")?
+                .map_err(|error| anyhow::anyhow!(error))?;
+            assert!(!run.reused);
+            assert_eq!(run.launches, 1);
+            assert_eq!(run.old_helper_gone_at_launch, [true]);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_relaunches_without_asking_when_the_read_root_differs() -> Result<()> {
+            let (first, second) = (tempfile::tempdir()?, tempfile::tempdir()?);
+            let run = run_reload(
+                &test_page(first.path()),
+                &test_page(second.path()),
+                ReadyRoot::PageRoot,
+                &|| Ok(()),
+                &|log| echo_reply(log, r#"{"kind":"reloaded","height":120}"#),
+            )?;
+            assert_eq!(run.launches, 1);
+            assert_eq!(run.old_helper_gone_at_launch, [true]);
+            assert!(!run.logged.contains("reload"), "{}", run.logged);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_trusts_the_root_the_helper_reports_not_the_page_root() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let page = test_page(root.path());
+            // The helper resolved the root before a symlink was retargeted, so
+            // it enforces a different directory than the page's root now is.
+            for (name, reported) in [
+                ("other root", ReadyRoot::Other("/somewhere/else")),
+                ("no root", ReadyRoot::Missing),
+            ] {
+                let run = run_reload(&page, &page, reported, &|| Ok(()), &|log| {
+                    echo_reply(log, r#"{"kind":"reloaded","height":120}"#)
+                })?;
+                assert!(!run.reused, "{name}");
+                assert_eq!(run.launches, 1, "{name}");
+                assert!(!run.logged.contains("reload"), "{name}: {}", run.logged);
+            }
+            Ok(())
+        }
+
+        // The old fake would answer `reload`, so only the reuse decision can
+        // make it relaunch.
+        fn assert_refused_and_relaunched(run: &ReloadRun) {
+            assert!(!run.reused);
+            assert_eq!(run.launches, 1);
+            assert_eq!(run.old_helper_gone_at_launch, [true]);
+            assert!(!run.logged.contains("reload"), "{}", run.logged);
+        }
+
+        #[test]
+        fn reload_does_not_follow_a_symlink_retargeted_since_launch() -> Result<()> {
+            let (first, second, links) = (
+                tempfile::tempdir()?,
+                tempfile::tempdir()?,
+                tempfile::tempdir()?,
+            );
+            let link = links.path().join("root");
+            std::os::unix::fs::symlink(first.path(), &link)?;
+            let page = test_page(&link);
+            let run = run_reload(
+                &page,
+                &page,
+                ReadyRoot::PageRoot,
+                &|| {
+                    fs::remove_file(&link)?;
+                    std::os::unix::fs::symlink(second.path(), &link)?;
+                    Ok(())
+                },
+                &|log| echo_reply(log, r#"{"kind":"reloaded","height":120}"#),
+            )?;
+            assert_refused_and_relaunched(&run);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_relaunches_when_the_read_root_was_deleted() -> Result<()> {
+            let root = tempfile::tempdir()?;
+            let page = test_page(root.path());
+            let run = run_reload(
+                &page,
+                &page,
+                ReadyRoot::PageRoot,
+                &|| Ok(fs::remove_dir_all(root.path())?),
+                &|log| echo_reply(log, r#"{"kind":"reloaded","height":120}"#),
+            )?;
+            assert_refused_and_relaunched(&run);
+            Ok(())
+        }
+
+        #[test]
+        fn reload_returns_the_launch_error_without_a_second_attempt() -> Result<()> {
+            let (first, second) = (tempfile::tempdir()?, tempfile::tempdir()?);
+            let helper = fake_helper(&test_page(first.path()), "sleep 5")?;
+            let mut launches = 0;
+            let Err(error) = reload_helper(helper, &test_page(second.path()), |_| {
+                launches += 1;
+                bail!("launch failed")
+            }) else {
+                panic!("a failing launch should fail the reload");
+            };
+            assert_eq!(launches, 1);
+            assert!(error.to_string().contains("launch failed"), "{error}");
             Ok(())
         }
 
