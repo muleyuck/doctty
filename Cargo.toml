@@ -47,7 +47,7 @@ tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Only the macOS doctty-renderer rasterizes SVG.
-resvg = "0.47.0"
+resvg = "0.50.0"
 
 [target.'cfg(unix)'.dependencies]
 # Already in the graph through crossterm; used to read terminal replies unbuffered.
