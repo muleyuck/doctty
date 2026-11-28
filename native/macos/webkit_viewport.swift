@@ -11,13 +11,18 @@ import zlib
 // cannot read file:// URLs at all.
 final class PageSchemeHandler: NSObject, WKURLSchemeHandler {
     private let pagePath: String
-    private let html: Data
-    private let readRoot: String?
+    private var html: Data
+    // The directory the helper actually enforces; reported in `ready`.
+    let readRoot: String?
 
     init(pagePath: String, html: Data, readRoot: String) {
         self.pagePath = pagePath
         self.html = html
         self.readRoot = PageSchemeHandler.realPath(readRoot)
+    }
+
+    func replaceHTML(_ html: Data) {
+        self.html = html
     }
 
     private static func realPath(_ path: String) -> String? {
@@ -73,8 +78,16 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
     // Snapshot width in pixels; 0 keeps the backing scale.
     private var pixelWidth: CGFloat
     private let webView: WKWebView
+    private let handler: PageSchemeHandler
     private var documentHeight: Double = 0
     private var loaded = false
+    // Bumped by every reload. Each asynchronous step of a load keeps the value it
+    // started with and does nothing once it has changed, so a superseded load
+    // cannot change state or send a reply.
+    private var generation = 0
+    private var navigation: WKNavigation?
+    private var reloadPending = false
+    private var loadPhase = "navigating"
     private let metricsStartedAt = Date()
     private var snapshotRequests = 0
     private var snapshotCompleted = 0
@@ -85,6 +98,7 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         width: CGFloat, height: CGFloat, pixelWidth: CGFloat
     ) {
         self.pageURL = pageURL
+        self.handler = handler
         self.outputURL = outputURL
         self.width = width
         self.height = height
@@ -101,15 +115,18 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
 
     func start() {
         _ = NSApplication.shared
-        webView.load(URLRequest(url: pageURL))
+        navigation = webView.load(URLRequest(url: pageURL))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        checkReady(attempt: 0)
+        guard navigation === self.navigation else { return }
+        loadPhase = "readiness"
+        checkReady(attempt: 0, generation: generation)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        emit(["kind": "error", "message": error.localizedDescription])
+        guard navigation === self.navigation else { return }
+        failLoad(error.localizedDescription)
     }
 
     func webView(
@@ -117,10 +134,20 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        emit(["kind": "error", "message": error.localizedDescription])
+        guard navigation === self.navigation else { return }
+        failLoad(error.localizedDescription)
     }
 
-    private func checkReady(attempt: Int) {
+    // The initial load reports failure unsolicited; a reload answers its request.
+    private func failLoad(_ message: String) {
+        reloadPending = false
+        // Not "navigating" or "readiness": no load is running any more. `loaded`
+        // stays false, so snapshot, resize and outline keep replying error.
+        loadPhase = "loaded"
+        emit(["kind": "error", "message": message])
+    }
+
+    private func checkReady(attempt: Int, generation: Int) {
         let probe = """
         (() => ({
           height: Math.max(
@@ -134,8 +161,9 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
         }))()
         """
         webView.evaluateJavaScript(probe) { result, error in
+            guard generation == self.generation else { return }
             if let error {
-                self.emit(["kind": "error", "message": error.localizedDescription])
+                self.failLoad(error.localizedDescription)
                 return
             }
             let values = result as? [String: Any] ?? [:]
@@ -143,13 +171,23 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
             let imagesReady = values["imagesReady"] as? Bool ?? true
             if (!fontsReady || !imagesReady) && attempt < 40 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    self.checkReady(attempt: attempt + 1)
+                    guard generation == self.generation else { return }
+                    self.checkReady(attempt: attempt + 1, generation: generation)
                 }
                 return
             }
             self.documentHeight = (values["height"] as? NSNumber)?.doubleValue ?? Double(self.height)
             self.loaded = true
-            self.emit(["kind": "ready", "height": self.documentHeight])
+            self.loadPhase = "loaded"
+            if generation == 0 {
+                self.emit([
+                    "kind": "ready", "height": self.documentHeight,
+                    "readRoot": self.handler.readRoot.map { $0 as Any } ?? NSNull(),
+                ])
+            } else {
+                self.reloadPending = false
+                self.emit(["kind": "reloaded", "height": self.documentHeight])
+            }
         }
     }
 
@@ -166,8 +204,33 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 "uptimeSec": Date().timeIntervalSince(metricsStartedAt),
                 "secondsSinceSnapshot": lastSnapshotRequestedAt.map {
                     Date().timeIntervalSince($0)
-                } ?? -1
+                } ?? -1,
+                "loadPhase": loadPhase
             ])
+        case "reload":
+            guard let html = request["html"] as? String else {
+                emit(["kind": "error", "message": "reload needs html"])
+                return
+            }
+            if reloadPending {
+                emit(["kind": "error", "message": "reload superseded"])
+            }
+            reloadPending = true
+            generation += 1
+            let current = generation
+            handler.replaceHTML(Data(html.utf8))
+            loaded = false
+            loadPhase = "navigating"
+            navigation = nil
+            // A reused view may otherwise serve a changed image from its cache,
+            // which a fresh launch never does.
+            webView.configuration.websiteDataStore.removeData(
+                ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
+                modifiedSince: .distantPast
+            ) {
+                guard current == self.generation else { return }
+                self.navigation = self.webView.load(URLRequest(url: self.pageURL))
+            }
         case "resize":
             guard loaded else {
                 emit(["kind": "error", "message": "document is not loaded"])
@@ -226,6 +289,10 @@ final class ViewportRunner: NSObject, WKNavigationDelegate {
                 self.capture(started: started, requestedY: targetY, actualY: actualY)
             }
         case "outline":
+            guard loaded else {
+                emit(["kind": "error", "message": "document is not loaded"])
+                return
+            }
             // Collect a bounded, scroll-positioned text fallback once at startup.
             // These offsets come from the same DOM as the WebKit snapshots,
             // avoiding proportional source-line guesses during fast scrolling.
